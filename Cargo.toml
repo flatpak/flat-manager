@@ -1,0 +1,19 @@
+[package]
+name = "repo-manager"
+version = "0.1.0"
+authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
+
+[dependencies]
+env_logger = "0.5"
+
+actix = "0.7"
+actix-web = "0.7"
+
+futures = "0.1"
+serde = "1.0"
+serde_json = "1.0"
+serde_derive = "1.0"
+chrono = { version = "0.4.6", features = ["serde"] }
+diesel = { version = "^1.1.0", features = ["postgres", "chrono", "serde_json", "r2d2"] }
+r2d2 = "0.8"
+dotenv = "0.10"
