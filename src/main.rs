@@ -20,8 +20,8 @@ extern crate dotenv;
 
 use actix::prelude::*;
 use actix_web::{
-    http, middleware, server, App, AsyncResponder, FutureResponse, HttpResponse, Path,
-    State, fs,
+    http, middleware, server, App, AsyncResponder, FutureResponse, HttpResponse, HttpRequest,
+    Result, Path, State, fs,
 };
 
 use diesel::prelude::*;
@@ -29,6 +29,7 @@ use diesel::r2d2::ConnectionManager;
 use futures::Future;
 use dotenv::dotenv;
 use std::env;
+use std::path;
 use std::ffi::OsString;
 
 mod db;
@@ -40,6 +41,7 @@ use db::{CreateBuild, LookupBuild, DbExecutor};
 struct AppState {
     db: Addr<DbExecutor>,
     repo_path: OsString,
+    build_repo_base_path: OsString,
 }
 
 fn create_build(
@@ -76,6 +78,18 @@ fn get_build(
         .responder()
 }
 
+fn handle_build_repo(req: &HttpRequest<AppState>) -> Result<fs::NamedFile> {
+    let tail: String = req.match_info().query("tail")?;
+    let id: String = req.match_info().query("id")?;
+    let state = req.state();
+    let path = path::Path::new(&state.build_repo_base_path).join(&id).join(tail.trim_left_matches('/'));
+    println!("Handle build repo {:?}", path);
+    fs::NamedFile::open(path).or_else(|_e| {
+        let fallback_path = path::Path::new(&state.repo_path).join(tail.trim_left_matches('/'));
+        Ok(fs::NamedFile::open(fallback_path)?)
+    })
+}
+
 fn main() {
     ::std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
@@ -87,6 +101,8 @@ fn main() {
         .expect("DATABASE_URL must be set");
     let repo_path = env::var_os("REPO_PATH")
         .expect("REPO_PATH must be set");
+    let build_repo_base_path = env::var_os("BUILD_REPO_BASE_PATH")
+        .expect("BUILD_REPO_BASE_PATH must be set");
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = r2d2::Pool::builder()
@@ -100,6 +116,7 @@ fn main() {
         let state = AppState {
             db: addr.clone(),
             repo_path: repo_path.clone(),
+            build_repo_base_path: build_repo_base_path.clone(),
         };
 
         let repo_static_files = fs::StaticFiles::new(&state.repo_path)
@@ -109,6 +126,9 @@ fn main() {
             .middleware(middleware::Logger::default())
             .resource("/build", |r| r.method(http::Method::POST).with(create_build))
             .resource("/build/{id}", |r| r.method(http::Method::GET).with(get_build))
+            .scope("/build/{id}", |scope| {
+                scope.handler("/repo", |req: &HttpRequest<AppState>| handle_build_repo(req))
+            })
             .handler("/repo", repo_static_files)
     }).bind("127.0.0.1:8080")
         .unwrap()
