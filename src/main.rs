@@ -151,6 +151,23 @@ struct UploadState {
     repo_path: path::PathBuf,
 }
 
+fn start_save(
+    object: String,
+    state: &Arc<UploadState>,
+) -> Result<(NamedTempFile,path::PathBuf)> {
+    let objects_dir = state.repo_path.join("objects");
+    let object_dir = objects_dir.join(&object[..2]);
+    let object_file = object_dir.join(&object[2..]);
+
+    std::fs::create_dir_all(object_dir)?;
+
+    let tmp_dir = state.repo_path.join("tmp");
+    std::fs::create_dir_all(&tmp_dir)?;
+
+    let named_file = NamedTempFile::new_in(&tmp_dir)?;
+    Ok((named_file, object_file))
+}
+
 fn save_file(
     field: multipart::Field<dev::Payload>,
     state: &Arc<UploadState>
@@ -160,20 +177,8 @@ fn save_file(
         Err(e) => return Box::new(future::err(ErrorBadRequest(e))),
     };
 
-    let objects_dir = state.repo_path.join("objects");
-    let tmp_dir = state.repo_path.join("tmp");
-    let object_dir = objects_dir.join(&object[..2]);
-    let object_file = object_dir.join(&object[2..]);
-
-    if let Err(e) = std::fs::create_dir_all(tmp_dir) {
-        return Box::new(future::err(error::ErrorInternalServerError(e)))
-    }
-    if let Err(e) = std::fs::create_dir_all(object_dir) {
-        return Box::new(future::err(error::ErrorInternalServerError(e)))
-    }
-
-    let named_file = match NamedTempFile::new_in(state.repo_path.join("tmp")) {
-        Ok(file) => file,
+    let (named_file, object_file) = match start_save (object, state) {
+        Ok((named_file, object_file)) => (named_file, object_file),
         Err(e) => return Box::new(future::err(error::ErrorInternalServerError(e))),
     };
 
