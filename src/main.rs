@@ -1,35 +1,37 @@
-//! Actix web diesel example
-//!
-//! Diesel does not support tokio, so we have to run it in separate threads.
-//! Actix supports sync actors by default, so we going to create sync actor
-//! that use diesel. Technically sync actors are worker style actors, multiple
-//! of them can run in parallel and process messages from same queue.
+extern crate actix;
+extern crate actix_web;
+extern crate chrono;
+#[macro_use]
+extern crate diesel;
+extern crate dotenv;
+extern crate env_logger;
+extern crate futures;
+extern crate r2d2;
 extern crate serde;
 extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
-#[macro_use]
-extern crate diesel;
-extern crate actix;
-extern crate actix_web;
-extern crate env_logger;
-extern crate futures;
-extern crate r2d2;
-extern crate chrono;
-extern crate dotenv;
+extern crate tempfile;
 
 use actix::prelude::*;
-use actix_web::{
-    http, middleware, server, App, AsyncResponder, FutureResponse, HttpResponse, HttpRequest,
-    Result, Path, State, fs, Json,
-};
+use actix_web::{dev, error, fs, http, middleware, multipart, server,};
+use actix_web::{App, AsyncResponder, FutureResponse, HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
+use actix_web::error::{ErrorBadRequest,};
 
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
-use futures::Future;
+use futures::future;
+use futures::{Future, Stream};
 use dotenv::dotenv;
 use std::env;
 use std::path;
+use std::io::Write;
+use std::io;
+use std::sync::Arc;
+use std::rc::Rc;
+use std::cell::RefCell;
+use tempfile::NamedTempFile;
+
 
 mod db;
 mod models;
@@ -118,6 +120,129 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> Result<fs::NamedFile> {
     })
 }
 
+fn objectname_is_valid(name: &str) -> bool {
+    let v: Vec<&str> = name.splitn(2, ".").collect();
+
+    v.len() == 2 &&
+        v[0].len() == 64  &&
+        !v[0].contains(|c: char| !(c.is_digit(16) && !c.is_uppercase())) &&
+        (v[1] == "dirmeta" ||
+         v[1] == "dirtree" ||
+         v[1] == "filez" ||
+         v[1] == "commit")
+}
+
+fn get_object_name(field: &multipart::Field<dev::Payload>) -> error::Result<String, io::Error> {
+    let cd = field.content_disposition().ok_or(
+        io::Error::new(io::ErrorKind::InvalidInput,
+                       "No content disposition for multipart item"))?;
+    let filename = cd.get_filename().ok_or(
+        io::Error::new(io::ErrorKind::InvalidInput,
+                       "No filename for multipart item"))?;
+    if !objectname_is_valid(filename) {
+        Err(io::Error::new(io::ErrorKind::InvalidInput,
+                           "Invalid object name"))
+    } else {
+        Ok(filename.to_string())
+    }
+}
+
+struct UploadState {
+    repo_path: path::PathBuf,
+}
+
+fn save_file(
+    field: multipart::Field<dev::Payload>,
+    state: &Arc<UploadState>
+) -> Box<Future<Item = i64, Error = error::Error>> {
+    let object = match  get_object_name (&field) {
+        Ok(name) => name,
+        Err(e) => return Box::new(future::err(ErrorBadRequest(e))),
+    };
+
+    let objects_dir = state.repo_path.join("objects");
+    let tmp_dir = state.repo_path.join("tmp");
+    let object_dir = objects_dir.join(&object[..2]);
+    let object_file = object_dir.join(&object[2..]);
+
+    if let Err(e) = std::fs::create_dir_all(tmp_dir) {
+        return Box::new(future::err(error::ErrorInternalServerError(e)))
+    }
+    if let Err(e) = std::fs::create_dir_all(object_dir) {
+        return Box::new(future::err(error::ErrorInternalServerError(e)))
+    }
+
+    let named_file = match NamedTempFile::new_in(state.repo_path.join("tmp")) {
+        Ok(file) => file,
+        Err(e) => return Box::new(future::err(error::ErrorInternalServerError(e))),
+    };
+
+    // We need file in two continuations below, so put it in a Rc+RefCell
+    let shared_file = Rc::new(RefCell::new(named_file));
+    let shared_file2 = shared_file.clone();
+    Box::new(
+        field
+            .fold(0i64, move |acc, bytes| {
+                let rt = shared_file.borrow_mut()
+                    .write_all(bytes.as_ref())
+                    .map(|_| acc + bytes.len() as i64)
+                    .map_err(|e| {
+                        println!("file.write_all failed: {:?}", e);
+                        error::MultipartError::Payload(error::PayloadError::Io(e))
+                    });
+                future::result(rt)
+            })
+            .map_err(|e| {
+                println!("save_file failed, {:?}", e);
+                error::ErrorInternalServerError(e)
+            }).and_then (move |res| {
+                // persist consumes the named file, so we need to
+                // completely move it out of the shared Rc+RefCell
+                let named_file = Rc::try_unwrap(shared_file2).unwrap().into_inner();
+                match named_file.persist(object_file) {
+                    Ok(_persisted_file) => future::result(Ok(res)),
+                    Err(e) => future::err(error::ErrorInternalServerError(e))
+                }
+            }),
+    )
+}
+
+fn handle_multipart_item(
+    item: multipart::MultipartItem<dev::Payload>,
+    state: &Arc<UploadState>
+) -> Box<Stream<Item = i64, Error = error::Error>> {
+    match item {
+        multipart::MultipartItem::Field(field) => {
+            Box::new(save_file(field, state).into_stream())
+        }
+        multipart::MultipartItem::Nested(mp) => {
+            let s = state.clone();
+            Box::new(mp.map_err(error::ErrorInternalServerError)
+                     .map(move |item| { handle_multipart_item (item, &s) })
+                     .flatten())
+        }
+    }
+}
+
+fn upload(
+    (params, req): (Path<BuildPathParams>, HttpRequest<AppState>)
+) -> FutureResponse<HttpResponse> {
+    let state = req.state();
+    let uploadstate = Arc::new(UploadState { repo_path: state.build_repo_base_path.join(params.id.to_string()) });
+    Box::new(
+        req.multipart()
+            .map_err(error::ErrorInternalServerError)
+            .map(move |item| { handle_multipart_item (item, &uploadstate) })
+            .flatten()
+            .collect()
+            .map(|sizes| HttpResponse::Ok().json(sizes))
+            .map_err(|e| {
+                println!("failed: {}", e);
+                e
+            }),
+    )
+}
+
 fn main() {
     ::std::env::set_var("RUST_LOG", "actix_web=info");
     env_logger::init();
@@ -154,6 +279,7 @@ fn main() {
             .middleware(middleware::Logger::default())
             .resource("/build", |r| r.method(http::Method::POST).with(create_build))
             .resource("/build/{id}", |r| r.method(http::Method::GET).with(get_build))
+            .resource("/build/{id}/repo", |r| r.method(http::Method::POST).with(upload))
             .resource("/build/{id}/queryobjects", |r| r.method(http::Method::POST).with(query_objects))
             .scope("/build/{id}", |scope| {
                 scope.handler("/repo", |req: &HttpRequest<AppState>| handle_build_repo(req))
