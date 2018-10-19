@@ -21,7 +21,7 @@ extern crate dotenv;
 use actix::prelude::*;
 use actix_web::{
     http, middleware, server, App, AsyncResponder, FutureResponse, HttpResponse, HttpRequest,
-    Result, Path, State, fs,
+    Result, Path, State, fs, Json,
 };
 
 use diesel::prelude::*;
@@ -30,7 +30,6 @@ use futures::Future;
 use dotenv::dotenv;
 use std::env;
 use std::path;
-use std::ffi::OsString;
 
 mod db;
 mod models;
@@ -40,8 +39,8 @@ use db::{CreateBuild, LookupBuild, DbExecutor};
 
 struct AppState {
     db: Addr<DbExecutor>,
-    repo_path: OsString,
-    build_repo_base_path: OsString,
+    repo_path: path::PathBuf,
+    build_repo_base_path: path::PathBuf,
 }
 
 fn create_build(
@@ -59,13 +58,12 @@ fn create_build(
 }
 
 #[derive(Deserialize)]
-pub struct GetBuildParams {
+pub struct BuildPathParams {
     id: i32,
 }
 
-
 fn get_build(
-    (params, state): (Path<GetBuildParams>, State<AppState>),
+    (params, state): (Path<BuildPathParams>, State<AppState>),
 ) -> FutureResponse<HttpResponse> {
     state
         .db
@@ -76,6 +74,36 @@ fn get_build(
             Err(_) => Ok(HttpResponse::InternalServerError().into()),
         })
         .responder()
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct QueryObjects {
+    objects: Vec<String>
+}
+
+fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
+{
+    let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
+    let build_path = state.build_repo_base_path.join(build_id.to_string()).join(&subpath);
+    if build_path.exists() {
+        true
+    } else {
+        let main_path = state.repo_path.join(&subpath);
+        main_path.exists()
+    }
+}
+
+fn query_objects(
+    (query, params, state): (Json<QueryObjects>, Path<BuildPathParams>, State<AppState>),
+) -> HttpResponse {
+    let mut missing = vec![];
+    for object in &query.objects {
+        if ! has_object (params.id, object, &state) {
+            missing.push(object);
+        }
+    }
+    println!("{}: {:?}", params.id, &query);
+    HttpResponse::Ok().json(&missing)
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> Result<fs::NamedFile> {
@@ -115,8 +143,8 @@ fn main() {
     server::new(move || {
         let state = AppState {
             db: addr.clone(),
-            repo_path: repo_path.clone(),
-            build_repo_base_path: build_repo_base_path.clone(),
+            repo_path: path::PathBuf::from(&repo_path),
+            build_repo_base_path: path::PathBuf::from(&build_repo_base_path),
         };
 
         let repo_static_files = fs::StaticFiles::new(&state.repo_path)
@@ -126,6 +154,7 @@ fn main() {
             .middleware(middleware::Logger::default())
             .resource("/build", |r| r.method(http::Method::POST).with(create_build))
             .resource("/build/{id}", |r| r.method(http::Method::GET).with(get_build))
+            .resource("/build/{id}/queryobjects", |r| r.method(http::Method::POST).with(query_objects))
             .scope("/build/{id}", |scope| {
                 scope.handler("/repo", |req: &HttpRequest<AppState>| handle_build_repo(req))
             })
