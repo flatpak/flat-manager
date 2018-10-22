@@ -37,7 +37,8 @@ mod db;
 mod models;
 mod schema;
 
-use db::{CreateBuild, LookupBuild, DbExecutor};
+use db::{CreateBuild, CreateBuildRef, LookupBuild, DbExecutor};
+use models::{NewBuildRef};
 
 struct AppState {
     db: Addr<DbExecutor>,
@@ -79,7 +80,7 @@ fn get_build(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct MissingObjects {
+struct MissingObjectsArgs {
     wanted: Vec<String>
 }
 
@@ -96,7 +97,7 @@ fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 }
 
 fn missing_objects(
-    (missing_objects, params, state): (Json<MissingObjects>, Path<BuildPathParams>, State<AppState>),
+    (missing_objects, params, state): (Json<MissingObjectsArgs>, Path<BuildPathParams>, State<AppState>),
 ) -> HttpResponse {
     let mut missing = vec![];
     for object in &missing_objects.wanted {
@@ -106,6 +107,34 @@ fn missing_objects(
     }
     println!("{}: {:?}", params.id, &missing);
     HttpResponse::Ok().json(&missing)
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CreateBuildRefArgs {
+    #[serde(rename = "ref")] ref_name: String,
+    commit: String,
+}
+
+fn create_build_ref (
+    (args, params, state): (Json<CreateBuildRefArgs>, Path<BuildPathParams>, State<AppState>),
+) -> FutureResponse<HttpResponse> {
+    println!("{}: {:?}", params.id, &args);
+    state
+        .db
+        .send(CreateBuildRef {
+            data: NewBuildRef {
+                build_id: params.id,
+                ref_type: 0,
+                ref_name: args.ref_name.clone(),
+                commit: args.commit.clone(),
+            }
+        })
+        .from_err()
+        .and_then(|res| match res {
+            Ok(buildref) => Ok(HttpResponse::Ok().json(buildref.id)),
+            Err(_) => Ok(HttpResponse::InternalServerError().into()),
+        })
+        .responder()
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> Result<fs::NamedFile> {
@@ -284,6 +313,7 @@ fn main() {
             .middleware(middleware::Logger::default())
             .resource("/api/v1/build", |r| r.method(http::Method::POST).with(create_build))
             .resource("/api/v1/build/{id}", |r| r.method(http::Method::GET).with(get_build))
+            .resource("/api/v1/build/{id}/refs", |r| r.method(http::Method::POST).with(create_build_ref))
             .resource("/api/v1/build/{id}/upload", |r| r.method(http::Method::POST).with(upload))
             .resource("/api/v1/build/{id}/missing_objects", |r| r.method(http::Method::GET).with(missing_objects))
             .scope("/build-repo/{id}", |scope| {
