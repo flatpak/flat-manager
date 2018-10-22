@@ -282,12 +282,12 @@ fn main() {
 
         App::with_state(state)
             .middleware(middleware::Logger::default())
-            .resource("/build", |r| r.method(http::Method::POST).with(create_build))
-            .resource("/build/{id}", |r| r.method(http::Method::GET).with(get_build))
-            .resource("/build/{id}/repo", |r| r.method(http::Method::POST).with(upload))
-            .resource("/build/{id}/queryobjects", |r| r.method(http::Method::POST).with(query_objects))
-            .scope("/build/{id}", |scope| {
-                scope.handler("/repo", |req: &HttpRequest<AppState>| handle_build_repo(req))
+            .resource("/api/v1/build", |r| r.method(http::Method::POST).with(create_build))
+            .resource("/api/v1/build/{id}", |r| r.method(http::Method::GET).with(get_build))
+            .resource("/api/v1/build/{id}/upload", |r| r.method(http::Method::POST).with(upload))
+            .resource("/api/v1/build/{id}/queryobjects", |r| r.method(http::Method::POST).with(query_objects))
+            .scope("/build-repo/{id}", |scope| {
+                scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
             })
             .handler("/repo", repo_static_files)
     }).bind("127.0.0.1:8080")
