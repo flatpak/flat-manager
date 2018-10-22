@@ -53,7 +53,7 @@ fn create_build(
         .send(CreateBuild { })
         .from_err()
         .and_then(|res| match res {
-            Ok(build) => Ok(HttpResponse::Ok().json(build)),
+            Ok(build) => Ok(HttpResponse::Ok().json(build.id)),
             Err(_) => Ok(HttpResponse::InternalServerError().into()),
         })
         .responder()
