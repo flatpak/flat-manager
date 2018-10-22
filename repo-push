@@ -180,6 +180,13 @@ async def upload_objects(session, repo, remote, objects):
 
     await upload_files(session, remote, req)
 
+async def create_ref(session, remote, ref, commit):
+    print("Creating ref %s with commit %s" % (ref, commit))
+    async with session.post(remote + "/refs", json= { "ref": ref, "commit": commit} ) as resp:
+        assert 200 == resp.status ## TODO: Proper error handling
+        data = await resp.json()
+        return data;
+
 def get_object_multipart(repo, object):
     return NamedFilePayload(repo + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
@@ -243,7 +250,8 @@ async def push_main():
         await upload_objects(session, args.repo, args.remote, missing_file_objects)
 
         # Then the refs
-        # TODO
+        for ref, commit in refs.items():
+            await create_ref(session, args.remote, ref, commit)
 
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
