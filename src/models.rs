@@ -12,7 +12,7 @@ pub struct Build {
 
 
 #[derive(Serialize, Queryable, Debug)]
-pub struct BuildLog {
+pub struct _BuildLog {
     pub id: i32,
     pub build_id: i32,
     pub log_type: i16,
