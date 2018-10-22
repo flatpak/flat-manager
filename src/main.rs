@@ -79,8 +79,8 @@ fn get_build(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct QueryObjects {
-    objects: Vec<String>
+struct MissingObjects {
+    wanted: Vec<String>
 }
 
 fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
@@ -95,16 +95,16 @@ fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
     }
 }
 
-fn query_objects(
-    (query, params, state): (Json<QueryObjects>, Path<BuildPathParams>, State<AppState>),
+fn missing_objects(
+    (missing_objects, params, state): (Json<MissingObjects>, Path<BuildPathParams>, State<AppState>),
 ) -> HttpResponse {
     let mut missing = vec![];
-    for object in &query.objects {
+    for object in &missing_objects.wanted {
         if ! has_object (params.id, object, &state) {
             missing.push(object);
         }
     }
-    println!("{}: {:?}", params.id, &query);
+    println!("{}: {:?}", params.id, &missing);
     HttpResponse::Ok().json(&missing)
 }
 
@@ -285,7 +285,7 @@ fn main() {
             .resource("/api/v1/build", |r| r.method(http::Method::POST).with(create_build))
             .resource("/api/v1/build/{id}", |r| r.method(http::Method::GET).with(get_build))
             .resource("/api/v1/build/{id}/upload", |r| r.method(http::Method::POST).with(upload))
-            .resource("/api/v1/build/{id}/queryobjects", |r| r.method(http::Method::GET).with(query_objects))
+            .resource("/api/v1/build/{id}/missing_objects", |r| r.method(http::Method::GET).with(missing_objects))
             .scope("/build-repo/{id}", |scope| {
                 scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
             })
