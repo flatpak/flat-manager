@@ -285,7 +285,7 @@ fn main() {
             .resource("/api/v1/build", |r| r.method(http::Method::POST).with(create_build))
             .resource("/api/v1/build/{id}", |r| r.method(http::Method::GET).with(get_build))
             .resource("/api/v1/build/{id}/upload", |r| r.method(http::Method::POST).with(upload))
-            .resource("/api/v1/build/{id}/queryobjects", |r| r.method(http::Method::POST).with(query_objects))
+            .resource("/api/v1/build/{id}/queryobjects", |r| r.method(http::Method::GET).with(query_objects))
             .scope("/build-repo/{id}", |scope| {
                 scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
             })
