@@ -1,29 +1,23 @@
-//! Db executor actor
 use actix::prelude::*;
 use actix_web::*;
 use diesel;
 use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, Pool};
 
 use models;
+use models::{DbExecutor};
+use errors::ApiError;
 use schema;
-
-pub struct DbExecutor(pub Pool<ConnectionManager<PgConnection>>);
-
-impl Actor for DbExecutor {
-    type Context = SyncContext<Self>;
-}
 
 #[derive(Deserialize, Debug)]
 pub struct CreateBuild {
 }
 
 impl Message for CreateBuild {
-    type Result = Result<models::Build, diesel::result::Error>;
+    type Result = Result<models::Build, ApiError>;
 }
 
 impl Handler<CreateBuild> for DbExecutor {
-    type Result = Result<models::Build, diesel::result::Error>;
+    type Result = Result<models::Build, ApiError>;
 
     fn handle(&mut self, _msg: CreateBuild, _: &mut Self::Context) -> Self::Result {
         use self::schema::builds::dsl::*;
@@ -31,6 +25,9 @@ impl Handler<CreateBuild> for DbExecutor {
         diesel::insert_into(builds)
             .default_values()
             .get_result::<models::Build>(conn)
+            .map_err(|_e| {
+                ApiError::InternalServerError
+            })
     }
 }
 
@@ -41,11 +38,11 @@ pub struct CreateBuildRef {
 }
 
 impl Message for CreateBuildRef {
-    type Result = Result<models::BuildRef, diesel::result::Error>;
+    type Result = Result<models::BuildRef, ApiError>;
 }
 
 impl Handler<CreateBuildRef> for DbExecutor {
-    type Result = Result<models::BuildRef, diesel::result::Error>;
+    type Result = Result<models::BuildRef, ApiError>;
 
     fn handle(&mut self, msg: CreateBuildRef, _: &mut Self::Context) -> Self::Result {
         use self::schema::build_refs::dsl::*;
@@ -53,6 +50,9 @@ impl Handler<CreateBuildRef> for DbExecutor {
         diesel::insert_into(build_refs)
             .values(&msg.data)
             .get_result::<models::BuildRef>(conn)
+            .map_err(|_e| {
+                ApiError::InternalServerError
+            })
     }
 }
 
@@ -62,15 +62,20 @@ pub struct LookupBuild {
 }
 
 impl Message for LookupBuild {
-    type Result = Result<models::Build, diesel::result::Error>;
+    type Result = Result<models::Build, ApiError>;
 }
 
 impl Handler<LookupBuild> for DbExecutor {
-    type Result = Result<models::Build, diesel::result::Error>;
+    type Result = Result<models::Build, ApiError>;
 
     fn handle(&mut self, msg: LookupBuild, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
-        builds.filter(id.eq(msg.id)).get_result::<models::Build>(conn)
+        builds
+            .filter(id.eq(msg.id))
+            .get_result::<models::Build>(conn)
+            .map_err(|_e| {
+                ApiError::InternalServerError
+            })
     }
 }

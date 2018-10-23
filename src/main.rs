@@ -3,16 +3,15 @@
 extern crate actix;
 extern crate actix_web;
 extern crate chrono;
-#[macro_use]
-extern crate diesel;
+#[macro_use] extern crate diesel;
 extern crate dotenv;
 extern crate env_logger;
+#[macro_use] extern crate failure;
 extern crate futures;
 extern crate r2d2;
 extern crate serde;
 extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
+#[macro_use] extern crate serde_derive;
 extern crate tempfile;
 
 use actix::prelude::*;
@@ -38,9 +37,10 @@ use tempfile::NamedTempFile;
 mod db;
 mod models;
 mod schema;
+mod errors;
 
-use db::{CreateBuild, CreateBuildRef, LookupBuild, DbExecutor};
-use models::{NewBuildRef};
+use db::{CreateBuild, CreateBuildRef, LookupBuild};
+use models::{DbExecutor, NewBuildRef};
 
 struct AppState {
     db: Addr<DbExecutor>,
