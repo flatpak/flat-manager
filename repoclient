@@ -22,6 +22,8 @@ import logging
 import os
 import os
 import sys
+import traceback
+import urllib.parse
 
 from aiohttp.abc import AbstractStreamWriter
 from argparse import ArgumentParser
@@ -35,6 +37,12 @@ from gi.repository import GLib, Gio, OSTree
 
 UPLOAD_CHUNK_LIMIT = 2 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
+
+class ApiError(Exception):
+    def __init__(self, response):
+        self.response = response
+    def __str__(self):
+         return "API call %s to %s returned status %s: %s" % (self.response.method, self.response.url, self.response.status, self.response.reason)
 
 # This is similar to the regular payload, but opens the file lazily
 class NamedFilePayload(aiohttp.payload.Payload):
@@ -141,98 +149,118 @@ def local_needed_metadata(repo, commits):
                 local_needed_metadata_dirtree(repo, objects, d.out_content_checksum, d.out_meta_checksum)
     return objects
 
-async def missing_objects(session, remote, wanted):
+async def missing_objects(session, build_url, wanted):
     wanted_json=json.dumps({'wanted': wanted}).encode('utf-8')
     data=gzip.compress(wanted_json)
     headers = {
         'Content-Encoding': 'gzip',
         'Content-Type': 'application/json'
     }
-    async with session.get(remote + "/missing_objects", data=data, headers=headers) as resp:
-        assert 200 == resp.status ## TODO: Proper error handling
+    async with session.get(build_url + "/missing_objects", data=data, headers=headers) as resp:
+        if resp.status != 200:
+            raise ApiError(resp)
         data = await resp.json()
         return data;
 
-async def upload_files(session, repo, files):
+async def upload_files(session, build_url, files):
     if len(files) == 0:
         return
     print("Uploading %d objects (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size, files))))
     with aiohttp.MultipartWriter() as writer:
         for f in files:
             writer.append(f)
-    resp = await session.request(
-        "post", repo + '/upload',
-        data=writer, headers=writer.headers)
-    assert 200 == resp.status ## TODO: Proper error handling
+    resp = await session.request("post", build_url + '/upload',
+                                 data=writer, headers=writer.headers)
+    if resp.status != 200:
+        raise ApiError(resp)
 
-async def upload_objects(session, repo, remote, objects):
+async def upload_objects(session, repo_path, build_url, objects):
     req = []
     total_size = 0
     for file_obj in objects:
-        named = get_object_multipart(repo, file_obj)
+        named = get_object_multipart(repo_path, file_obj)
         total_size = total_size + named.size
         req.append(named);
 
         if total_size > UPLOAD_CHUNK_LIMIT:
-            await upload_files(session, remote, req)
+            await upload_files(session, build_url, req)
             req = []
             total_size = 0
 
-    await upload_files(session, remote, req)
+    await upload_files(session, build_url, req)
 
-async def create_ref(session, remote, ref, commit):
+async def create_ref(session, build_url, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
-    async with session.post(remote + "/refs", json= { "ref": ref, "commit": commit} ) as resp:
-        assert 200 == resp.status ## TODO: Proper error handling
+    async with session.post(build_url + "/refs", json= { "ref": ref, "commit": commit} ) as resp:
+        if resp.status != 200:
+            raise ApiError(resp)
         data = await resp.json()
         return data;
 
-def get_object_multipart(repo, object):
-    return NamedFilePayload(repo + "/objects/" + object[:2] + "/" + object[2:], filename=object)
+def get_object_multipart(repo_path, object):
+    return NamedFilePayload(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
-async def push_command(args):
-    if args.repo is None:
-        print('No repo specified')
-        exit(1)
+async def create_command(args, session):
+    pass
 
-    repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo))
-    repo.open(None)
-    if len(args.branch) == 0:
-        _, refs = repo.list_refs(None, None)
+async def push_command(args, session):
+    local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
+    try:
+        local_repo.open(None)
+    except GLib.Error as err:
+        print("Can't open repo %s: %s" % (args.repo_path, err.message))
+        return 1
+
+    if len(args.branches) == 0:
+        _, refs = local_repo.list_refs(None, None)
     else:
         refs = {}
-        for branch in args.branch:
-            _, rev = repo.resolve_rev(branch, False)
+        for branch in args.branches:
+            _, rev = local_repo.resolve_rev(branch, False)
             refs[branch] = rev
 
     print("Uploading refs: %s"% (list(refs)))
 
-    metadata_objects = local_needed_metadata(repo, refs.values())
+    build_url = urllib.parse.urljoin(args.upstream_url, "api/v1/build/" + args.build_id)
+
+    metadata_objects = local_needed_metadata(local_repo, refs.values())
 
     print("Refs contain %d metadata objects" % (len(metadata_objects)))
 
+    missing_metadata_objects = await missing_objects(session, build_url, list(metadata_objects))
+
+    print("Remote missing %d of those" % (len(missing_metadata_objects)))
+
+    file_objects = local_needed_files(local_repo, missing_metadata_objects)
+    print("Has %d file objects for those" % (len(file_objects)))
+
+    missing_file_objects = await missing_objects(session, build_url, list(file_objects))
+    print("Remote missing %d of those" % (len(missing_file_objects)))
+
+    # First upload all missing file objects
+    print("Uploading file objects")
+    await upload_objects(session, args.repo_path, build_url, missing_file_objects)
+
+    # Then all the metadata
+    print("Uploading metadata objects")
+    await upload_objects(session, args.repo_path, build_url, missing_file_objects)
+
+    # Then the refs
+    for ref, commit in refs.items():
+        await create_ref(session, build_url, ref, commit)
+
+async def run_with_session(args):
     async with aiohttp.ClientSession() as session:
-        missing_metadata_objects = await missing_objects(session, args.remote, list(metadata_objects))
+        res = 1
+        try:
+            res = await args.func(args, session)
+        except SystemExit:
+            raise # Pass on regular exit callse
+        except:
+            print("\n\nUnexpected error in %s:" % (args.subparser_name))
+            traceback.print_exc()
+        exit(res)
 
-        print("Remote missing %d of those" % (len(missing_metadata_objects)))
-
-        file_objects = local_needed_files(repo, missing_metadata_objects)
-        print("Has %d file objects for those" % (len(file_objects)))
-
-        missing_file_objects = await missing_objects(session, args.remote, list(file_objects))
-        print("Remote missing %d of those" % (len(missing_file_objects)))
-
-        # First upload all missing file objects
-        print("Uploading file objects")
-        await upload_objects(session, args.repo, args.remote, missing_file_objects)
-
-        # Then all the metadata
-        print("Uploading metadata objects")
-        await upload_objects(session, args.repo, args.remote, missing_file_objects)
-
-        # Then the refs
-        for ref, commit in refs.items():
-            await create_ref(session, args.remote, ref, commit)
 
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
@@ -248,10 +276,15 @@ if __name__ == '__main__':
                                        help='additional help')
 
     push_parser = subparsers.add_parser('push', help='Push to repo manager')
-    push_parser.add_argument('--repo', help='local repository')
-    push_parser.add_argument('remote', help='remote repository')
-    push_parser.add_argument('branch', nargs='*', help='branches to push')
+    push_parser.add_argument('upstream_url', help='remote repo manager url')
+    push_parser.add_argument('build_id', help='build id')
+    push_parser.add_argument('repo_path', help='local repository')
+    push_parser.add_argument('branches', nargs='*', help='branches to push')
     push_parser.set_defaults(func=push_command)
+
+    create_parser = subparsers.add_parser('create', help='Create new build')
+    create_parser.add_argument('upstream_url', help='remote repo manager url')
+    create_parser.set_defaults(func=create_command)
 
     args = parser.parse_args()
 
@@ -269,4 +302,4 @@ if __name__ == '__main__':
         exit(1)
 
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(args.func(args))
+    loop.run_until_complete(run_with_session(args))
