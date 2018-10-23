@@ -190,26 +190,7 @@ async def create_ref(session, remote, ref, commit):
 def get_object_multipart(repo, object):
     return NamedFilePayload(repo + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
-async def push_main():
-    aparser = ArgumentParser(description='Push to repo manager')
-    aparser.add_argument('--repo', help='local repository')
-    aparser.add_argument('-v', '--verbose', action='store_true',
-                         help='enable verbose output')
-    aparser.add_argument('--debug', action='store_true',
-                         help='enable debugging output')
-    aparser.add_argument('remote', help='remote repository')
-    aparser.add_argument('branch', nargs='*', help='branches to push')
-    args = aparser.parse_args()
-
-    loglevel = logging.WARNING
-    if args.verbose:
-        loglevel = logging.INFO
-    if args.debug:
-        loglevel = logging.DEBUG
-
-    logging.basicConfig(format='%(module)s: %(levelname)s: %(message)s',
-                        level=loglevel, stream=sys.stderr)
-
+async def push_command(args):
     if args.repo is None:
         print('No repo specified')
         exit(1)
@@ -256,5 +237,36 @@ async def push_main():
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
 
+    parser = ArgumentParser(prog=progname)
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='enable verbose output')
+    parser.add_argument('--debug', action='store_true',
+                        help='enable debugging output')
+    subparsers = parser.add_subparsers(title='subcommands',
+                                       dest='subparser_name',
+                                       description='valid subcommands',
+                                       help='additional help')
+
+    push_parser = subparsers.add_parser('push', help='Push to repo manager')
+    push_parser.add_argument('--repo', help='local repository')
+    push_parser.add_argument('remote', help='remote repository')
+    push_parser.add_argument('branch', nargs='*', help='branches to push')
+    push_parser.set_defaults(func=push_command)
+
+    args = parser.parse_args()
+
+    loglevel = logging.WARNING
+    if args.verbose:
+        loglevel = logging.INFO
+    if args.debug:
+        loglevel = logging.DEBUG
+
+    logging.basicConfig(format='%(module)s: %(levelname)s: %(message)s',
+                        level=loglevel, stream=sys.stderr)
+
+    if not args.subparser_name:
+        print("No subcommand specified, see --help for usage")
+        exit(1)
+
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(push_main())
+    loop.run_until_complete(args.func(args))
