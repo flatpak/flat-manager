@@ -6,11 +6,7 @@ use std::path::PathBuf;
 use std::path::Path;
 use std::ffi::OsString;
 
-use api::create_build;
-use api::get_build;
-use api::create_build_ref;
-use api::upload;
-use api::missing_objects;
+use api;
 
 pub struct AppState {
     pub db: Addr<DbExecutor>,
@@ -46,11 +42,11 @@ pub fn create_app(
 
     App::with_state(state)
         .middleware(middleware::Logger::default())
-        .resource("/api/v1/build", |r| r.method(Method::POST).with(create_build))
-        .resource("/api/v1/build/{id}", |r| r.method(Method::GET).with(get_build))
-        .resource("/api/v1/build/{id}/refs", |r| r.method(Method::POST).with(create_build_ref))
-        .resource("/api/v1/build/{id}/upload", |r| r.method(Method::POST).with(upload))
-        .resource("/api/v1/build/{id}/missing_objects", |r| r.method(Method::GET).with(missing_objects))
+        .resource("/api/v1/build", |r| r.method(Method::POST).with(api::create_build))
+        .resource("/api/v1/build/{id}", |r| r.method(Method::GET).with(api::get_build))
+        .resource("/api/v1/build/{id}/refs", |r| r.method(Method::POST).with(api::create_build_ref))
+        .resource("/api/v1/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
+        .resource("/api/v1/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
         })

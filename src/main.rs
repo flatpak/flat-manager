@@ -15,23 +15,11 @@ extern crate serde_json;
 extern crate tempfile;
 
 use actix::prelude::*;
-use actix_web::{dev, error, multipart, server,};
-use actix_web::{AsyncResponder, FutureResponse, HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
-use actix_web::error::{ErrorBadRequest,};
-
+use actix_web::{server,};
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
-use futures::future;
-use futures::{Future, Stream};
 use dotenv::dotenv;
 use std::env;
-use std::path;
-use std::io::Write;
-use std::io;
-use std::sync::Arc;
-use std::rc::Rc;
-use std::cell::RefCell;
-use tempfile::NamedTempFile;
 
 mod api;
 mod db;
@@ -40,9 +28,7 @@ mod schema;
 mod errors;
 mod app;
 
-use app::{AppState};
-use db::{CreateBuild, CreateBuildRef, LookupBuild};
-use models::{DbExecutor, NewBuildRef};
+use models::{DbExecutor};
 
 fn main() {
     ::std::env::set_var("RUST_LOG", "actix_web=info");
