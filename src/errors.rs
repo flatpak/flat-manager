@@ -8,13 +8,19 @@ pub enum ApiError {
 
     #[fail(display = "NotFound")]
     NotFound,
+
+    #[fail(display = "BadRequest: {}", _0)]
+    BadRequest(String),
 }
 
 impl From<DieselError> for ApiError {
     fn from(e: DieselError) -> Self {
         match e {
             DieselError::NotFound => ApiError::NotFound,
-            _ => ApiError::InternalServerError
+            _ => {
+                println!("Diesel error: {:?}", e);
+                ApiError::InternalServerError
+            }
         }
     }
 }
@@ -24,6 +30,7 @@ impl ResponseError for ApiError {
         match *self {
             ApiError::InternalServerError => HttpResponse::InternalServerError().json("Internal Server Error"),
             ApiError::NotFound => HttpResponse::NotFound().json("Not found"),
+            ApiError::BadRequest(ref message) => HttpResponse::BadRequest().json(message),
         }
     }
 }

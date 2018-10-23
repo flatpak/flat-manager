@@ -4,17 +4,22 @@ use actix_web::error::{ErrorBadRequest,};
 
 use futures::future;
 use futures::{Future, Stream};
+use std::cell::RefCell;
+use std::env;
+use std::ffi::OsString;
+use std::fs::File;
 use std::fs;
-use std::path;
 use std::io::Write;
 use std::io;
-use std::sync::Arc;
+use std::path;
+use std::process::{Command, Stdio};
 use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::Arc;
+use std::thread;
 use tempfile::NamedTempFile;
 
 use app::{AppState};
-use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef};
+use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, LookupBuildRefs, CommitBuild};
 use models::{NewBuildRef};
 use actix_web::ResponseError;
 
@@ -258,7 +263,7 @@ pub fn upload(
     (params, req): (Path<BuildPathParams>, HttpRequest<AppState>)
 ) -> FutureResponse<HttpResponse> {
     let state = req.state();
-    let uploadstate = Arc::new(UploadState { repo_path: state.build_repo_base_path.join(params.id.to_string()) });
+    let uploadstate = Arc::new(UploadState { repo_path: state.build_repo_base_path.join(params.id.to_string()).join("upload") });
     Box::new(
         req.multipart()
             .map_err(error::ErrorInternalServerError)
@@ -271,4 +276,132 @@ pub fn upload(
                 e
             }),
     )
+}
+
+fn _ostree(repo_path: &path::PathBuf, command: &str) -> Command {
+    let mut repo_arg = OsString::from("--repo=");
+    repo_arg.push(repo_path);
+
+    let mut cmd = Command::new("ostree");
+    cmd
+        .arg(command)
+        .arg(repo_arg)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    cmd
+}
+
+fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf) -> io::Result<()> {
+    let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
+
+    for &d in ["extensions",
+               "objects",
+               "refs/heads",
+               "refs/mirrors",
+               "refs/remotes",
+               "state",
+               "tmp/cache"].iter() {
+        fs::create_dir_all(repo_path.join(d))?;
+    }
+
+    let mut file = File::create(repo_path.join("config"))?;
+    file.write_all(format!(r#"
+[core]
+repo_version=1
+mode=archive-z2
+parent={}"#,
+                           parent_repo_absolute_path.display()).as_bytes())?;
+    Ok(())
+}
+
+fn commit_build(state: AppState, build_id: i32) -> io::Result<()> {
+    let build_refs = state
+        .db
+        .send(LookupBuildRefs {
+            id: build_id
+        })
+        .wait()
+    // wait error
+        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't load build refs")))?
+    // send error
+        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't load build refs")))?;
+
+    let build_repo_path = state.build_repo_base_path.join(build_id.to_string());
+    let upload_path = build_repo_path.join("upload");
+
+    init_repo (&build_repo_path, &state.repo_path)?;
+    init_repo (&upload_path, &state.repo_path)?;
+
+    let mut src_repo_arg = OsString::from("--src-repo=");
+    src_repo_arg.push(upload_path);
+
+    let mut iterator = build_refs.iter().peekable();
+    while let Some(build_ref) = iterator.next() {
+        let mut src_ref_arg = String::from("--src-ref=");
+        src_ref_arg.push_str(&build_ref.commit);
+
+        let mut cmd = Command::new("flatpak");
+        cmd
+            .arg("build-commit-from")
+            .arg("--timestamp=NOW")
+            .arg("--no-update-summary")
+            .arg("--untrusted");
+        if iterator.peek().is_some() {
+            cmd.arg("--disable-fsync");
+        }
+
+        cmd
+            .arg(&src_repo_arg)
+            .arg(&src_ref_arg)
+            .arg(&build_repo_path)
+            .arg(&build_ref.ref_name)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .output()?;
+    }
+
+    Command::new("flatpak")
+        .arg("build-update-repo")
+        .arg(&build_repo_path)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()?;
+
+    /* TODO:
+     * handle errors everywhere
+     * gpg signatures
+     * collection id
+     * eol
+     * store log to db
+     * update repo_state
+     * signal success somehow?
+     */
+    Ok(())
+}
+
+fn commit_thread(state: AppState, build_id: i32) {
+    if commit_build(state, build_id).is_err() {
+        println!("commit failed");
+        // TODO: Set repo_state=failed in db, signal somehow?
+    }
+}
+
+use std::clone::Clone;
+pub fn commit(
+    (params, state): (Path<BuildPathParams>, State<AppState>),
+) -> FutureResponse<HttpResponse> {
+    let s = (*state).clone();
+    let id = params.id;
+    state
+        .db
+        .send(CommitBuild { id: params.id })
+        .from_err()
+        .and_then(move |res| match res {
+            Ok(build) => {
+                thread::spawn(move || commit_thread (s, id) );
+                Ok(HttpResponse::Ok().json(build))
+            },
+            Err(e) => Ok(e.error_response())
+        })
+        .responder()
 }

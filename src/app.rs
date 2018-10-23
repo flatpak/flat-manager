@@ -8,6 +8,7 @@ use std::ffi::OsString;
 
 use api;
 
+#[derive(Clone)]
 pub struct AppState {
     pub db: Addr<DbExecutor>,
     pub repo_path: PathBuf,
@@ -47,6 +48,7 @@ pub fn create_app(
         .resource("/api/v1/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
         .resource("/api/v1/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
         .resource("/api/v1/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
+        .resource("/api/v1/build/{id}/commit", |r| r.method(Method::POST).with(api::commit))
         .resource("/api/v1/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))

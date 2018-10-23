@@ -19,6 +19,14 @@ pub struct Build {
     pub repo_state: i16
 }
 
+pub enum RepoState {
+    Uploading,
+    Verifying,
+    _Failed,
+    _Ready,
+    _Purged,
+}
+
 #[derive(Deserialize, Insertable, Debug)]
 #[table_name = "build_refs"]
 pub struct NewBuildRef {
