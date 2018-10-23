@@ -1,4 +1,4 @@
-use actix_web::{dev, error, multipart, };
+use actix_web::{dev, error, multipart, http};
 use actix_web::{AsyncResponder, FutureResponse, HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
 use actix_web::error::{ErrorBadRequest,};
 
@@ -14,19 +14,27 @@ use std::cell::RefCell;
 use tempfile::NamedTempFile;
 
 use app::{AppState};
-use db::{CreateBuild, CreateBuildRef, LookupBuild};
+use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef};
 use models::{NewBuildRef};
+use actix_web::ResponseError;
 
 pub fn create_build(
-    state: State<AppState>,
+    (state, req): (State<AppState>, HttpRequest<AppState>)
 ) -> FutureResponse<HttpResponse> {
     state
         .db
         .send(CreateBuild { })
         .from_err()
-        .and_then(|res| match res {
-            Ok(build) => Ok(HttpResponse::Ok().json(build.id)),
-            Err(_) => Ok(HttpResponse::InternalServerError().into()),
+        .and_then(move |res| match res {
+            Ok(build) => {
+                match req.url_for("show_build", &[build.id.to_string()]) {
+                    Ok(url) => Ok(HttpResponse::Ok()
+                                  .header(http::header::LOCATION, url.to_string())
+                                  .json(build)),
+                    Err(e) => Ok(e.error_response())
+                }
+            },
+            Err(e) => Ok(e.error_response())
         })
         .responder()
 }
@@ -45,7 +53,30 @@ pub fn get_build(
         .from_err()
         .and_then(|res| match res {
             Ok(build) => Ok(HttpResponse::Ok().json(build)),
-            Err(_) => Ok(HttpResponse::InternalServerError().into()),
+            Err(e) => Ok(e.error_response())
+        })
+        .responder()
+}
+
+#[derive(Deserialize)]
+pub struct RefPathParams {
+    id: i32,
+    ref_id: i32,
+}
+
+pub fn get_build_ref(
+    (params, state): (Path<RefPathParams>, State<AppState>),
+) -> FutureResponse<HttpResponse> {
+    state
+        .db
+        .send(LookupBuildRef {
+            id: params.id,
+            ref_id: params.ref_id,
+        })
+        .from_err()
+        .and_then(|res| match res {
+            Ok(build_ref) => Ok(HttpResponse::Ok().json(build_ref)),
+            Err(e) => Ok(e.error_response())
         })
         .responder()
 }
@@ -76,7 +107,6 @@ pub fn missing_objects(
             missing.push(object);
         }
     }
-    println!("{}: {:?}", params.id, &missing);
     HttpResponse::Ok().json(&missing)
 }
 
@@ -87,9 +117,8 @@ pub struct CreateBuildRefArgs {
 }
 
 pub fn create_build_ref (
-    (args, params, state): (Json<CreateBuildRefArgs>, Path<BuildPathParams>, State<AppState>),
+    (args, params, state, req): (Json<CreateBuildRefArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> FutureResponse<HttpResponse> {
-    println!("{}: {:?}", params.id, &args);
     state
         .db
         .send(CreateBuildRef {
@@ -100,9 +129,16 @@ pub fn create_build_ref (
             }
         })
         .from_err()
-        .and_then(|res| match res {
-            Ok(buildref) => Ok(HttpResponse::Ok().json(buildref.id)),
-            Err(_) => Ok(HttpResponse::InternalServerError().into()),
+        .and_then(move |res| match res {
+            Ok(buildref) =>  {
+                match req.url_for("show_build_ref", &[params.id.to_string(), buildref.id.to_string()]) {
+                    Ok(url) => Ok(HttpResponse::Ok()
+                                  .header(http::header::LOCATION, url.to_string())
+                                  .json(buildref)),
+                    Err(e) => Ok(e.error_response())
+                }
+            },
+            Err(e) => Ok(e.error_response())
         })
         .responder()
 }

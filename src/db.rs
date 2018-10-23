@@ -25,8 +25,8 @@ impl Handler<CreateBuild> for DbExecutor {
         diesel::insert_into(builds)
             .default_values()
             .get_result::<models::Build>(conn)
-            .map_err(|_e| {
-                ApiError::InternalServerError
+            .map_err(|e| {
+                From::from(e)
             })
     }
 }
@@ -50,8 +50,8 @@ impl Handler<CreateBuildRef> for DbExecutor {
         diesel::insert_into(build_refs)
             .values(&msg.data)
             .get_result::<models::BuildRef>(conn)
-            .map_err(|_e| {
-                ApiError::InternalServerError
+            .map_err(|e| {
+                From::from(e)
             })
     }
 }
@@ -74,8 +74,32 @@ impl Handler<LookupBuild> for DbExecutor {
         builds
             .filter(id.eq(msg.id))
             .get_result::<models::Build>(conn)
-            .map_err(|_e| {
-                ApiError::InternalServerError
+            .map_err(|e| {
+                From::from(e)
             })
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LookupBuildRef {
+    pub id: i32,
+    pub ref_id: i32,
+}
+
+impl Message for LookupBuildRef {
+    type Result = Result<models::BuildRef, ApiError>;
+}
+
+impl Handler<LookupBuildRef> for DbExecutor {
+    type Result = Result<models::BuildRef, ApiError>;
+
+    fn handle(&mut self, msg: LookupBuildRef, _: &mut Self::Context) -> Self::Result {
+        use schema::build_refs::dsl::*;
+        let conn = &self.0.get().unwrap();
+        build_refs
+            .filter(build_id.eq(msg.id))
+            .filter(id.eq(msg.ref_id))
+            .get_result::<models::BuildRef>(conn)
+            .map_err(|e| From::from(e))
     }
 }

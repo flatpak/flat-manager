@@ -191,7 +191,7 @@ async def upload_objects(session, repo_path, build_url, objects):
 
 async def create_ref(session, build_url, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
-    async with session.post(build_url + "/refs", json= { "ref": ref, "commit": commit} ) as resp:
+    async with session.post(build_url + "/build_ref", json= { "ref": ref, "commit": commit} ) as resp:
         if resp.status != 200:
             raise ApiError(resp)
         data = await resp.json()
@@ -201,7 +201,13 @@ def get_object_multipart(repo_path, object):
     return NamedFilePayload(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
 async def create_command(args, session):
-    pass
+    build_url = urllib.parse.urljoin(args.manager_url, "api/v1/build")
+    async with session.post(build_url, json={} ) as resp:
+        if resp.status != 200:
+            raise ApiError(resp)
+        data = await resp.json()
+        print(resp.headers['location'])
+
 
 async def push_command(args, session):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
@@ -219,35 +225,33 @@ async def push_command(args, session):
             _, rev = local_repo.resolve_rev(branch, False)
             refs[branch] = rev
 
-    print("Uploading refs: %s"% (list(refs)))
-
-    build_url = urllib.parse.urljoin(args.upstream_url, "api/v1/build/" + args.build_id)
+    print("Uploading refs to %s: %s"% (args.build_url, list(refs)))
 
     metadata_objects = local_needed_metadata(local_repo, refs.values())
 
     print("Refs contain %d metadata objects" % (len(metadata_objects)))
 
-    missing_metadata_objects = await missing_objects(session, build_url, list(metadata_objects))
+    missing_metadata_objects = await missing_objects(session, args.build_url, list(metadata_objects))
 
     print("Remote missing %d of those" % (len(missing_metadata_objects)))
 
     file_objects = local_needed_files(local_repo, missing_metadata_objects)
     print("Has %d file objects for those" % (len(file_objects)))
 
-    missing_file_objects = await missing_objects(session, build_url, list(file_objects))
+    missing_file_objects = await missing_objects(session, args.build_url, list(file_objects))
     print("Remote missing %d of those" % (len(missing_file_objects)))
 
     # First upload all missing file objects
     print("Uploading file objects")
-    await upload_objects(session, args.repo_path, build_url, missing_file_objects)
+    await upload_objects(session, args.repo_path, args.build_url, missing_file_objects)
 
     # Then all the metadata
     print("Uploading metadata objects")
-    await upload_objects(session, args.repo_path, build_url, missing_file_objects)
+    await upload_objects(session, args.repo_path, args.build_url, missing_file_objects)
 
     # Then the refs
     for ref, commit in refs.items():
-        await create_ref(session, build_url, ref, commit)
+        await create_ref(session, args.build_url, ref, commit)
 
 async def run_with_session(args):
     async with aiohttp.ClientSession() as session:
@@ -276,14 +280,13 @@ if __name__ == '__main__':
                                        help='additional help')
 
     push_parser = subparsers.add_parser('push', help='Push to repo manager')
-    push_parser.add_argument('upstream_url', help='remote repo manager url')
-    push_parser.add_argument('build_id', help='build id')
+    push_parser.add_argument('build_url', help='remote build url')
     push_parser.add_argument('repo_path', help='local repository')
     push_parser.add_argument('branches', nargs='*', help='branches to push')
     push_parser.set_defaults(func=push_command)
 
     create_parser = subparsers.add_parser('create', help='Create new build')
-    create_parser.add_argument('upstream_url', help='remote repo manager url')
+    create_parser.add_argument('manager_url', help='remote repo manager url')
     create_parser.set_defaults(func=create_command)
 
     args = parser.parse_args()
