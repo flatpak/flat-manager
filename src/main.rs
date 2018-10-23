@@ -1,3 +1,5 @@
+#![allow(proc_macro_derive_resolution_fallback)]
+
 extern crate actix;
 extern crate actix_web;
 extern crate chrono;
@@ -124,7 +126,6 @@ fn create_build_ref (
         .send(CreateBuildRef {
             data: NewBuildRef {
                 build_id: params.id,
-                ref_type: 0,
                 ref_name: args.ref_name.clone(),
                 commit: args.commit.clone(),
             }

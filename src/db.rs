@@ -48,9 +48,9 @@ impl Handler<CreateBuildRef> for DbExecutor {
     type Result = Result<models::BuildRef, diesel::result::Error>;
 
     fn handle(&mut self, msg: CreateBuildRef, _: &mut Self::Context) -> Self::Result {
-        use self::schema::refs::dsl::*;
+        use self::schema::build_refs::dsl::*;
         let conn = &self.0.get().unwrap();
-        diesel::insert_into(refs)
+        diesel::insert_into(build_refs)
             .values(&msg.data)
             .get_result::<models::BuildRef>(conn)
     }

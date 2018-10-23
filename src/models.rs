@@ -2,7 +2,7 @@
 
 use chrono;
 
-use schema::{ refs, };
+use schema::{ build_refs, };
 
 #[derive(Serialize, Queryable, Debug)]
 pub struct Build {
@@ -12,19 +12,10 @@ pub struct Build {
     pub repo_state: i16
 }
 
-
-#[derive(Serialize, Queryable, Debug)]
-pub struct _BuildLog {
-    pub id: i32,
-    pub build_id: i32,
-    pub log_type: i16,
-}
-
-#[derive(Deserialize, Debug, Insertable)]
-#[table_name = "refs"]
+#[derive(Deserialize, Insertable, Debug)]
+#[table_name = "build_refs"]
 pub struct NewBuildRef {
     pub build_id: i32,
-    pub ref_type: i16,
     pub ref_name: String,
     pub commit: String,
 }
@@ -33,7 +24,6 @@ pub struct NewBuildRef {
 pub struct BuildRef {
     pub id: i32,
     pub build_id: i32,
-    pub ref_type: i16,
     pub ref_name: String,
     pub commit: String,
 }

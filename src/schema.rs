@@ -1,4 +1,11 @@
-#![allow(proc_macro_derive_resolution_fallback)]
+table! {
+    build_refs (id) {
+        id -> Int4,
+        build_id -> Int4,
+        ref_name -> Text,
+        commit -> Text,
+    }
+}
 
 table! {
     builds (id) {
@@ -10,29 +17,29 @@ table! {
 }
 
 table! {
-    logs (id) {
+    commit_logs (id) {
         id -> Int4,
         build_id -> Int4,
-        log_type -> Int2,
-        log_text -> Text,
+        text -> Text,
     }
 }
 
 table! {
-    refs (id) {
+    published_refs (id) {
         id -> Int4,
         build_id -> Int4,
-        ref_type -> Int2,
         ref_name -> Text,
         commit -> Text,
     }
 }
 
-joinable!(logs -> builds (build_id));
-joinable!(refs -> builds (build_id));
+joinable!(build_refs -> builds (build_id));
+joinable!(commit_logs -> builds (build_id));
+joinable!(published_refs -> builds (build_id));
 
 allow_tables_to_appear_in_same_query!(
+    build_refs,
     builds,
-    logs,
-    refs,
+    commit_logs,
+    published_refs,
 );
