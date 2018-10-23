@@ -107,7 +107,9 @@ pub fn missing_objects(
             missing.push(object);
         }
     }
-    HttpResponse::Ok().json(&missing)
+    HttpResponse::Ok()
+        .content_encoding(http::ContentEncoding::Gzip)
+        .json(&missing)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
