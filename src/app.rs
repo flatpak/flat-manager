@@ -4,7 +4,7 @@ use actix_web::{App, http::Method, HttpRequest, fs::NamedFile};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
-use std::ffi::OsString;
+use std::env;
 
 use api;
 
@@ -14,6 +14,9 @@ pub struct AppState {
     pub repo_path: PathBuf,
     pub build_repo_base_path: PathBuf,
     pub collection_id: Option<String>,
+    pub gpg_homedir: Option<String>,
+    pub build_gpg_key: Option<String>,
+    pub main_gpg_key: Option<String>,
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
@@ -30,15 +33,20 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
 
 pub fn create_app(
     db: Addr<DbExecutor>,
-    repo_path: &OsString,
-    build_repo_base_path: &OsString,
-    collection_id: &Option<OsString>,
 ) -> App<AppState> {
+    let repo_path = env::var_os("REPO_PATH")
+        .expect("REPO_PATH must be set");
+    let build_repo_base_path = env::var_os("BUILD_REPO_BASE_PATH")
+        .expect("BUILD_REPO_BASE_PATH must be set");
+
     let state = AppState {
         db: db.clone(),
         repo_path: PathBuf::from(repo_path),
         build_repo_base_path: PathBuf::from(build_repo_base_path),
-        collection_id: collection_id.as_ref().map(|os| os.clone().into_string().expect("non-utf8 collection id")),
+        collection_id: env::var("COLLECTION_ID").ok(),
+        gpg_homedir: env::var("GPG_HOMEDIR").ok(),
+        build_gpg_key: env::var("BUILD_GPG_KEY").ok(),
+        main_gpg_key: env::var("MAIN_GPG_KEY").ok(),
     };
 
     let repo_static_files = fs::StaticFiles::new(&state.repo_path)

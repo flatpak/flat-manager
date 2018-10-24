@@ -351,6 +351,16 @@ fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result
             .arg("--untrusted")         // Verify that the uploaded objects are correct
             .arg("--disable-fsync");    // There is a sync in flatpak build-update-repo, so avoid it here
 
+        if let Some(gpg_homedir) = &state.gpg_homedir {
+            cmd
+                .arg(format!("--gpg-homedir=={}", gpg_homedir));
+        };
+
+        if let Some(key) = &state.build_gpg_key {
+            cmd
+                .arg(format!("--gpg-sign=={}", key));
+        };
+
         if let Some(endoflife) = &args.endoflife {
             cmd
                 .arg("--force")         // Even if the content is the same, the metadata is not, so ensure its updated
@@ -387,7 +397,6 @@ fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result
      * update repo_state, but also a string with state (+ failure reason)
      * signal success somehow?
      * handle errors everywhere
-     * gpg signatures
      */
     Ok(())
 }
