@@ -291,7 +291,7 @@ fn _ostree(repo_path: &path::PathBuf, command: &str) -> Command {
     cmd
 }
 
-fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf) -> io::Result<()> {
+fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
 
     for &d in ["extensions",
@@ -309,12 +309,16 @@ fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf) -> io:
 [core]
 repo_version=1
 mode=archive-z2
-parent={}"#,
+{}parent={}"#,
+                           match opt_collection_id {
+                               Some(collection_id) => format!("collection-id={}\n", collection_id),
+                               _ => "".to_string(),
+                           },
                            parent_repo_absolute_path.display()).as_bytes())?;
     Ok(())
 }
 
-fn commit_build(state: AppState, build_id: i32) -> io::Result<()> {
+fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result<()> {
     let build_refs = state
         .db
         .send(LookupBuildRefs {
@@ -329,28 +333,31 @@ fn commit_build(state: AppState, build_id: i32) -> io::Result<()> {
     let build_repo_path = state.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
-    init_repo (&build_repo_path, &state.repo_path)?;
-    init_repo (&upload_path, &state.repo_path)?;
+    init_repo (&build_repo_path, &state.repo_path, &state.collection_id)?;
+    init_repo (&upload_path, &state.repo_path, &None)?;
 
     let mut src_repo_arg = OsString::from("--src-repo=");
-    src_repo_arg.push(upload_path);
+    src_repo_arg.push(&upload_path);
 
-    let mut iterator = build_refs.iter().peekable();
-    while let Some(build_ref) = iterator.next() {
+    for build_ref in build_refs.iter() {
         let mut src_ref_arg = String::from("--src-ref=");
         src_ref_arg.push_str(&build_ref.commit);
 
         let mut cmd = Command::new("flatpak");
         cmd
             .arg("build-commit-from")
-            .arg("--timestamp=NOW")
-            .arg("--no-update-summary")
-            .arg("--untrusted");
-        if iterator.peek().is_some() {
-            cmd.arg("--disable-fsync");
-        }
+            .arg("--timestamp=NOW")     // All builds have the same timestamp, not when the individual builds finished
+            .arg("--no-update-summary") // We update it once at the end
+            .arg("--untrusted")         // Verify that the uploaded objects are correct
+            .arg("--disable-fsync");    // There is a sync in flatpak build-update-repo, so avoid it here
 
-        cmd
+        if let Some(endoflife) = &args.endoflife {
+            cmd
+                .arg("--force")         // Even if the content is the same, the metadata is not, so ensure its updated
+                .arg(format!("--end-of-life={}", endoflife));
+        };
+
+        let output = cmd
             .arg(&src_repo_arg)
             .arg(&src_ref_arg)
             .arg(&build_repo_path)
@@ -358,37 +365,48 @@ fn commit_build(state: AppState, build_id: i32) -> io::Result<()> {
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .output()?;
+        if !output.status.success() {
+            return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to build commit for ref {}", &build_ref.ref_name)));
+        }
     }
 
-    Command::new("flatpak")
+    let output = Command::new("flatpak")
         .arg("build-update-repo")
         .arg(&build_repo_path)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .output()?;
+    if !output.status.success() {
+        return Err(io::Error::new(io::ErrorKind::Other, "Failed to update repo"));
+    }
+
+    fs::remove_dir_all(&upload_path)?;
 
     /* TODO:
+     * log update to file?
+     * update repo_state, but also a string with state (+ failure reason)
+     * signal success somehow?
      * handle errors everywhere
      * gpg signatures
-     * collection id
-     * eol
-     * store log to db
-     * update repo_state
-     * signal success somehow?
      */
     Ok(())
 }
 
-fn commit_thread(state: AppState, build_id: i32) {
-    if commit_build(state, build_id).is_err() {
+fn commit_thread(state: AppState, build_id: i32, args: CommitArgs) {
+    if commit_build(state, build_id, &args).is_err() {
         println!("commit failed");
         // TODO: Set repo_state=failed in db, signal somehow?
     }
 }
 
+#[derive(Deserialize)]
+pub struct CommitArgs {
+    endoflife: Option<String>,
+}
+
 use std::clone::Clone;
 pub fn commit(
-    (params, state): (Path<BuildPathParams>, State<AppState>),
+    (args, params, state): (Json<CommitArgs>, Path<BuildPathParams>, State<AppState>),
 ) -> FutureResponse<HttpResponse> {
     let s = (*state).clone();
     let id = params.id;
@@ -398,7 +416,7 @@ pub fn commit(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                thread::spawn(move || commit_thread (s, id) );
+                thread::spawn(move || commit_thread (s, id, args.into_inner()) );
                 Ok(HttpResponse::Ok().json(build))
             },
             Err(e) => Ok(e.error_response())

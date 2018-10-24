@@ -43,6 +43,7 @@ fn main() {
         .expect("REPO_PATH must be set");
     let build_repo_base_path = env::var_os("BUILD_REPO_BASE_PATH")
         .expect("BUILD_REPO_BASE_PATH must be set");
+    let collection_id = env::var_os("COLLECTION_ID");
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = r2d2::Pool::builder()
@@ -52,7 +53,7 @@ fn main() {
     let addr = SyncArbiter::start(3, move || DbExecutor(pool.clone()));
 
     server::new(move || {
-        app::create_app(addr.clone(), &repo_path, &build_repo_base_path)
+        app::create_app(addr.clone(), &repo_path, &build_repo_base_path, &collection_id)
     }).bind("127.0.0.1:8080")
         .unwrap()
         .start();

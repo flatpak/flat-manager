@@ -13,6 +13,7 @@ pub struct AppState {
     pub db: Addr<DbExecutor>,
     pub repo_path: PathBuf,
     pub build_repo_base_path: PathBuf,
+    pub collection_id: Option<String>,
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
@@ -31,11 +32,13 @@ pub fn create_app(
     db: Addr<DbExecutor>,
     repo_path: &OsString,
     build_repo_base_path: &OsString,
+    collection_id: &Option<OsString>,
 ) -> App<AppState> {
     let state = AppState {
         db: db.clone(),
         repo_path: PathBuf::from(repo_path),
         build_repo_base_path: PathBuf::from(build_repo_base_path),
+        collection_id: collection_id.as_ref().map(|os| os.clone().into_string().expect("non-utf8 collection id")),
     };
 
     let repo_static_files = fs::StaticFiles::new(&state.repo_path)
