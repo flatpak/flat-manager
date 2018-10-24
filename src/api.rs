@@ -305,7 +305,7 @@ mode=archive-z2
     Ok(())
 }
 
-fn commit_build(state: &AppState, build_id: i32, args: &CommitArgs) -> io::Result<()> {
+fn commit_build(state: &AppState, build_id: i32, base_url: &String, args: &CommitArgs) -> io::Result<()> {
     let build_refs = state
         .db
         .send(LookupBuildRefs {
@@ -363,6 +363,24 @@ fn commit_build(state: &AppState, build_id: i32, args: &CommitArgs) -> io::Resul
         if !output.status.success() {
             return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, String::from_utf8_lossy(&output.stderr))));
         }
+
+        if build_ref.ref_name.starts_with("app/") {
+            let parts: Vec<&str> = build_ref.ref_name.split('/').collect();
+            let mut file = File::create(build_repo_path.join(format!("{}.flatpakref", parts[1])))?;
+            // TODO: We should also add GPGKey here if state.build_gpg_key is set
+            file.write_all(format!(r#"
+[Flatpak Ref]
+Name={}
+Branch={}
+Url={}/build-repo/{}
+RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+IsRuntime=false
+"#,
+                                   parts[1],
+                                   parts[3],
+                                   base_url,
+                                   build_id).as_bytes())?;
+        }
     }
 
     let output = Command::new("flatpak")
@@ -390,8 +408,8 @@ fn commit_build(state: &AppState, build_id: i32, args: &CommitArgs) -> io::Resul
     Ok(())
 }
 
-fn commit_thread(state: AppState, build_id: i32, args: CommitArgs) {
-    if let Err(e) = commit_build(&state, build_id, &args) {
+fn commit_thread(state: AppState, build_id: i32, base_url: String, args: CommitArgs) {
+    if let Err(e) = commit_build(&state, build_id, &base_url, &args) {
         println!("commit failed");
         let res =
             &state.db
@@ -412,12 +430,20 @@ pub struct CommitArgs {
     endoflife: Option<String>,
 }
 
+fn request_base_url(req: &HttpRequest<AppState>) -> String {
+    let conn_info = req.connection_info();
+    format!("{}://{}",
+            conn_info.scheme(),
+            conn_info.host())
+}
+
 use std::clone::Clone;
 pub fn commit(
-    (args, params, state): (Json<CommitArgs>, Path<BuildPathParams>, State<AppState>),
+    (args, params, state, req): (Json<CommitArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> FutureResponse<HttpResponse> {
     let s = (*state).clone();
     let id = params.id;
+    let base_url = request_base_url(&req);
     state
         .db
         .send(ChangeRepoState {
@@ -428,7 +454,7 @@ pub fn commit(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                thread::spawn(move || commit_thread (s, id, args.into_inner()) );
+                thread::spawn(move || commit_thread (s, id, base_url, args.into_inner()) );
                 Ok(HttpResponse::Ok().json(build))
             },
             Err(e) => Ok(e.error_response())
