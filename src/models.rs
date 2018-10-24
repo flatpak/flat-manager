@@ -1,6 +1,7 @@
 use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool};
+use std::mem;
 
 use chrono;
 use schema::{ build_refs, };
@@ -16,7 +17,8 @@ pub struct Build {
     pub id: i32,
     pub is_published: bool,
     pub created: chrono::NaiveDateTime,
-    pub repo_state: i16
+    pub repo_state: i16,
+    pub repo_state_reason: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -24,8 +26,35 @@ pub enum RepoState {
     Uploading,
     Verifying,
     Ready,
-    Failed,
-    _Purged,
+    Failed(String),
+    Purged,
+}
+
+impl RepoState {
+    pub fn same_state_as(&self, other: &Self) -> bool {
+        mem::discriminant(self) == mem::discriminant(other)
+    }
+
+    pub fn to_db(&self) -> (i16, Option<String>) {
+        match self {
+            RepoState::Uploading => (0, None),
+            RepoState::Verifying => (1, None),
+            RepoState::Ready => (2, None),
+            RepoState::Failed(s) => (3, Some(s.to_string())),
+            RepoState::Purged => (4, None),
+        }
+    }
+
+    pub fn from_db(val: i16, reason: &Option<String>) -> Self {
+        match val {
+            0 => RepoState::Uploading,
+            1 => RepoState::Verifying,
+            2 => RepoState::Ready,
+            3 => RepoState::Failed(reason.as_ref().unwrap_or(&"Unknown reason".to_string()).to_string()),
+            4 => RepoState::Purged,
+            _ => RepoState::Failed("Unknown state".to_string()),
+        }
+    }
 }
 
 #[derive(Deserialize, Insertable, Debug)]

@@ -13,6 +13,7 @@ table! {
         is_published -> Bool,
         created_at -> Timestamp,
         repo_state -> Int2,
+        repo_state_reason -> Nullable<Text>,
     }
 }
 

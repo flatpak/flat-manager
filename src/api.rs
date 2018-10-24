@@ -12,7 +12,7 @@ use std::fs;
 use std::io::Write;
 use std::io;
 use std::path;
-use std::process::{Command, Stdio};
+use std::process::{Command};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
@@ -278,19 +278,6 @@ pub fn upload(
     )
 }
 
-fn _ostree(repo_path: &path::PathBuf, command: &str) -> Command {
-    let mut repo_arg = OsString::from("--repo=");
-    repo_arg.push(repo_path);
-
-    let mut cmd = Command::new("ostree");
-    cmd
-        .arg(command)
-        .arg(repo_arg)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    cmd
-}
-
 fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
 
@@ -372,22 +359,18 @@ fn commit_build(state: &AppState, build_id: i32, args: &CommitArgs) -> io::Resul
             .arg(&src_ref_arg)
             .arg(&build_repo_path)
             .arg(&build_ref.ref_name)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
             .output()?;
         if !output.status.success() {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to build commit for ref {}", &build_ref.ref_name)));
+            return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, String::from_utf8_lossy(&output.stderr))));
         }
     }
 
     let output = Command::new("flatpak")
         .arg("build-update-repo")
         .arg(&build_repo_path)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
         .output()?;
     if !output.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, "Failed to update repo"));
+        return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
     }
 
     fs::remove_dir_all(&upload_path)?;
@@ -404,23 +387,17 @@ fn commit_build(state: &AppState, build_id: i32, args: &CommitArgs) -> io::Resul
     // send error
         .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't change repo state")))?;
 
-    /* TODO:
-     * log update to file?
-     * update repo_state, but also a string with state (+ failure reason)
-     * signal success somehow?
-     * handle errors everywhere
-     */
     Ok(())
 }
 
 fn commit_thread(state: AppState, build_id: i32, args: CommitArgs) {
-    if commit_build(&state, build_id, &args).is_err() {
+    if let Err(e) = commit_build(&state, build_id, &args) {
         println!("commit failed");
         let res =
             &state.db
             .send(ChangeRepoState {
                 id: build_id,
-                new: RepoState::Failed,
+                new: RepoState::Failed(e.to_string()),
                 expected: None,
             })
             .wait();

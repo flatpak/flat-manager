@@ -149,13 +149,16 @@ impl Handler<ChangeRepoState> for DbExecutor {
                 let current_build = builds
                     .filter(id.eq(msg.id))
                     .get_result::<models::Build>(conn)?;
-                if current_build.repo_state != expected as i16 {
+                let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
+                if !current_repo_state.same_state_as(&expected) {
                     return Err(DieselError::RollbackTransaction)
                 };
             }
+            let (val, reason) = RepoState::to_db(&msg.new);
             diesel::update(builds)
                 .filter(id.eq(msg.id))
-                .set((repo_state.eq(msg.new as i16),))
+                .set((repo_state.eq(val),
+                      repo_state_reason.eq(reason)))
                 .get_result::<models::Build>(conn)
         })
             .map_err(|e| {
