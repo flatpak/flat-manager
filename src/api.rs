@@ -291,7 +291,7 @@ fn _ostree(repo_path: &path::PathBuf, command: &str) -> Command {
     cmd
 }
 
-fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, opt_collection_id: &Option<String>) -> io::Result<()> {
+fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
 
     for &d in ["extensions",
@@ -311,7 +311,7 @@ repo_version=1
 mode=archive-z2
 {}parent={}"#,
                            match opt_collection_id {
-                               Some(collection_id) => format!("collection-id={}\n", collection_id),
+                               Some(collection_id) => format!("collection-id={}.Build{}\n", collection_id, build_id),
                                _ => "".to_string(),
                            },
                            parent_repo_absolute_path.display()).as_bytes())?;
@@ -333,8 +333,8 @@ fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result
     let build_repo_path = state.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
-    init_repo (&build_repo_path, &state.repo_path, &state.collection_id)?;
-    init_repo (&upload_path, &state.repo_path, &None)?;
+    init_repo (&build_repo_path, &state.repo_path, build_id, &state.collection_id)?;
+    init_repo (&upload_path, &state.repo_path, build_id, &None)?;
 
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&upload_path);
