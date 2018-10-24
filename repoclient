@@ -264,6 +264,9 @@ async def push_command(args, session):
     if args.commit:
         await commit_build(session, args.build_url)
 
+async def commit_command(args, session):
+    await commit_build(session, args.build_url)
+
 async def run_with_session(args):
     async with aiohttp.ClientSession() as session:
         res = 1
@@ -290,6 +293,10 @@ if __name__ == '__main__':
                                        description='valid subcommands',
                                        help='additional help')
 
+    create_parser = subparsers.add_parser('create', help='Create new build')
+    create_parser.add_argument('manager_url', help='remote repo manager url')
+    create_parser.set_defaults(func=create_command)
+
     push_parser = subparsers.add_parser('push', help='Push to repo manager')
     push_parser.add_argument('build_url', help='remote build url')
     push_parser.add_argument('repo_path', help='local repository')
@@ -298,9 +305,9 @@ if __name__ == '__main__':
                              help='commit build after pushing')
     push_parser.set_defaults(func=push_command)
 
-    create_parser = subparsers.add_parser('create', help='Create new build')
-    create_parser.add_argument('manager_url', help='remote repo manager url')
-    create_parser.set_defaults(func=create_command)
+    commit_parser = subparsers.add_parser('commit', help='Commit build')
+    commit_parser.add_argument('build_url', help='remote build url')
+    commit_parser.set_defaults(func=commit_command)
 
     args = parser.parse_args()
 
