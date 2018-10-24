@@ -5,7 +5,7 @@ use diesel::prelude::*;
 use diesel::result::{Error as DieselError};
 
 use models;
-use models::{DbExecutor};
+use models::{DbExecutor,RepoState};
 use errors::ApiError;
 use schema;
 
@@ -128,30 +128,34 @@ impl Handler<LookupBuildRefs> for DbExecutor {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct CommitBuild {
+pub struct ChangeRepoState {
     pub id: i32,
+    pub new: RepoState,
+    pub expected: Option<RepoState>,
 }
 
-impl Message for CommitBuild {
+impl Message for ChangeRepoState {
     type Result = Result<models::Build, ApiError>;
 }
 
-impl Handler<CommitBuild> for DbExecutor {
+impl Handler<ChangeRepoState> for DbExecutor {
     type Result = Result<models::Build, ApiError>;
 
-    fn handle(&mut self, msg: CommitBuild, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: ChangeRepoState, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         conn.transaction::<models::Build, DieselError, _>(|| {
-            let current_build = builds
-                .filter(id.eq(msg.id))
-                .get_result::<models::Build>(conn)?;
-            if current_build.repo_state != models::RepoState::Uploading as i16 {
-                return Err(DieselError::RollbackTransaction)
+            if let Some(expected) = msg.expected {
+                let current_build = builds
+                    .filter(id.eq(msg.id))
+                    .get_result::<models::Build>(conn)?;
+                if current_build.repo_state != expected as i16 {
+                    return Err(DieselError::RollbackTransaction)
+                };
             }
             diesel::update(builds)
                 .filter(id.eq(msg.id))
-                .set((repo_state.eq(models::RepoState::Verifying as i16),))
+                .set((repo_state.eq(msg.new as i16),))
                 .get_result::<models::Build>(conn)
         })
             .map_err(|e| {

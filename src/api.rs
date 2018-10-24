@@ -19,8 +19,8 @@ use std::thread;
 use tempfile::NamedTempFile;
 
 use app::{AppState};
-use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, LookupBuildRefs, CommitBuild};
-use models::{NewBuildRef};
+use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, LookupBuildRefs, ChangeRepoState};
+use models::{NewBuildRef, RepoState};
 use actix_web::ResponseError;
 
 pub fn create_build(
@@ -318,7 +318,7 @@ mode=archive-z2
     Ok(())
 }
 
-fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result<()> {
+fn commit_build(state: &AppState, build_id: i32, args: &CommitArgs) -> io::Result<()> {
     let build_refs = state
         .db
         .send(LookupBuildRefs {
@@ -392,6 +392,18 @@ fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result
 
     fs::remove_dir_all(&upload_path)?;
 
+    state.db
+        .send(ChangeRepoState {
+            id: build_id,
+            new: RepoState::Ready,
+            expected: Some(RepoState::Verifying),
+        })
+        .wait()
+    // wait error
+        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't change repo state")))?
+    // send error
+        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't change repo state")))?;
+
     /* TODO:
      * log update to file?
      * update repo_state, but also a string with state (+ failure reason)
@@ -402,9 +414,19 @@ fn commit_build(state: AppState, build_id: i32, args: &CommitArgs) -> io::Result
 }
 
 fn commit_thread(state: AppState, build_id: i32, args: CommitArgs) {
-    if commit_build(state, build_id, &args).is_err() {
+    if commit_build(&state, build_id, &args).is_err() {
         println!("commit failed");
-        // TODO: Set repo_state=failed in db, signal somehow?
+        let res =
+            &state.db
+            .send(ChangeRepoState {
+                id: build_id,
+                new: RepoState::Failed,
+                expected: None,
+            })
+            .wait();
+        if res.is_err() {
+            println!("Failed to mark operation failed");
+        }
     }
 }
 
@@ -421,7 +443,11 @@ pub fn commit(
     let id = params.id;
     state
         .db
-        .send(CommitBuild { id: params.id })
+        .send(ChangeRepoState {
+            id: params.id,
+            new: RepoState::Verifying,
+            expected: Some(RepoState::Uploading),
+        })
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {

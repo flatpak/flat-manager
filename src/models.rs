@@ -19,11 +19,12 @@ pub struct Build {
     pub repo_state: i16
 }
 
+#[derive(Deserialize, Debug)]
 pub enum RepoState {
     Uploading,
     Verifying,
-    _Failed,
-    _Ready,
+    Ready,
+    Failed,
     _Purged,
 }
 
