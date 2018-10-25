@@ -6,28 +6,47 @@ use jwt::{decode, Validation};
 
 use app::Claims;
 
-pub trait ValidateClaims {
-    fn validate_claim<F>(&self, func: F) -> bool
-        where F: Fn(&Claims) -> bool;
+pub trait ClaimsValidator {
+    fn validate_claims(&self, claims: &Claims) -> bool;
 }
 
-impl<S> ValidateClaims for HttpRequest<S> {
-    fn validate_claim<F>(&self, func: F) -> bool
-        where F: Fn(&Claims) -> bool {
-        if let Some(claims) = self.extensions().get::<Claims>() {
-            return func(claims)
-        }
-        false
+pub struct SubValidator {
+    sub: String,
+}
+impl SubValidator {
+    pub fn new(sub: &str) -> Self {
+        SubValidator { sub: sub.to_string() }
     }
 }
 
-pub struct TokenService {
+impl ClaimsValidator for SubValidator {
+    fn validate_claims(&self, claims: &Claims) -> bool {
+        claims.sub == self.sub
+    }
+}
+
+pub struct TokenCheck<T>(pub T);
+
+impl<S: 'static, T: ClaimsValidator + 'static> Middleware<S> for TokenCheck<T> {
+    fn start(&self, req: &HttpRequest<S>) -> Result<Started> {
+        if let Some(claims) = req.extensions().get::<Claims>() {
+            if self.0.validate_claims(claims) {
+                return Ok(Started::Done);
+            }
+        };
+
+        Err(ErrorUnauthorized("Failed to match claims"))
+    }
+}
+
+
+pub struct TokenParser {
     secret: Vec<u8>,
 }
 
-impl TokenService {
+impl TokenParser {
     pub fn new(secret: &[u8]) -> Self {
-        TokenService { secret: secret.to_vec() }
+        TokenParser { secret: secret.to_vec() }
     }
 
     fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ParseError> {
@@ -62,7 +81,7 @@ impl TokenService {
     }
 }
 
-impl<S: 'static> Middleware<S> for TokenService {
+impl<S: 'static> Middleware<S> for TokenParser {
     fn start(&self, req: &HttpRequest<S>) -> Result<Started> {
         let header = req.headers().get(AUTHORIZATION).ok_or(ErrorUnauthorized("No bearer token"))?;
         let token = self.parse_authorization(header).or(Err(ErrorUnauthorized("Invalid bearer token")))?;

@@ -8,13 +8,13 @@ use std::path::Path;
 use std::env;
 
 use api;
-use tokens::TokenService;
+use tokens::{TokenParser, SubValidator, TokenCheck};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    sub: String, // "repo", "repo/build", "repo/build/N"
-    scope: Vec<String>, // "commit", "upload" "publish"
-    name: String, // for debug/logs only
+    pub sub: String, // "repo", "repo/build", "repo/build/N"
+    pub scope: Vec<String>, // "commit", "upload" "publish"
+    pub name: String, // for debug/logs only
 }
 
 #[derive(Clone)]
@@ -68,7 +68,8 @@ pub fn create_app(
         .middleware(middleware::Logger::default())
         .scope("/api/v1", |scope| {
             scope
-                .middleware(TokenService::new(&secret))
+                .middleware(TokenParser::new(&secret))
+                .middleware(TokenCheck(SubValidator::new("repo")))
                 .resource("/build", |r| r.method(Method::POST).with(api::create_build))
                 .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
                 .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
