@@ -2,6 +2,7 @@
 
 extern crate actix;
 extern crate actix_web;
+extern crate base64;
 extern crate chrono;
 #[macro_use] extern crate diesel;
 extern crate dotenv;
@@ -13,6 +14,7 @@ extern crate serde;
 extern crate serde_json;
 #[macro_use] extern crate serde_derive;
 extern crate tempfile;
+extern crate jsonwebtoken as jwt;
 
 use actix::prelude::*;
 use actix_web::{server,};
@@ -22,11 +24,12 @@ use dotenv::dotenv;
 use std::env;
 
 mod api;
+mod app;
 mod db;
+mod errors;
 mod models;
 mod schema;
-mod errors;
-mod app;
+mod tokens;
 
 use models::{DbExecutor};
 

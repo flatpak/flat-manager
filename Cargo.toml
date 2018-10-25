@@ -2,6 +2,8 @@
 name = "repo-manager"
 version = "0.1.0"
 authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
+# Needs nightly, so disable for now:
+# default-run = "repo-manager"
 
 [dependencies]
 env_logger = "0.5"
@@ -19,3 +21,5 @@ r2d2 = "0.8"
 dotenv = "0.10"
 tempfile = "3.0"
 failure = "0.1.2"
+jsonwebtoken = "5"
+base64 = "0.9"

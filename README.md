@@ -92,7 +92,7 @@ Running
 
 To start the server run:
 
-    cargo run
+    cargo run --bin repo-manager
 
 Which will listen to port 8080 by default.
 

@@ -1,12 +1,21 @@
 use actix::prelude::*;
 use actix_web::{self, fs, middleware};
 use actix_web::{App, http::Method, HttpRequest, fs::NamedFile};
+use base64;
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
 use std::env;
 
 use api;
+use tokens::TokenService;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Claims {
+    sub: String, // "repo", "repo/build", "repo/build/N"
+    scope: Vec<String>, // "commit", "upload" "publish"
+    name: String, // for debug/logs only
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -39,6 +48,9 @@ pub fn create_app(
     let build_repo_base_path = env::var_os("BUILD_REPO_BASE_PATH")
         .expect("BUILD_REPO_BASE_PATH must be set");
 
+    let secret_base64 = env::var("SECRET")
+        .expect("SECRET must be set");
+    let secret = base64::decode(&secret_base64).unwrap();
     let state = AppState {
         db: db.clone(),
         repo_path: PathBuf::from(repo_path),
@@ -54,13 +66,17 @@ pub fn create_app(
 
     App::with_state(state)
         .middleware(middleware::Logger::default())
-        .resource("/api/v1/build", |r| r.method(Method::POST).with(api::create_build))
-        .resource("/api/v1/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
-        .resource("/api/v1/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
-        .resource("/api/v1/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
-        .resource("/api/v1/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
-        .resource("/api/v1/build/{id}/commit", |r| r.method(Method::POST).with(api::commit))
-        .resource("/api/v1/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
+        .scope("/api/v1", |scope| {
+            scope
+                .middleware(TokenService::new(&secret))
+                .resource("/build", |r| r.method(Method::POST).with(api::create_build))
+                .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
+                .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
+                .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
+                .resource("/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
+                .resource("/build/{id}/commit", |r| r.method(Method::POST).with(api::commit))
+                .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
+        })
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
         })
