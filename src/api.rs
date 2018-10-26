@@ -25,7 +25,7 @@ use actix_web::ResponseError;
 use tokens::ClaimsValidator;
 
 pub fn create_build(
-    (state, req): (State<AppState>, HttpRequest<AppState>)
+    state: State<AppState>, req: HttpRequest<AppState>
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims("build", "build") {
         return From::from(e);
@@ -54,7 +54,9 @@ pub struct BuildPathParams {
 }
 
 pub fn get_build(
-    (params, state, req): (Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
@@ -77,7 +79,9 @@ pub struct RefPathParams {
 }
 
 pub fn get_build_ref(
-    (params, state, req): (Path<RefPathParams>, State<AppState>, HttpRequest<AppState>),
+    params: Path<RefPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
@@ -114,7 +118,10 @@ fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 }
 
 pub fn missing_objects(
-    (args, params, state, req): (Json<MissingObjectsArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
+    args: Json<MissingObjectsArgs>,
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
 ) -> HttpResponse {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return e.error_response();
@@ -137,7 +144,10 @@ pub struct CreateBuildRefArgs {
 }
 
 pub fn create_build_ref (
-    (args, params, state, req): (Json<CreateBuildRefArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
+    args: Json<CreateBuildRefArgs>,
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return From::from(e);
@@ -276,7 +286,8 @@ fn handle_multipart_item(
 }
 
 pub fn upload(
-    (params, req): (Path<BuildPathParams>, HttpRequest<AppState>)
+    params: Path<BuildPathParams>,
+    req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
@@ -458,7 +469,10 @@ fn request_base_url(req: &HttpRequest<AppState>) -> String {
 
 use std::clone::Clone;
 pub fn commit(
-    (args, params, state, req): (Json<CommitArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
+    args: Json<CommitArgs>,
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
