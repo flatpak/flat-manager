@@ -87,6 +87,34 @@ On a deployed system these should be stored elsewhere, but make sure
 they are on the same filesystem so that hardlinks work between them as
 otherwise performance will be degraded.
 
+Tokens
+------
+
+All requests to the API requires a token. Token are signed with a secret
+that has to be stored on the server. The default .env contans:
+
+    # base64 of "secret", don't use in production!
+    SECRET=c2VjcmV0
+
+Which obviously should not be used in production, but works for local
+testing. For testing you can generate one based on some random data:
+
+    dd bs=256 count=1 if=/dev/random of=/dev/stdout | base64 -w 0
+
+Each token can have various levels of privileges. For example one
+could let you do everything, while another would only allow you to
+upload builds to a particular build. There is an API to subset
+your token for sharing with others (for example sending the above
+upload-only token to a builder), but you can also generate a
+token with the gentoken command:
+
+    $ echo -n "secret" | base64 | cargo run --bin gentoken test
+
+The above matches the default secret, so can be used for testing.
+
+The client takes tokens via either the --token argument or in the
+$REPO_TOKEN environment variable.
+
 Running
 =======
 
@@ -107,8 +135,9 @@ we can just do it in a subdirectory:
     flatpak-builder --install-deps-from=flathub --repo=local-repo builddir org.gnome.eog.yml
     cd ..
 
-Then we can upload this to the repo by doing:
+Then we can upload this to the repo by doing (assuming the default secret):
 
+    export REPO_TOKEN=$(echo -n "secret" | base64 | cargo run --bin gentoken test)
     ./repoclient push --commit $(./repoclient create http://127.0.0.1:8080) test-build/local-repo
 
 This will create a new "build" upload the build to it and then "commit" the build.
