@@ -5,40 +5,44 @@ use actix_web::middleware::{Middleware, Started};
 use jwt::{decode, Validation};
 
 use app::Claims;
+use errors::ApiError;
 
 pub trait ClaimsValidator {
-    fn validate_claims(&self, claims: &Claims) -> bool;
+    fn validate_claims<Func>(&self, func: Func) -> bool
+        where Func: Fn(&Claims) -> bool;
+    fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
 }
 
-pub struct SubValidator {
-    sub: String,
-}
-impl SubValidator {
-    pub fn new(sub: &str) -> Self {
-        SubValidator { sub: sub.to_string() }
+impl<S> ClaimsValidator for HttpRequest<S> {
+    fn validate_claims<Func>(&self, func: Func) -> bool
+        where Func: Fn(&Claims) -> bool {
+        if let Some(claims) = self.extensions().get::<Claims>() {
+            func(claims)
+        } else {
+            false
+        }
+    }
+
+    fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError> {
+        if self.validate_claims(
+            |claims| {
+                // Matches using a path-prefix style comparison:
+                //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"
+                //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
+                if required_sub.starts_with(&claims.sub) {
+                    let rest = &required_sub[claims.sub.len()..];
+                    if rest.len() == 0 || rest.starts_with("/") {
+                        return claims.scope.contains(&required_scope.to_string())
+                    }
+                }
+                false
+            }) {
+            Ok(())
+        } else {
+            Err(ApiError::InvalidToken("Token invalid".to_string()))
+        }
     }
 }
-
-impl ClaimsValidator for SubValidator {
-    fn validate_claims(&self, claims: &Claims) -> bool {
-        claims.sub == self.sub
-    }
-}
-
-pub struct TokenCheck<T>(pub T);
-
-impl<S: 'static, T: ClaimsValidator + 'static> Middleware<S> for TokenCheck<T> {
-    fn start(&self, req: &HttpRequest<S>) -> Result<Started> {
-        if let Some(claims) = req.extensions().get::<Claims>() {
-            if self.0.validate_claims(claims) {
-                return Ok(Started::Done);
-            }
-        };
-
-        Err(ErrorUnauthorized("Failed to match claims"))
-    }
-}
-
 
 pub struct TokenParser {
     secret: Vec<u8>,
@@ -68,7 +72,6 @@ impl TokenParser {
 
     fn validate_claims(&self, token: String) -> Result<Claims> {
         let validation = Validation {
-            sub: Some("repo".to_string()),
             ..Validation::default()
         };
 

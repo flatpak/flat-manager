@@ -1,5 +1,6 @@
-use actix_web::{error::ResponseError, HttpResponse};
+use actix_web::{error::ResponseError, HttpResponse, FutureResponse};
 use diesel::result::{Error as DieselError};
+use futures::future;
 
 #[derive(Fail, Debug)]
 pub enum ApiError {
@@ -11,6 +12,9 @@ pub enum ApiError {
 
     #[fail(display = "BadRequest: {}", _0)]
     BadRequest(String),
+
+    #[fail(display = "InvalidToken: {}", _0)]
+    InvalidToken(String),
 }
 
 impl From<DieselError> for ApiError {
@@ -31,6 +35,13 @@ impl ResponseError for ApiError {
             ApiError::InternalServerError => HttpResponse::InternalServerError().json("Internal Server Error"),
             ApiError::NotFound => HttpResponse::NotFound().json("Not found"),
             ApiError::BadRequest(ref message) => HttpResponse::BadRequest().json(message),
+            ApiError::InvalidToken(ref message) => HttpResponse::Unauthorized().json(message),
         }
+    }
+}
+
+impl From<ApiError> for FutureResponse<HttpResponse> {
+    fn from(e: ApiError) -> Self {
+        Box::new(future::ok(e.error_response()))
     }
 }

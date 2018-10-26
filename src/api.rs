@@ -22,10 +22,14 @@ use app::{AppState};
 use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, LookupBuildRefs, ChangeRepoState};
 use models::{NewBuildRef, RepoState};
 use actix_web::ResponseError;
+use tokens::ClaimsValidator;
 
 pub fn create_build(
     (state, req): (State<AppState>, HttpRequest<AppState>)
 ) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims("build", "build") {
+        return From::from(e);
+    }
     state
         .db
         .send(CreateBuild { })
@@ -50,8 +54,11 @@ pub struct BuildPathParams {
 }
 
 pub fn get_build(
-    (params, state): (Path<BuildPathParams>, State<AppState>),
+    (params, state, req): (Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
     state
         .db
         .send(LookupBuild { id: params.id })
@@ -70,8 +77,11 @@ pub struct RefPathParams {
 }
 
 pub fn get_build_ref(
-    (params, state): (Path<RefPathParams>, State<AppState>),
+    (params, state, req): (Path<RefPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
     state
         .db
         .send(LookupBuildRef {
@@ -104,10 +114,13 @@ fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 }
 
 pub fn missing_objects(
-    (missing_objects, params, state): (Json<MissingObjectsArgs>, Path<BuildPathParams>, State<AppState>),
+    (args, params, state, req): (Json<MissingObjectsArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> HttpResponse {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
+        return e.error_response();
+    }
     let mut missing = vec![];
-    for object in &missing_objects.wanted {
+    for object in &args.wanted {
         if ! has_object (params.id, object, &state) {
             missing.push(object);
         }
@@ -126,6 +139,9 @@ pub struct CreateBuildRefArgs {
 pub fn create_build_ref (
     (args, params, state, req): (Json<CreateBuildRefArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
+        return From::from(e);
+    }
     state
         .db
         .send(CreateBuildRef {
@@ -262,6 +278,9 @@ fn handle_multipart_item(
 pub fn upload(
     (params, req): (Path<BuildPathParams>, HttpRequest<AppState>)
 ) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
     let state = req.state();
     let uploadstate = Arc::new(UploadState { repo_path: state.build_repo_base_path.join(params.id.to_string()).join("upload") });
     Box::new(
@@ -441,6 +460,9 @@ use std::clone::Clone;
 pub fn commit(
     (args, params, state, req): (Json<CommitArgs>, Path<BuildPathParams>, State<AppState>, HttpRequest<AppState>),
 ) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
     let s = (*state).clone();
     let id = params.id;
     let base_url = request_base_url(&req);

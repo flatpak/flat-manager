@@ -32,8 +32,8 @@ fn main() {
     println!("bytes: {:?}", bytes);
 
     let claims = Claims {
-        sub: "repo".to_string(),
-        scope: vec!["foo".to_string()],
+        sub: "build".to_string(),
+        scope: vec!["build".to_string(), "upload".to_string(), "publish".to_string()],
         name: args[1].clone(),
         exp: Utc::now().timestamp() + Duration::days(365).num_seconds(),
     };
