@@ -29,7 +29,6 @@ fn main() {
     io::stdin().read_line(&mut input).unwrap();
 
     let bytes = base64::decode(input.trim()).unwrap();
-    println!("bytes: {:?}", bytes);
 
     let claims = Claims {
         sub: "build".to_string(),
