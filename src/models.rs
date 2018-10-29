@@ -15,10 +15,44 @@ impl Actor for DbExecutor {
 #[derive(Serialize, Queryable, Debug)]
 pub struct Build {
     pub id: i32,
-    pub is_published: bool,
     pub created: chrono::NaiveDateTime,
     pub repo_state: i16,
     pub repo_state_reason: Option<String>,
+    pub published_state: i16,
+    pub published_state_reason: Option<String>,
+}
+
+#[derive(Deserialize, Debug,PartialEq)]
+pub enum PublishedState {
+    Unpublished,
+    Publishing,
+    Published,
+    Failed(String),
+}
+
+impl PublishedState {
+    pub fn same_state_as(&self, other: &Self) -> bool {
+        mem::discriminant(self) == mem::discriminant(other)
+    }
+
+    pub fn to_db(&self) -> (i16, Option<String>) {
+        match self {
+            PublishedState::Unpublished => (0, None),
+            PublishedState::Publishing => (1, None),
+            PublishedState::Published => (2, None),
+            PublishedState::Failed(s) => (3, Some(s.to_string()))
+        }
+    }
+
+    pub fn from_db(val: i16, reason: &Option<String>) -> Self {
+        match val {
+            0 => PublishedState::Unpublished,
+            1 => PublishedState::Publishing,
+            2 => PublishedState::Published,
+            3 => PublishedState::Failed(reason.as_ref().unwrap_or(&"Unknown reason".to_string()).to_string()),
+            _ => PublishedState::Failed("Unknown state".to_string()),
+        }
+    }
 }
 
 #[derive(Deserialize, Debug)]

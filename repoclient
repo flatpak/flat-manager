@@ -162,7 +162,6 @@ async def missing_objects(session, build_url, token, wanted):
         if resp.status != 200:
             raise ApiError(resp)
         data = await resp.json()
-        print(data)
         return data["missing"];
 
 async def upload_files(session, build_url, token, files):
@@ -204,6 +203,14 @@ async def create_ref(session, build_url, token, ref, commit):
 async def commit_build(session, build_url, token):
     print("Commiting build %s" % (build_url))
     async with session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
+        if resp.status != 200:
+            raise ApiError(resp)
+        data = await resp.json()
+        return data;
+
+async def publish_build(session, build_url, token):
+    print("Publishing build %s" % (build_url))
+    async with session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
         if resp.status != 200:
             raise ApiError(resp)
         data = await resp.json()
@@ -291,6 +298,9 @@ async def push_command(args, session):
 async def commit_command(args, session):
     await commit_build(session, args.build_url, args.token)
 
+async def publish_command(args, session):
+    await publish_build(session, args.build_url, args.token)
+
 async def create_token_command(args, session):
     new_token = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
     print(new_token)
@@ -332,6 +342,8 @@ if __name__ == '__main__':
     push_parser.add_argument('branches', nargs='*', help='branches to push')
     push_parser.add_argument('--commit', action='store_true',
                              help='commit build after pushing')
+    push_parser.add_argument('--publish', action='store_true',
+                             help='publish build after commiting')
     push_parser.add_argument('--minimal-token', action='store_true',
                              help='Create minimal token for the upload')
     push_parser.set_defaults(func=push_command)
@@ -339,6 +351,10 @@ if __name__ == '__main__':
     commit_parser = subparsers.add_parser('commit', help='Commit build')
     commit_parser.add_argument('build_url', help='remote build url')
     commit_parser.set_defaults(func=commit_command)
+
+    publish_parser = subparsers.add_parser('publish', help='Publish build')
+    publish_parser.add_argument('build_url', help='remote build url')
+    publish_parser.set_defaults(func=publish_command)
 
     create_token_parser = subparsers.add_parser('create-token', help='Create subset token')
     create_token_parser.add_argument('manager_url', help='remote repo manager url')

@@ -5,7 +5,7 @@ use diesel::prelude::*;
 use diesel::result::{Error as DieselError};
 
 use models;
-use models::{DbExecutor,RepoState};
+use models::{DbExecutor,RepoState,PublishedState};
 use errors::ApiError;
 use schema;
 
@@ -164,6 +164,50 @@ impl Handler<ChangeRepoState> for DbExecutor {
             .map_err(|e| {
                 match e {
                     DieselError::RollbackTransaction => ApiError::BadRequest("Build is already commited".to_string()),
+                    _ => From::from(e)
+                }
+            })
+    }
+}
+
+
+#[derive(Deserialize, Debug)]
+pub struct ChangePublishedState {
+    pub id: i32,
+    pub new: PublishedState,
+    pub expected: Option<PublishedState>,
+}
+
+impl Message for ChangePublishedState {
+    type Result = Result<models::Build, ApiError>;
+}
+
+impl Handler<ChangePublishedState> for DbExecutor {
+    type Result = Result<models::Build, ApiError>;
+
+    fn handle(&mut self, msg: ChangePublishedState, _: &mut Self::Context) -> Self::Result {
+        use schema::builds::dsl::*;
+        let conn = &self.0.get().unwrap();
+        conn.transaction::<models::Build, DieselError, _>(|| {
+            if let Some(expected) = msg.expected {
+                let current_build = builds
+                    .filter(id.eq(msg.id))
+                    .get_result::<models::Build>(conn)?;
+                let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
+                if !current_published_state.same_state_as(&expected) {
+                    return Err(DieselError::RollbackTransaction)
+                };
+            }
+            let (val, reason) = PublishedState::to_db(&msg.new);
+            diesel::update(builds)
+                .filter(id.eq(msg.id))
+                .set((published_state.eq(val),
+                      published_state_reason.eq(reason)))
+                .get_result::<models::Build>(conn)
+        })
+            .map_err(|e| {
+                match e {
+                    DieselError::RollbackTransaction => ApiError::BadRequest("Build is already published".to_string()),
                     _ => From::from(e)
                 }
             })

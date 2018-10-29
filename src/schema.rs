@@ -10,10 +10,11 @@ table! {
 table! {
     builds (id) {
         id -> Int4,
-        is_published -> Bool,
         created_at -> Timestamp,
         repo_state -> Int2,
         repo_state_reason -> Nullable<Text>,
+        published_state -> Int2,
+        published_state_reason -> Nullable<Text>,
     }
 }
 

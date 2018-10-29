@@ -77,9 +77,10 @@ pub fn create_app(
                 .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
                 .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
                 .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
+                .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
                 .resource("/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
                 .resource("/build/{id}/commit", |r| r.method(Method::POST).with(api::commit))
-                .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
+                .resource("/build/{id}/publish", |r| r.method(Method::POST).with(api::publish))
         })
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
