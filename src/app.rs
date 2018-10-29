@@ -10,11 +10,12 @@ use std::env;
 use api;
 use tokens::{TokenParser};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String, // "build", "build/N"
     pub scope: Vec<String>, // "build", "upload" "publish"
     pub name: String, // for debug/logs only
+    pub exp: i64,
 }
 
 #[derive(Clone)]
@@ -26,6 +27,7 @@ pub struct AppState {
     pub gpg_homedir: Option<String>,
     pub build_gpg_key: Option<String>,
     pub main_gpg_key: Option<String>,
+    pub secret: Vec<u8>,
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
@@ -59,6 +61,7 @@ pub fn create_app(
         gpg_homedir: env::var("GPG_HOMEDIR").ok(),
         build_gpg_key: env::var("BUILD_GPG_KEY").ok(),
         main_gpg_key: env::var("MAIN_GPG_KEY").ok(),
+        secret: secret.clone(),
     };
 
     let repo_static_files = fs::StaticFiles::new(&state.repo_path)
@@ -69,6 +72,7 @@ pub fn create_app(
         .scope("/api/v1", |scope| {
             scope
                 .middleware(TokenParser::new(&secret))
+                .resource("/token_subset", |r| r.method(Method::POST).with(api::token_subset))
                 .resource("/build", |r| r.method(Method::POST).with(api::create_build))
                 .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
                 .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))

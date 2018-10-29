@@ -17,15 +17,57 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::thread;
 use tempfile::NamedTempFile;
+use chrono::{Utc};
+use jwt;
 
-use app::{AppState};
+use app::{AppState,Claims};
 use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, LookupBuildRefs, ChangeRepoState};
 use models::{NewBuildRef, RepoState};
 use actix_web::ResponseError;
-use tokens::ClaimsValidator;
+use tokens::{self, ClaimsValidator};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenSubsetArgs {
+    sub: String,
+    scope: Vec<String>,
+    duration: i64,
+    name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenSubsetResponse {
+    token: String,
+}
+
+pub fn token_subset(
+    args: Json<TokenSubsetArgs>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>
+) -> HttpResponse {
+    let new_exp = Utc::now().timestamp().saturating_add(i64::max(args.duration, 0));
+    let maybe_claims = req.get_claims();
+    if let Some(claims) = maybe_claims {
+        if new_exp <= claims.exp &&
+            tokens::sub_has_prefix (&args.sub, &claims.sub) &&
+            args.scope.iter().all(|s| claims.scope.contains(s)) {
+                let new_claims = Claims {
+                    sub: args.sub.clone(),
+                    scope: args.scope.clone(),
+                    name: claims.name + "/" + &args.name,
+                    exp: new_exp,
+                };
+                let token = jwt::encode(&jwt::Header::default(), &new_claims, &state.secret);
+                //println!("{}", &token.unwrap());
+                // TODO: Check error and return token
+                return HttpResponse::Ok().json(TokenSubsetResponse{ token: token.unwrap() });
+            }
+    };
+    HttpResponse::Unauthorized().json("Invalid token")
+}
 
 pub fn create_build(
-    state: State<AppState>, req: HttpRequest<AppState>
+    state: State<AppState>,
+    req: HttpRequest<AppState>
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims("build", "build") {
         return From::from(e);
@@ -47,6 +89,7 @@ pub fn create_build(
         })
         .responder()
 }
+
 
 #[derive(Deserialize)]
 pub struct BuildPathParams {

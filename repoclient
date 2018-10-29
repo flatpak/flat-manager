@@ -24,6 +24,7 @@ import os
 import sys
 import traceback
 import urllib.parse
+import yarl
 
 from aiohttp.abc import AbstractStreamWriter
 from argparse import ArgumentParser
@@ -207,11 +208,24 @@ async def commit_build(session, build_url, token):
         data = await resp.json()
         return data;
 
+async def create_token(session, manager_url, token, name, subject, scope, duration):
+    token_url = yarl.URL(manager_url).with_path("/api/v1/token_subset")
+    async with session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
+            "name": name,
+            "sub": subject,
+            "scope": scope,
+            "duration": duration,
+    } ) as resp:
+        if resp.status != 200:
+            raise ApiError(resp)
+        data = await resp.json()
+        return data["token"]
+
 def get_object_multipart(repo_path, object):
     return NamedFilePayload(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
 async def create_command(args, session):
-    build_url = urllib.parse.urljoin(args.manager_url, "api/v1/build")
+    build_url = yarl.URL(args.manager_url).with_path("/api/v1/build")
     async with session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={} ) as resp:
         if resp.status != 200:
             raise ApiError(resp)
@@ -235,39 +249,50 @@ async def push_command(args, session):
             _, rev = local_repo.resolve_rev(branch, False)
             refs[branch] = rev
 
+    if (args.minimal_token):
+        id = yarl.URL(args.build_url).parts[-1]
+        token = await create_token(session, args.build_url, args.token, "minimal-upload", "build/%s" % (id), ["upload"], 60*60)
+    else:
+        token = args.token
+
     print("Uploading refs to %s: %s"% (args.build_url, list(refs)))
 
     metadata_objects = local_needed_metadata(local_repo, refs.values())
 
     print("Refs contain %d metadata objects" % (len(metadata_objects)))
 
-    missing_metadata_objects = await missing_objects(session, args.build_url, args.token, list(metadata_objects))
+    missing_metadata_objects = await missing_objects(session, args.build_url, token, list(metadata_objects))
 
     print("Remote missing %d of those" % (len(missing_metadata_objects)))
 
     file_objects = local_needed_files(local_repo, missing_metadata_objects)
     print("Has %d file objects for those" % (len(file_objects)))
 
-    missing_file_objects = await missing_objects(session, args.build_url, args.token, list(file_objects))
+    missing_file_objects = await missing_objects(session, args.build_url, token, list(file_objects))
     print("Remote missing %d of those" % (len(missing_file_objects)))
 
     # First upload all missing file objects
     print("Uploading file objects")
-    await upload_objects(session, args.repo_path, args.build_url, args.token, missing_file_objects)
+    await upload_objects(session, args.repo_path, args.build_url, token, missing_file_objects)
 
     # Then all the metadata
     print("Uploading metadata objects")
-    await upload_objects(session, args.repo_path, args.build_url, args.token, missing_metadata_objects)
+    await upload_objects(session, args.repo_path, args.build_url, token, missing_metadata_objects)
 
     # Then the refs
     for ref, commit in refs.items():
-        await create_ref(session, args.build_url, args.token, ref, commit)
+        await create_ref(session, args.build_url, token, ref, commit)
 
+    # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit:
         await commit_build(session, args.build_url, args.token)
 
 async def commit_command(args, session):
     await commit_build(session, args.build_url, args.token)
+
+async def create_token_command(args, session):
+    new_token = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
+    print(new_token)
 
 async def run_with_session(args):
     async with aiohttp.ClientSession() as session:
@@ -306,11 +331,23 @@ if __name__ == '__main__':
     push_parser.add_argument('branches', nargs='*', help='branches to push')
     push_parser.add_argument('--commit', action='store_true',
                              help='commit build after pushing')
+    push_parser.add_argument('--minimal-token', action='store_true',
+                             help='Create minimal token for the upload')
     push_parser.set_defaults(func=push_command)
 
     commit_parser = subparsers.add_parser('commit', help='Commit build')
     commit_parser.add_argument('build_url', help='remote build url')
     commit_parser.set_defaults(func=commit_command)
+
+    create_token_parser = subparsers.add_parser('create-token', help='Create subset token')
+    create_token_parser.add_argument('manager_url', help='remote repo manager url')
+    create_token_parser.add_argument('name', help='Name')
+    create_token_parser.add_argument('subject', help='Subject')
+    create_token_parser.add_argument('scope', nargs='*', help='Scope')
+    create_token_parser.add_argument('--duration', help='Duration until expires, in seconds',
+                                     default=60*60*24, # Default duration is one day
+                                     type=int)
+    create_token_parser.set_defaults(func=create_token_command)
 
     args = parser.parse_args()
 

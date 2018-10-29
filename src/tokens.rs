@@ -8,12 +8,30 @@ use app::Claims;
 use errors::ApiError;
 
 pub trait ClaimsValidator {
+    fn get_claims(&self) -> Option<Claims>;
     fn validate_claims<Func>(&self, func: Func) -> bool
         where Func: Fn(&Claims) -> bool;
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
 }
 
+pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
+    // Matches using a path-prefix style comparison:
+    //  claimed_sub == "build" should match required_sub == "build" or "build/N[/...]"
+    //  claimed_sub == "build/N" should only matchs required_sub == "build/N[/...]"
+    if required_sub.starts_with(claimed_sub) {
+        let rest = &required_sub[claimed_sub.len()..];
+        if rest.len() == 0 || rest.starts_with("/") {
+            return true
+        }
+    };
+    false
+}
+
 impl<S> ClaimsValidator for HttpRequest<S> {
+    fn get_claims(&self) -> Option<Claims> {
+        self.extensions().get::<Claims>().cloned()
+    }
+
     fn validate_claims<Func>(&self, func: Func) -> bool
         where Func: Fn(&Claims) -> bool {
         if let Some(claims) = self.extensions().get::<Claims>() {
@@ -29,13 +47,11 @@ impl<S> ClaimsValidator for HttpRequest<S> {
                 // Matches using a path-prefix style comparison:
                 //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"
                 //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
-                if required_sub.starts_with(&claims.sub) {
-                    let rest = &required_sub[claims.sub.len()..];
-                    if rest.len() == 0 || rest.starts_with("/") {
-                        return claims.scope.contains(&required_scope.to_string())
-                    }
+                if sub_has_prefix(required_sub, &claims.sub) {
+                    claims.scope.contains(&required_scope.to_string())
+                } else {
+                    false
                 }
-                false
             }) {
             Ok(())
         } else {
