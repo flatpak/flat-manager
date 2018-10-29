@@ -336,7 +336,7 @@ pub fn upload(
     params: Path<BuildPathParams>,
     req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
-    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return From::from(e);
     }
     let state = req.state();
