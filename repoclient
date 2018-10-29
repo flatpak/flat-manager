@@ -162,7 +162,8 @@ async def missing_objects(session, build_url, token, wanted):
         if resp.status != 200:
             raise ApiError(resp)
         data = await resp.json()
-        return data;
+        print(data)
+        return data["missing"];
 
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:

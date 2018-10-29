@@ -57,7 +57,6 @@ pub fn token_subset(
                     exp: new_exp,
                 };
                 let token = jwt::encode(&jwt::Header::default(), &new_claims, &state.secret);
-                //println!("{}", &token.unwrap());
                 // TODO: Check error and return token
                 return HttpResponse::Ok().json(TokenSubsetResponse{ token: token.unwrap() });
             }
@@ -148,6 +147,11 @@ pub struct MissingObjectsArgs {
     wanted: Vec<String>
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MissingObjectsResponse {
+    missing: Vec<String>
+}
+
 fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 {
     let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
@@ -172,12 +176,12 @@ pub fn missing_objects(
     let mut missing = vec![];
     for object in &args.wanted {
         if ! has_object (params.id, object, &state) {
-            missing.push(object);
+            missing.push(object.to_string());
         }
     }
     HttpResponse::Ok()
         .content_encoding(http::ContentEncoding::Gzip)
-        .json(&missing)
+        .json(MissingObjectsResponse { missing: missing })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
