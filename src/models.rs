@@ -2,9 +2,10 @@ use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool};
 use std::mem;
+use serde_json;
 
 use chrono;
-use schema::{ builds, build_refs, };
+use schema::{ builds, build_refs, jobs, job_dependencies };
 
 pub struct DbExecutor(pub Pool<ConnectionManager<PgConnection>>);
 
@@ -106,4 +107,53 @@ pub struct BuildRef {
     pub build_id: i32,
     pub ref_name: String,
     pub commit: String,
+}
+
+table! {
+    job_dependencies_with_status (job_id, depends_on) {
+        job_id -> Int4,
+        depends_on -> Int4,
+        dependant_status -> Int2,
+    }
+}
+
+allow_tables_to_appear_in_same_query!(
+    jobs,
+    job_dependencies_with_status,
+);
+
+#[derive(Deserialize, Debug,PartialEq)]
+pub enum JobStatus {
+    New,
+    Started,
+    Ended,
+    Broken,
+}
+
+#[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
+pub struct Job {
+    pub id: i32,
+    pub kind: i16,
+    pub status: i16,
+    pub contents: serde_json::Value,
+    pub results: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Queryable, Identifiable, Associations)]
+#[table_name = "job_dependencies"]
+#[primary_key(job_id, depends_on)]
+#[belongs_to(Job, foreign_key = "job_id")]
+pub struct JobDependency {
+    pub job_id: i32,
+    pub depends_on: i32,
+}
+
+#[derive(Debug, Queryable, Identifiable, Associations)]
+#[table_name = "job_dependencies_with_status"]
+#[primary_key(job_id, depends_on)]
+#[belongs_to(Job, foreign_key = "job_id")]
+pub struct JobDependencyWithStatus {
+    pub job_id: i32,
+    pub depends_on: i32,
+    pub dependant_status: i16,
 }

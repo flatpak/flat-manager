@@ -27,6 +27,23 @@ table! {
 }
 
 table! {
+    job_dependencies (job_id, depends_on) {
+        job_id -> Int4,
+        depends_on -> Int4,
+    }
+}
+
+table! {
+    jobs (id) {
+        id -> Int4,
+        kind -> Int2,
+        status -> Int2,
+        contents -> Jsonb,
+        results -> Nullable<Jsonb>,
+    }
+}
+
+table! {
     published_refs (id) {
         id -> Int4,
         build_id -> Int4,
@@ -43,5 +60,7 @@ allow_tables_to_appear_in_same_query!(
     build_refs,
     builds,
     commit_logs,
+    job_dependencies,
+    jobs,
     published_refs,
 );
