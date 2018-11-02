@@ -4,7 +4,7 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use std::mem;
 
 use chrono;
-use schema::{ build_refs, };
+use schema::{ builds, build_refs, };
 
 pub struct DbExecutor(pub Pool<ConnectionManager<PgConnection>>);
 
@@ -12,7 +12,7 @@ impl Actor for DbExecutor {
     type Context = SyncContext<Self>;
 }
 
-#[derive(Serialize, Queryable, Debug)]
+#[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
 pub struct Build {
     pub id: i32,
     pub created: chrono::NaiveDateTime,
@@ -99,7 +99,8 @@ pub struct NewBuildRef {
     pub commit: String,
 }
 
-#[derive(Serialize, Queryable, Debug)]
+#[derive(Identifiable, Associations, Serialize, Queryable, PartialEq, Debug)]
+#[belongs_to(Build)]
 pub struct BuildRef {
     pub id: i32,
     pub build_id: i32,
