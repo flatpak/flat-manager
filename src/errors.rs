@@ -122,7 +122,7 @@ impl ApiError {
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         if let ApiError::InternalServerError(internal_message) = self {
-            println!("Responding with internal error: {}", internal_message);
+            info!("Responding with internal error: {}", internal_message);
         }
         HttpResponse::build(self.status_code()).json(self.to_json())
     }

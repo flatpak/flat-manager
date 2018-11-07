@@ -222,12 +222,12 @@ impl Handler<StartPublishJob> for DbExecutor {
                 .get_result::<models::Build>(conn)?;
             let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
             if !current_published_state.same_state_as(&PublishedState::Unpublished) {
-                println!("Unexpected publishing state {:?}", current_published_state);
+                info!("Unexpected publishing state {:?}", current_published_state);
                 return Err(DieselError::RollbackTransaction) // Already published
             };
             let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
             if !current_repo_state.same_state_as(&RepoState::Ready) {
-                println!("Unexpected repo state {:?}", current_repo_state);
+                info!("Unexpected repo state {:?}", current_repo_state);
                 return Err(DieselError::RollbackTransaction) // Not commited correctly
             };
             let (val, reason) = PublishedState::to_db(&PublishedState::Publishing);

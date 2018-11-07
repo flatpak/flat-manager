@@ -15,6 +15,8 @@ extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate tempfile;
 extern crate jsonwebtoken as jwt;
+#[macro_use]
+extern crate log;
 
 use actix::prelude::*;
 use actix_web::{server,};
@@ -39,7 +41,7 @@ use models::{DbExecutor};
 use jobs::start_worker;
 
 fn main() {
-    ::std::env::set_var("RUST_LOG", "actix_web=info");
+    ::std::env::set_var("RUST_LOG", "info");
     env_logger::init();
     let sys = actix::System::new("repo-manage");
 
@@ -83,6 +85,6 @@ fn main() {
         .unwrap()
         .start();
 
-    println!("Started http server: 127.0.0.1:8080");
+    info!("Started http server: 127.0.0.1:8080");
     let _ = sys.run();
 }

@@ -96,7 +96,7 @@ fn do_commit_build_refs (build_id: i32,
                 .arg(format!("--end-of-life={}", endoflife));
         };
 
-        println!("running {:?} {:?} {:?} {:?} {:?}",
+        info!("running {:?} {:?} {:?} {:?} {:?}",
                  cmd,
                  &src_repo_arg,
                  &src_ref_arg,
@@ -132,7 +132,7 @@ IsRuntime=false
         }
     }
 
-    println!("running build-update-repo");
+    info!("running build-update-repo");
 
     let output = Command::new("flatpak")
         .arg("build-update-repo")
@@ -142,7 +142,7 @@ IsRuntime=false
         return Err(WorkerError::new(&format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
     }
 
-    println!("remove upload path");
+    info!("remove upload path");
 
     fs::remove_dir_all(&upload_path)?;
 
@@ -151,8 +151,6 @@ IsRuntime=false
 
 
 fn handle_commit_job (worker: &Worker, conn: &PgConnection, job: &CommitJob) -> WorkerResult<serde_json::Value> {
-    println!("commit: {:?}", job);
-
     // Get the uploaded refs from db
 
     let build_refs = build_refs::table
@@ -216,7 +214,7 @@ fn do_publish (build_id: i32,
             .arg(format!("--gpg-sign=={}", key));
     };
 
-    println!("running {:?} {:?} {:?}",
+    info!("running {:?} {:?} {:?}",
              cmd,
              &src_repo_arg,
              &config.repo_path);
@@ -229,7 +227,7 @@ fn do_publish (build_id: i32,
         return Err(WorkerError::new(&format!("Failed to publish repo: {}", String::from_utf8_lossy(&output.stderr))));
     }
 
-    println!("running flatpak build-update-repo");
+    info!("running flatpak build-update-repo");
 
     let output = Command::new("flatpak")
         .arg("build-update-repo")
@@ -244,8 +242,6 @@ fn do_publish (build_id: i32,
 }
 
 fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -> WorkerResult<serde_json::Value> {
-    println!("publish: {:?}", job);
-
     // Do the actual work
 
     let res = do_publish(job.build, &worker.config);
@@ -264,7 +260,7 @@ fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -
         let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
         if !current_published_state.same_state_as(&PublishedState::Publishing) {
             // Something weird was happening, we expected this build to be in the publishing state
-            println!("Unexpected publishing state2 {:?}", current_published_state);
+            info!("Unexpected publishing state {:?}", current_published_state);
             return Err(DieselError::RollbackTransaction)
         };
         let (val, reason) = PublishedState::to_db(&new_published_state);
@@ -283,6 +279,7 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
     let handler_res = match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => {
             if let Ok(commit_job) = serde_json::from_value::<CommitJob>(job.contents.clone()) {
+                info!("Handling Commit Job {}: {:?}", job.id, commit_job);
                 handle_commit_job (worker, conn, &commit_job)
             } else {
                 Err(WorkerError::new("Can't parse commit job"))
@@ -290,6 +287,7 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
         },
         Some(JobKind::Publish) => {
             if let Ok(publish_job) = serde_json::from_value::<PublishJob>(job.contents.clone()) {
+                info!("Handling Publish Job {}: {:?}", job.id, publish_job);
                 handle_publish_job (worker, conn, &publish_job)
             } else {
                 Err(WorkerError::new("Can't parse publish job"))
@@ -301,7 +299,10 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
     };
     let (new_status, new_results) = match handler_res {
         Ok(json) =>  (JobStatus::Ended, json),
-        Err(e) => (JobStatus::Broken, json!(e.to_string()))
+        Err(e) => {
+            info!("Job {} failed: {}", job.id, e.to_string());
+            (JobStatus::Broken, json!(e.to_string()))
+        }
     };
     let update_res =
         diesel::update(jobs::table)
@@ -310,7 +311,7 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
               jobs::results.eq(new_results)))
         .execute(conn);
     if let Err(e) = update_res {
-        println!("handle_job: Error updating job {}", e);
+        info!("handle_job: Error updating job {}", e);
     }
 }
 
