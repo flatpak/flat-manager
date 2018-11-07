@@ -39,9 +39,8 @@ pub fn token_subset(
     state: State<AppState>,
     req: HttpRequest<AppState>
 ) -> HttpResponse {
-    let new_exp = Utc::now().timestamp().saturating_add(i64::max(args.duration, 0));
-    let maybe_claims = req.get_claims();
-    if let Some(claims) = maybe_claims {
+    if let Some(claims) = req.get_claims() {
+        let new_exp = Utc::now().timestamp().saturating_add(i64::max(args.duration, 0));
         if new_exp <= claims.exp &&
             tokens::sub_has_prefix (&args.sub, &claims.sub) &&
             args.scope.iter().all(|s| claims.scope.contains(s)) {
@@ -51,9 +50,10 @@ pub fn token_subset(
                     name: claims.name + "/" + &args.name,
                     exp: new_exp,
                 };
-                let token = jwt::encode(&jwt::Header::default(), &new_claims, &state.config.secret);
-                // TODO: Check error and return token
-                return HttpResponse::Ok().json(TokenSubsetResponse{ token: token.unwrap() });
+                return match jwt::encode(&jwt::Header::default(), &new_claims, &state.config.secret) {
+                    Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse{ token: token }),
+                    Err(e) => ApiError::InternalServerError(e.to_string()).error_response()
+                }
             }
     };
     ApiError::NotEnoughPermissions.error_response()
