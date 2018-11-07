@@ -11,7 +11,7 @@ extern crate env_logger;
 extern crate futures;
 extern crate r2d2;
 extern crate serde;
-extern crate serde_json;
+#[macro_use] extern crate serde_json;
 #[macro_use] extern crate serde_derive;
 extern crate tempfile;
 extern crate jsonwebtoken as jwt;
@@ -22,6 +22,9 @@ use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use dotenv::dotenv;
 use std::env;
+use std::sync::mpsc;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 mod api;
 mod app;
@@ -33,7 +36,7 @@ mod tokens;
 mod jobs;
 
 use models::{DbExecutor};
-use jobs::start_handling_jobs;
+use jobs::start_worker;
 
 fn main() {
     ::std::env::set_var("RUST_LOG", "actix_web=info");
@@ -44,18 +47,38 @@ fn main() {
 
     let database_url = env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set");
+    let repo_path = env::var_os("REPO_PATH")
+        .expect("REPO_PATH must be set");
+    let build_repo_base_path = env::var_os("BUILD_REPO_BASE_PATH")
+        .expect("BUILD_REPO_BASE_PATH must be set");
+    let secret_base64 = env::var("SECRET")
+        .expect("SECRET must be set");
+
+    let secret = base64::decode(&secret_base64).unwrap();
+    let config = Arc::new(app::Config {
+        repo_path: PathBuf::from(repo_path),
+        build_repo_base_path: PathBuf::from(build_repo_base_path),
+        base_url: env::var("BASE_URL").unwrap_or("http://127.0.0.1:8080".to_string()),
+        collection_id: env::var("COLLECTION_ID").ok(),
+        gpg_homedir: env::var("GPG_HOMEDIR").ok(),
+        build_gpg_key: env::var("BUILD_GPG_KEY").ok(),
+        main_gpg_key: env::var("MAIN_GPG_KEY").ok(),
+        secret: secret.clone(),
+    });
 
     let manager = ConnectionManager::<PgConnection>::new(database_url.clone());
     let pool = r2d2::Pool::builder()
         .build(manager)
         .expect("Failed to create pool.");
 
-    start_handling_jobs (pool.clone());
+    let (jobs_tx, jobs_rx) = mpsc::channel();
+
+    start_worker (&config, pool.clone(), jobs_rx);
 
     let addr = SyncArbiter::start(3, move || DbExecutor(pool.clone()));
 
     server::new(move || {
-        app::create_app(addr.clone())
+        app::create_app(addr.clone(), &config, jobs_tx.clone())
     }).bind("127.0.0.1:8080")
         .unwrap()
         .start();

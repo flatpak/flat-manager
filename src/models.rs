@@ -130,6 +130,33 @@ pub enum JobStatus {
     Broken,
 }
 
+#[derive(Debug,PartialEq)]
+pub enum JobKind {
+    Commit,
+}
+
+impl JobKind {
+    pub fn _to_db(&self) -> i16 {
+        match self {
+            JobKind::Commit => 0,
+        }
+    }
+
+    pub fn from_db(val: i16) -> Option<Self> {
+        match val {
+            0 => Some(JobKind::Commit),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Deserialize, Insertable, Debug)]
+#[table_name = "jobs"]
+pub struct NewJob {
+    pub kind: i16,
+    pub contents: serde_json::Value,
+}
+
 #[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
 pub struct Job {
     pub id: i32,
@@ -156,4 +183,11 @@ pub struct JobDependencyWithStatus {
     pub job_id: i32,
     pub depends_on: i32,
     pub dependant_status: i16,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CommitJob {
+    pub build: i32,
+    pub endoflife: Option<String>,
 }

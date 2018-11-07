@@ -5,7 +5,7 @@ use diesel::prelude::*;
 use diesel::result::{Error as DieselError};
 
 use models;
-use models::{DbExecutor,RepoState,PublishedState};
+use models::{DbExecutor,RepoState,PublishedState, CommitJob};
 use errors::ApiError;
 use schema;
 
@@ -51,6 +51,30 @@ impl Handler<CreateBuildRef> for DbExecutor {
         diesel::insert_into(build_refs)
             .values(&msg.data)
             .get_result::<models::BuildRef>(conn)
+            .map_err(|e| {
+                From::from(e)
+            })
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LookupJob {
+    pub id: i32
+}
+
+impl Message for LookupJob {
+    type Result = Result<models::Job, ApiError>;
+}
+
+impl Handler<LookupJob> for DbExecutor {
+    type Result = Result<models::Job, ApiError>;
+
+    fn handle(&mut self, msg: LookupJob, _: &mut Self::Context) -> Self::Result {
+        use schema::jobs::dsl::*;
+        let conn = &self.0.get().unwrap();
+        jobs
+            .filter(id.eq(msg.id))
+            .get_result::<models::Job>(conn)
             .map_err(|e| {
                 From::from(e)
             })
@@ -126,6 +150,59 @@ impl Handler<LookupBuildRefs> for DbExecutor {
             .map_err(|e| From::from(e))
     }
 }
+
+#[derive(Deserialize, Debug)]
+pub struct StartCommitJob {
+    pub id: i32,
+    pub endoflife: Option<String>,
+}
+
+impl Message for StartCommitJob {
+    type Result = Result<models::Build, ApiError>;
+}
+
+impl Handler<StartCommitJob> for DbExecutor {
+    type Result = Result<models::Build, ApiError>;
+
+    fn handle(&mut self, msg: StartCommitJob, _: &mut Self::Context) -> Self::Result {
+        let conn = &self.0.get().unwrap();
+        conn.transaction::<models::Build, DieselError, _>(|| {
+            let current_build = schema::builds::table
+                .filter(schema::builds::id.eq(msg.id))
+                .get_result::<models::Build>(conn)?;
+            let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
+            if !current_repo_state.same_state_as(&RepoState::Uploading) {
+                return Err(DieselError::RollbackTransaction)
+            };
+            let (val, reason) = RepoState::to_db(&RepoState::Verifying);
+            let new_build =
+                diesel::update(schema::builds::table)
+                .filter(schema::builds::id.eq(msg.id))
+                .set((schema::builds::repo_state.eq(val),
+                      schema::builds::repo_state_reason.eq(reason)))
+                .get_result::<models::Build>(conn)?;
+            diesel::insert_into(schema::jobs::table)
+                .values(models::NewJob {
+                    kind: 0,
+                    contents: json!(CommitJob {
+                        build: msg.id,
+                        endoflife: msg.endoflife
+                    }),
+                })
+                .execute(conn)?;
+            Ok(new_build)
+        })
+            .map_err(|e| {
+                match e {
+                    DieselError::RollbackTransaction => ApiError::BadRequest("Build is already commited".to_string()),
+                    _ => From::from(e)
+                }
+            })
+    }
+}
+
+
+
 
 #[derive(Deserialize, Debug)]
 pub struct ChangeRepoState {

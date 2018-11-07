@@ -2,13 +2,11 @@ use actix_web::{dev, error, multipart, http};
 use actix_web::{AsyncResponder, FutureResponse, HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
 use actix_web::error::{ErrorBadRequest,};
 
+use futures::prelude::*;
 use futures::future;
-use futures::{Future, Stream};
 use std::cell::RefCell;
 use std::clone::Clone;
-use std::env;
 use std::ffi::OsString;
-use std::fs::File;
 use std::fs;
 use std::io::Write;
 use std::io;
@@ -22,8 +20,8 @@ use chrono::{Utc};
 use jwt;
 
 use app::{AppState,Claims};
-use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, LookupBuildRefs, ChangeRepoState, ChangePublishedState};
-use models::{NewBuildRef, RepoState, PublishedState};
+use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, ChangePublishedState, StartCommitJob};
+use models::{NewBuildRef, PublishedState};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
 
@@ -57,12 +55,36 @@ pub fn token_subset(
                     name: claims.name + "/" + &args.name,
                     exp: new_exp,
                 };
-                let token = jwt::encode(&jwt::Header::default(), &new_claims, &state.secret);
+                let token = jwt::encode(&jwt::Header::default(), &new_claims, &state.config.secret);
                 // TODO: Check error and return token
                 return HttpResponse::Ok().json(TokenSubsetResponse{ token: token.unwrap() });
             }
     };
     HttpResponse::Unauthorized().json("Invalid token")
+}
+
+#[derive(Deserialize)]
+pub struct JobPathParams {
+    id: i32,
+}
+
+pub fn get_job(
+    params: Path<JobPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims("build", "jobs") {
+        return From::from(e);
+    }
+    state
+        .db
+        .send(LookupBuild { id: params.id })
+        .from_err()
+        .and_then(|res| match res {
+            Ok(job) => Ok(HttpResponse::Ok().json(job)),
+            Err(e) => Ok(e.error_response())
+        })
+        .responder()
 }
 
 pub fn create_build(
@@ -156,11 +178,11 @@ pub struct MissingObjectsResponse {
 fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 {
     let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
-    let build_path = state.build_repo_base_path.join(build_id.to_string()).join(&subpath);
+    let build_path = state.config.build_repo_base_path.join(build_id.to_string()).join(&subpath);
     if build_path.exists() {
         true
     } else {
-        let main_path = state.repo_path.join(&subpath);
+        let main_path = state.config.repo_path.join(&subpath);
         main_path.exists()
     }
 }
@@ -341,7 +363,7 @@ pub fn upload(
         return From::from(e);
     }
     let state = req.state();
-    let uploadstate = Arc::new(UploadState { repo_path: state.build_repo_base_path.join(params.id.to_string()).join("upload") });
+    let uploadstate = Arc::new(UploadState { repo_path: state.config.build_repo_base_path.join(params.id.to_string()).join("upload") });
     Box::new(
         req.multipart()
             .map_err(error::ErrorInternalServerError)
@@ -356,163 +378,9 @@ pub fn upload(
     )
 }
 
-fn init_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
-    let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
-
-    for &d in ["extensions",
-               "objects",
-               "refs/heads",
-               "refs/mirrors",
-               "refs/remotes",
-               "state",
-               "tmp/cache"].iter() {
-        fs::create_dir_all(repo_path.join(d))?;
-    }
-
-    let mut file = File::create(repo_path.join("config"))?;
-    file.write_all(format!(r#"
-[core]
-repo_version=1
-mode=archive-z2
-{}parent={}"#,
-                           match opt_collection_id {
-                               Some(collection_id) => format!("collection-id={}.Build{}\n", collection_id, build_id),
-                               _ => "".to_string(),
-                           },
-                           parent_repo_absolute_path.display()).as_bytes())?;
-    Ok(())
-}
-
-fn commit_build(state: &AppState, build_id: i32, base_url: &String, args: &CommitArgs) -> io::Result<()> {
-    let build_refs = state
-        .db
-        .send(LookupBuildRefs {
-            id: build_id
-        })
-        .wait()
-    // wait error
-        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't load build refs")))?
-    // send error
-        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't load build refs")))?;
-
-    let build_repo_path = state.build_repo_base_path.join(build_id.to_string());
-    let upload_path = build_repo_path.join("upload");
-
-    init_repo (&build_repo_path, &state.repo_path, build_id, &state.collection_id)?;
-    init_repo (&upload_path, &state.repo_path, build_id, &None)?;
-
-    let mut src_repo_arg = OsString::from("--src-repo=");
-    src_repo_arg.push(&upload_path);
-
-    for build_ref in build_refs.iter() {
-        let mut src_ref_arg = String::from("--src-ref=");
-        src_ref_arg.push_str(&build_ref.commit);
-
-        let mut cmd = Command::new("flatpak");
-        cmd
-            .arg("build-commit-from")
-            .arg("--timestamp=NOW")     // All builds have the same timestamp, not when the individual builds finished
-            .arg("--no-update-summary") // We update it once at the end
-            .arg("--untrusted")         // Verify that the uploaded objects are correct
-            .arg("--disable-fsync");    // There is a sync in flatpak build-update-repo, so avoid it here
-
-        if let Some(gpg_homedir) = &state.gpg_homedir {
-            cmd
-                .arg(format!("--gpg-homedir=={}", gpg_homedir));
-        };
-
-        if let Some(key) = &state.build_gpg_key {
-            cmd
-                .arg(format!("--gpg-sign=={}", key));
-        };
-
-        if let Some(endoflife) = &args.endoflife {
-            cmd
-                .arg("--force")         // Even if the content is the same, the metadata is not, so ensure its updated
-                .arg(format!("--end-of-life={}", endoflife));
-        };
-
-        let output = cmd
-            .arg(&src_repo_arg)
-            .arg(&src_ref_arg)
-            .arg(&build_repo_path)
-            .arg(&build_ref.ref_name)
-            .output()?;
-        if !output.status.success() {
-            return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, String::from_utf8_lossy(&output.stderr))));
-        }
-
-        if build_ref.ref_name.starts_with("app/") {
-            let parts: Vec<&str> = build_ref.ref_name.split('/').collect();
-            let mut file = File::create(build_repo_path.join(format!("{}.flatpakref", parts[1])))?;
-            // TODO: We should also add GPGKey here if state.build_gpg_key is set
-            file.write_all(format!(r#"
-[Flatpak Ref]
-Name={}
-Branch={}
-Url={}/build-repo/{}
-RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
-IsRuntime=false
-"#,
-                                   parts[1],
-                                   parts[3],
-                                   base_url,
-                                   build_id).as_bytes())?;
-        }
-    }
-
-    let output = Command::new("flatpak")
-        .arg("build-update-repo")
-        .arg(&build_repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
-    }
-
-    fs::remove_dir_all(&upload_path)?;
-
-    state.db
-        .send(ChangeRepoState {
-            id: build_id,
-            new: RepoState::Ready,
-            expected: Some(RepoState::Verifying),
-        })
-        .wait()
-    // wait error
-        .or_else(|e| Err(io::Error::new(io::ErrorKind::Other, "Can't change repo state: ".to_string() + &e.to_string())))?
-    // send error
-        .or_else(|e| Err(io::Error::new(io::ErrorKind::Other, "Can't change repo state: ".to_string() + &e.to_string())))?;
-
-    Ok(())
-}
-
-fn commit_thread(state: AppState, build_id: i32, base_url: String, args: CommitArgs) {
-    if let Err(e) = commit_build(&state, build_id, &base_url, &args) {
-        println!("commit failed {:?}", e);
-        let res =
-            &state.db
-            .send(ChangeRepoState {
-                id: build_id,
-                new: RepoState::Failed(e.to_string()),
-                expected: None,
-            })
-            .wait();
-        if res.is_err() {
-            println!("Failed to mark operation failed");
-        }
-    }
-}
-
 #[derive(Deserialize)]
 pub struct CommitArgs {
     endoflife: Option<String>,
-}
-
-fn request_base_url(req: &HttpRequest<AppState>) -> String {
-    let conn_info = req.connection_info();
-    format!("{}://{}",
-            conn_info.scheme(),
-            conn_info.host())
 }
 
 pub fn commit(
@@ -524,21 +392,23 @@ pub fn commit(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    let s = (*state).clone();
-    let id = params.id;
-    let base_url = request_base_url(&req);
+    let tx = state.job_tx_channel.clone();
     state
         .db
-        .send(ChangeRepoState {
+        .send(StartCommitJob {
             id: params.id,
-            new: RepoState::Verifying,
-            expected: Some(RepoState::Uploading),
+            endoflife: args.endoflife.clone(),
         })
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                thread::spawn(move || commit_thread (s, id, base_url, args.into_inner()) );
-                Ok(HttpResponse::Ok().json(build))
+                tx.send(()).unwrap();
+                match req.url_for("show_build", &[params.id.to_string()]) {
+                    Ok(url) => Ok(HttpResponse::Ok()
+                                  .header(http::header::LOCATION, url.to_string())
+                                  .json(build)),
+                    Err(e) => Ok(e.error_response())
+                }
             },
             Err(e) => Ok(e.error_response())
         })
@@ -550,7 +420,7 @@ pub struct PublishArgs {
 }
 
 fn publish_build(state: &AppState, build_id: i32, _args: &PublishArgs) -> io::Result<()> {
-    let build_repo_path = state.build_repo_base_path.join(build_id.to_string());
+    let build_repo_path = state.config.build_repo_base_path.join(build_id.to_string());
 
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&build_repo_path);
@@ -560,19 +430,19 @@ fn publish_build(state: &AppState, build_id: i32, _args: &PublishArgs) -> io::Re
         .arg("build-commit-from")
         .arg("--no-update-summary"); // We update it separately
 
-        if let Some(gpg_homedir) = &state.gpg_homedir {
+        if let Some(gpg_homedir) = &state.config.gpg_homedir {
             cmd
                 .arg(format!("--gpg-homedir=={}", gpg_homedir));
         };
 
-    if let Some(key) = &state.build_gpg_key {
+    if let Some(key) = &state.config.build_gpg_key {
         cmd
             .arg(format!("--gpg-sign=={}", key));
     };
 
     let output = cmd
         .arg(&src_repo_arg)
-        .arg(&state.repo_path)
+        .arg(&state.config.repo_path)
         .output()?;
     if !output.status.success() {
         return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to publish repo: {}", String::from_utf8_lossy(&output.stderr))));
@@ -580,7 +450,7 @@ fn publish_build(state: &AppState, build_id: i32, _args: &PublishArgs) -> io::Re
 
     let output = Command::new("flatpak")
         .arg("build-update-repo")
-        .arg(&state.repo_path)
+        .arg(&state.config.repo_path)
         .output()?;
     if !output.status.success() {
         return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
