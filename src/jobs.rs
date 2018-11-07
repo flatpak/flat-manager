@@ -159,7 +159,6 @@ fn handle_commit_job (worker: &Worker, conn: &PgConnection, job: &CommitJob) -> 
         .filter(build_refs::build_id.eq(job.build))
         .get_results::<models::BuildRef>(conn)
         .or_else(|_e| Err(WorkerError::new("Can't load build refs")))?;
-    println!("refs: {:?}", build_refs);
     if build_refs.len() == 0 {
         return Err(WorkerError::new("No refs in build"));
     }
@@ -281,7 +280,6 @@ fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -
 
 
 fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
-    println!("jobs: {:?}", job);
     let handler_res = match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => {
             if let Ok(commit_job) = serde_json::from_value::<CommitJob>(job.contents.clone()) {
@@ -298,7 +296,6 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
             }
         },
         _ => {
-            println!("Uknown job type {}", job.id);
             Err(WorkerError::new("Unknown job type"))
         }
     };
@@ -352,7 +349,6 @@ fn worker_thread (worker: Worker) {
         } else {
             // diesel/pq-sys does not currently support NOTIFY/LISTEN, so we use an in-process channel
             // and a 3 sec poll for now
-            println!("No jobs, sleeping");
             let _r = worker.wakeup_channel.recv_timeout(time::Duration::from_secs(3));
         }
 

@@ -26,7 +26,6 @@ impl From<DieselError> for WorkerError {
     fn from(e: DieselError) -> Self {
         match e {
             _ => {
-                println!("Diesel error: {:?}", e);
                 WorkerError::DBError(e.to_string())
             }
         }
@@ -37,7 +36,6 @@ impl From<io::Error> for WorkerError {
     fn from(e: io::Error) -> Self {
         match e {
             _ => {
-                println!("worker io error: {:?}", e);
                 WorkerError::InternalError(e.to_string())
             }
         }
@@ -123,6 +121,9 @@ impl ApiError {
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
+        if let ApiError::InternalServerError(internal_message) = self {
+            println!("Responding with internal error: {}", internal_message);
+        }
         HttpResponse::build(self.status_code()).json(self.to_json())
     }
 }

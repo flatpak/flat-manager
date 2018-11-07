@@ -311,13 +311,11 @@ fn save_file(
                     .write_all(bytes.as_ref())
                     .map(|_| acc + bytes.len() as i64)
                     .map_err(|e| {
-                        println!("file.write_all failed: {:?}", e);
                         error::MultipartError::Payload(error::PayloadError::Io(e))
                     });
                 future::result(rt)
             })
             .map_err(|e| {
-                println!("save_file failed, {:?}", e);
                 ApiError::InternalServerError(e.to_string())
             })
             .and_then (move |res| {
@@ -368,10 +366,7 @@ pub fn upload(
             .flatten()
             .collect()
             .map(|sizes| HttpResponse::Ok().json(sizes))
-            .map_err(|e| {
-                println!("failed: {}", e);
-                From::from(e)
-            }),
+            .from_err()
     )
 }
 

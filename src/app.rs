@@ -41,7 +41,6 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     let id: String = req.match_info().query("id")?;
     let state = req.state();
     let path = Path::new(&state.config.build_repo_base_path).join(&id).join(tail.trim_left_matches('/'));
-    println!("Handle build repo {:?}", path);
     NamedFile::open(path).or_else(|_e| {
         let fallback_path = Path::new(&state.config.repo_path).join(tail.trim_left_matches('/'));
         Ok(NamedFile::open(fallback_path)?)
