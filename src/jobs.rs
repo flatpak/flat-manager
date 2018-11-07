@@ -146,7 +146,7 @@ IsRuntime=false
 
     fs::remove_dir_all(&upload_path)?;
 
-    Ok(json!("Foo")) // TODO: What to put here?
+    Ok(json!({}))
 }
 
 
@@ -241,7 +241,7 @@ fn do_publish (build_id: i32,
     if !output.status.success() {
         return Err(WorkerError::new(&format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
     }
-    Ok(json!("Foo")) // TODO: What to put here?
+    Ok(json!({}))
 }
 
 fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -> WorkerResult<serde_json::Value> {
