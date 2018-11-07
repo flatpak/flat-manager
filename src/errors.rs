@@ -3,6 +3,7 @@ use actix_web::{error::ResponseError, HttpResponse, FutureResponse};
 use diesel::result::{Error as DieselError};
 use futures::future;
 use std::io;
+use actix_web::http::StatusCode;
 
 #[derive(Fail, Debug)]
 pub enum WorkerError {
@@ -45,8 +46,8 @@ impl From<io::Error> for WorkerError {
 
 #[derive(Fail, Debug)]
 pub enum ApiError {
-    #[fail(display = "Internal Server Error")]
-    InternalServerError,
+    #[fail(display = "Internal Server Error ({})", _0)]
+    InternalServerError(String),
 
     #[fail(display = "NotFound")]
     NotFound,
@@ -54,8 +55,11 @@ pub enum ApiError {
     #[fail(display = "BadRequest: {}", _0)]
     BadRequest(String),
 
-    #[fail(display = "InvalidToken: {}", _0)]
-    InvalidToken(String),
+    #[fail(display = "InvalidToken")]
+    InvalidToken,
+
+    #[fail(display = "NotEnoughPermissions")]
+    NotEnoughPermissions,
 }
 
 impl From<DieselError> for ApiError {
@@ -63,8 +67,7 @@ impl From<DieselError> for ApiError {
         match e {
             DieselError::NotFound => ApiError::NotFound,
             _ => {
-                println!("Diesel error: {:?}", e);
-                ApiError::InternalServerError
+                ApiError::InternalServerError(e.to_string())
             }
         }
     }
@@ -74,21 +77,53 @@ impl From<actix::MailboxError> for ApiError {
     fn from(e: actix::MailboxError) -> Self {
         match e {
             _ => {
-                println!("Actix mailbox error: {:?}", e);
-                ApiError::InternalServerError
+                ApiError::InternalServerError(e.to_string())
             }
+        }
+    }
+}
+
+impl ApiError {
+    pub fn to_json(&self) -> String {
+        match *self {
+            ApiError::InternalServerError(ref _internal_message) => json!({
+                "status": 500,
+                "message": "Internal Server Error"
+            }),
+            ApiError::NotFound => json!({
+                "status": 404,
+                "message": "Not found",
+            }),
+            ApiError::BadRequest(ref message) => json!({
+                "status": 400,
+                "message": message,
+            }),
+            ApiError::InvalidToken => json!({
+                "status": 401,
+                "message": "Invalid token",
+            }),
+            ApiError::NotEnoughPermissions => json!({
+                "status": 401,
+                "message": "Not enough permissions",
+            }),
+        }
+        .to_string()
+    }
+
+    pub fn status_code(&self) -> StatusCode {
+        match *self {
+            ApiError::InternalServerError(ref _internal_message) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::NotFound => StatusCode::NOT_FOUND,
+            ApiError::BadRequest(ref _message) => StatusCode::BAD_REQUEST,
+            ApiError::InvalidToken => StatusCode::UNAUTHORIZED,
+            ApiError::NotEnoughPermissions => StatusCode::UNAUTHORIZED,
         }
     }
 }
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
-        match *self {
-            ApiError::InternalServerError => HttpResponse::InternalServerError().json("Internal Server Error"),
-            ApiError::NotFound => HttpResponse::NotFound().json("Not found"),
-            ApiError::BadRequest(ref message) => HttpResponse::BadRequest().json(message),
-            ApiError::InvalidToken(ref message) => HttpResponse::Unauthorized().json(message),
-        }
+        HttpResponse::build(self.status_code()).json(self.to_json())
     }
 }
 

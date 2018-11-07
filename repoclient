@@ -40,10 +40,11 @@ UPLOAD_CHUNK_LIMIT = 2 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
 
 class ApiError(Exception):
-    def __init__(self, response):
+    def __init__(self, response, body):
         self.response = response
+        self.body = body
     def __str__(self):
-         return "API call %s to %s returned status %s: %s" % (self.response.method, self.response.url, self.response.status, self.response.reason)
+         return "API call %s to %s returned status %s: %s: %s" % (self.response.method, self.response.url, self.response.status, self.response.reason, self.body)
 
 # This is similar to the regular payload, but opens the file lazily
 class NamedFilePayload(aiohttp.payload.Payload):
@@ -160,7 +161,7 @@ async def missing_objects(session, build_url, token, wanted):
     }
     async with session.get(build_url + "/missing_objects", data=data, headers=headers) as resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.json())
         data = await resp.json()
         return data["missing"];
 
@@ -175,7 +176,7 @@ async def upload_files(session, build_url, token, files):
     resp = await session.request("post", build_url + '/upload',
                                  data=writer, headers=writer.headers)
     if resp.status != 200:
-        raise ApiError(resp)
+        raise ApiError(resp, await resp.json())
 
 async def upload_objects(session, repo_path, build_url, token, objects):
     req = []
@@ -196,24 +197,41 @@ async def create_ref(session, build_url, token, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
     async with session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + args.token}, json= { "ref": ref, "commit": commit} ) as resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.json())
         data = await resp.json()
         return data;
 
-async def commit_build(session, build_url, token):
+async def get_build(session, build_url, token):
+    async with session.get(build_url, headers={'Authorization': 'Bearer ' + token}) as resp:
+        if resp.status != 200:
+            raise ApiError(resp, await resp.json())
+        data = await resp.json()
+    return data
+
+async def commit_build(session, build_url, wait, token):
     print("Commiting build %s" % (build_url))
     async with session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.json())
         data = await resp.json()
+        if wait:
+            print("Waiting for commit to finish")
+            while data['repo_state'] == 1:
+                await asyncio.sleep(3)
+                data = await get_build(session, build_url, token)
         return data;
 
-async def publish_build(session, build_url, token):
+async def publish_build(session, build_url, wait, token):
     print("Publishing build %s" % (build_url))
     async with session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.json())
         data = await resp.json()
+        if wait:
+            print("Waiting for publish to finish")
+            while data['published_state'] == 1:
+                await asyncio.sleep(3)
+                data = await get_build(session, build_url, token)
         return data;
 
 async def create_token(session, manager_url, token, name, subject, scope, duration):
@@ -225,7 +243,7 @@ async def create_token(session, manager_url, token, name, subject, scope, durati
             "duration": duration,
     } ) as resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.json())
         data = await resp.json()
         return data["token"]
 
@@ -236,7 +254,7 @@ async def create_command(args, session):
     build_url = yarl.URL(args.manager_url).with_path("/api/v1/build")
     async with session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={} ) as resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.json())
         data = await resp.json()
         print(resp.headers['location'])
 
@@ -292,14 +310,22 @@ async def push_command(args, session):
         await create_ref(session, args.build_url, token, ref, commit)
 
     # Note, this always uses the full token, as the minimal one only has upload permissions
-    if args.commit:
-        await commit_build(session, args.build_url, args.token)
+    if args.commit or args.publish:
+        c = await commit_build(session, args.build_url, args.publish or args.wait, args.token)
+    else:
+        c = await get_build(session, args.build_url, token)
+
+    if args.publish:
+        c = await publish_build(session, args.build_url, args.wait, args.token)
+
+    print(c)
 
 async def commit_command(args, session):
-    await commit_build(session, args.build_url, args.token)
+    c = await commit_build(session, args.build_url, args.wait, args.token)
+    print(c)
 
 async def publish_command(args, session):
-    await publish_build(session, args.build_url, args.token)
+    await publish_build(session, args.build_url, args.wait, args.token)
 
 async def create_token_command(args, session):
     new_token = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
@@ -344,15 +370,21 @@ if __name__ == '__main__':
                              help='commit build after pushing')
     push_parser.add_argument('--publish', action='store_true',
                              help='publish build after commiting')
+    push_parser.add_argument('--wait', action='store_true',
+                             help='wait for commit/publish to finish')
     push_parser.add_argument('--minimal-token', action='store_true',
                              help='Create minimal token for the upload')
     push_parser.set_defaults(func=push_command)
 
     commit_parser = subparsers.add_parser('commit', help='Commit build')
+    commit_parser.add_argument('--wait', action='store_true',
+                             help='wait for commit to finish')
     commit_parser.add_argument('build_url', help='remote build url')
     commit_parser.set_defaults(func=commit_command)
 
     publish_parser = subparsers.add_parser('publish', help='Publish build')
+    publish_parser.add_argument('--wait', action='store_true',
+                             help='wait for publish to finish')
     publish_parser.add_argument('build_url', help='remote build url')
     publish_parser.set_defaults(func=publish_command)
 

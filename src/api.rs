@@ -17,6 +17,7 @@ use chrono::{Utc};
 use jwt;
 
 use app::{AppState,Claims};
+use errors::ApiError;
 use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, StartCommitJob, StartPublishJob};
 use models::{NewBuildRef};
 use actix_web::ResponseError;
@@ -57,7 +58,7 @@ pub fn token_subset(
                 return HttpResponse::Ok().json(TokenSubsetResponse{ token: token.unwrap() });
             }
     };
-    HttpResponse::Unauthorized().json("Invalid token")
+    ApiError::NotEnoughPermissions.error_response()
 }
 
 #[derive(Deserialize)]

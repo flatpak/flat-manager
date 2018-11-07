@@ -1,7 +1,6 @@
 use actix_web::{HttpRequest, Result};
-use actix_web::error::{ParseError, ErrorUnauthorized};
-use actix_web::http::header::{HeaderValue, AUTHORIZATION};
 use actix_web::middleware::{Middleware, Started};
+use actix_web::http::header::{HeaderValue, AUTHORIZATION};
 use jwt::{decode, Validation};
 
 use app::Claims;
@@ -55,7 +54,7 @@ impl<S> ClaimsValidator for HttpRequest<S> {
             }) {
             Ok(())
         } else {
-            Err(ApiError::InvalidToken("Token invalid".to_string()))
+            Err(ApiError::NotEnoughPermissions)
         }
     }
 }
@@ -69,31 +68,31 @@ impl TokenParser {
         TokenParser { secret: secret.to_vec() }
     }
 
-    fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ParseError> {
+    fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ApiError> {
         // "Bearer *" length
         if header.len() < 8 {
-            return Err(ParseError::Header);
+            return Err(ApiError::InvalidToken);
         }
 
-        let mut parts = header.to_str().or(Err(ParseError::Header))?.splitn(2, ' ');
+        let mut parts = header.to_str().or(Err(ApiError::InvalidToken))?.splitn(2, ' ');
         match parts.next() {
             Some(scheme) if scheme == "Bearer" => (),
-            _ => return Err(ParseError::Header),
+            _ => return Err(ApiError::InvalidToken),
         }
 
-        let token = parts.next().ok_or(ParseError::Header)?;
+        let token = parts.next().ok_or(ApiError::InvalidToken)?;
 
         Ok(token.to_string())
     }
 
-    fn validate_claims(&self, token: String) -> Result<Claims> {
+    fn validate_claims(&self, token: String) -> Result<Claims, ApiError> {
         let validation = Validation {
             ..Validation::default()
         };
 
         let token_data = match decode::<Claims>(&token, &self.secret, &validation) {
             Ok(c) => c,
-            Err(err) => return Err(ErrorUnauthorized(err)),
+            Err(_err) => return Err(ApiError::InvalidToken),
         };
 
         Ok(token_data.claims)
@@ -102,8 +101,8 @@ impl TokenParser {
 
 impl<S: 'static> Middleware<S> for TokenParser {
     fn start(&self, req: &HttpRequest<S>) -> Result<Started> {
-        let header = req.headers().get(AUTHORIZATION).ok_or(ErrorUnauthorized("No bearer token"))?;
-        let token = self.parse_authorization(header).or(Err(ErrorUnauthorized("Invalid bearer token")))?;
+        let header = req.headers().get(AUTHORIZATION).ok_or(ApiError::InvalidToken)?;
+        let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
 
         req.extensions_mut().insert(claims);
