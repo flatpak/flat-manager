@@ -18,7 +18,7 @@ use std::{thread, time};
 
 use app::Config;
 use errors::{WorkerError, WorkerResult};
-use models::{Job, JobKind, CommitJob, JobStatus, job_dependencies_with_status, RepoState };
+use models::{Job, JobKind, CommitJob, PublishJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
 use models;
 use schema::*;
 
@@ -195,6 +195,91 @@ fn handle_commit_job (worker: &Worker, conn: &PgConnection, job: &CommitJob) -> 
     res
 }
 
+fn do_publish (build_id: i32,
+               config: &Arc<Config>)  -> WorkerResult<serde_json::Value> {
+    let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
+
+    let mut src_repo_arg = OsString::from("--src-repo=");
+    src_repo_arg.push(&build_repo_path);
+
+    let mut cmd = Command::new("flatpak");
+    cmd
+        .arg("build-commit-from")
+        .arg("--no-update-summary"); // We update it separately
+
+        if let Some(gpg_homedir) = &config.gpg_homedir {
+            cmd
+                .arg(format!("--gpg-homedir=={}", gpg_homedir));
+        };
+
+    if let Some(key) = &config.build_gpg_key {
+        cmd
+            .arg(format!("--gpg-sign=={}", key));
+    };
+
+    println!("running {:?} {:?} {:?}",
+             cmd,
+             &src_repo_arg,
+             &config.repo_path);
+
+    let output = cmd
+        .arg(&src_repo_arg)
+        .arg(&config.repo_path)
+        .output()?;
+    if !output.status.success() {
+        return Err(WorkerError::new(&format!("Failed to publish repo: {}", String::from_utf8_lossy(&output.stderr))));
+    }
+
+    println!("running flatpak build-update-repo");
+
+    let output = Command::new("flatpak")
+        .arg("build-update-repo")
+        .arg(&config.repo_path)
+        .output()
+        .map_err(|e| WorkerError::new(&format!("Failed to update repo: {}", e.to_string())))
+        ?;
+    if !output.status.success() {
+        return Err(WorkerError::new(&format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
+    }
+    Ok(json!("Foo")) // TODO: What to put here?
+}
+
+fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -> WorkerResult<serde_json::Value> {
+    println!("publish: {:?}", job);
+
+    // Do the actual work
+
+    let res = do_publish(job.build, &worker.config);
+
+    // Update the publish repo state in db
+
+    let new_published_state = match &res {
+        Ok(_) => PublishedState::Published,
+        Err(e) => PublishedState::Failed(e.to_string()),
+    };
+
+    conn.transaction::<models::Build, DieselError, _>(|| {
+        let current_build = builds::table
+            .filter(builds::id.eq(job.build))
+            .get_result::<models::Build>(conn)?;
+        let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
+        if !current_published_state.same_state_as(&PublishedState::Publishing) {
+            // Something weird was happening, we expected this build to be in the publishing state
+            println!("Unexpected publishing state2 {:?}", current_published_state);
+            return Err(DieselError::RollbackTransaction)
+        };
+        let (val, reason) = PublishedState::to_db(&new_published_state);
+        diesel::update(builds::table)
+            .filter(builds::id.eq(job.build))
+            .set((builds::published_state.eq(val),
+                  builds::published_state_reason.eq(reason)))
+            .get_result::<models::Build>(conn)
+    })?;
+
+    res
+}
+
+
 fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
     println!("jobs: {:?}", job);
     let handler_res = match JobKind::from_db(job.kind) {
@@ -203,6 +288,13 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
                 handle_commit_job (worker, conn, &commit_job)
             } else {
                 Err(WorkerError::new("Can't parse commit job"))
+            }
+        },
+        Some(JobKind::Publish) => {
+            if let Ok(publish_job) = serde_json::from_value::<PublishJob>(job.contents.clone()) {
+                handle_publish_job (worker, conn, &publish_job)
+            } else {
+                Err(WorkerError::new("Can't parse publish job"))
             }
         },
         _ => {

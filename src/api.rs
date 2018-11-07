@@ -6,22 +6,19 @@ use futures::prelude::*;
 use futures::future;
 use std::cell::RefCell;
 use std::clone::Clone;
-use std::ffi::OsString;
 use std::fs;
 use std::io::Write;
 use std::io;
 use std::path;
-use std::process::{Command};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::thread;
 use tempfile::NamedTempFile;
 use chrono::{Utc};
 use jwt;
 
 use app::{AppState,Claims};
-use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, ChangePublishedState, StartCommitJob};
-use models::{NewBuildRef, PublishedState};
+use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, StartCommitJob, StartPublishJob};
+use models::{NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
 
@@ -415,81 +412,7 @@ pub fn commit(
         .responder()
 }
 
-#[derive(Deserialize)]
-pub struct PublishArgs {
-}
-
-fn publish_build(state: &AppState, build_id: i32, _args: &PublishArgs) -> io::Result<()> {
-    let build_repo_path = state.config.build_repo_base_path.join(build_id.to_string());
-
-    let mut src_repo_arg = OsString::from("--src-repo=");
-    src_repo_arg.push(&build_repo_path);
-
-    let mut cmd = Command::new("flatpak");
-    cmd
-        .arg("build-commit-from")
-        .arg("--no-update-summary"); // We update it separately
-
-        if let Some(gpg_homedir) = &state.config.gpg_homedir {
-            cmd
-                .arg(format!("--gpg-homedir=={}", gpg_homedir));
-        };
-
-    if let Some(key) = &state.config.build_gpg_key {
-        cmd
-            .arg(format!("--gpg-sign=={}", key));
-    };
-
-    let output = cmd
-        .arg(&src_repo_arg)
-        .arg(&state.config.repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to publish repo: {}", String::from_utf8_lossy(&output.stderr))));
-    }
-
-    let output = Command::new("flatpak")
-        .arg("build-update-repo")
-        .arg(&state.config.repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(io::Error::new(io::ErrorKind::Other, format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
-    }
-
-    state.db
-        .send(ChangePublishedState {
-            id: build_id,
-            new: PublishedState::Published,
-            expected: Some(PublishedState::Publishing),
-        })
-        .wait()
-    // wait error
-        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't change published state")))?
-    // send error
-        .or_else(|_e| Err(io::Error::new(io::ErrorKind::Other, "Can't change published state")))?;
-
-    Ok(())
-}
-
-fn publish_thread(state: AppState, build_id: i32, args: PublishArgs) {
-    if let Err(e) = publish_build(&state, build_id, &args) {
-        println!("publish failed: {:?}", e);
-        let res =
-            &state.db
-            .send(ChangePublishedState {
-                id: build_id,
-                new: PublishedState::Failed(e.to_string()),
-                expected: None,
-            })
-            .wait();
-        if res.is_err() {
-            println!("Failed to mark operation failed");
-        }
-    }
-}
-
 pub fn publish(
-    args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
     state: State<AppState>,
     req: HttpRequest<AppState>,
@@ -497,20 +420,23 @@ pub fn publish(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "publish") {
         return From::from(e);
     }
-    let s = (*state).clone();
-    let id = params.id;
+
+    let tx = state.job_tx_channel.clone();
     state
         .db
-        .send(ChangePublishedState {
+        .send(StartPublishJob {
             id: params.id,
-            new: PublishedState::Publishing,
-            expected: Some(PublishedState::Unpublished),
         })
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                thread::spawn(move || publish_thread (s, id, args.into_inner()) );
-                Ok(HttpResponse::Ok().json(build))
+                tx.send(()).unwrap();
+                match req.url_for("show_build", &[params.id.to_string()]) {
+                    Ok(url) => Ok(HttpResponse::Ok()
+                                  .header(http::header::LOCATION, url.to_string())
+                                  .json(build)),
+                    Err(e) => Ok(e.error_response())
+                }
             },
             Err(e) => Ok(e.error_response())
         })

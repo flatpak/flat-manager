@@ -5,7 +5,7 @@ use diesel::prelude::*;
 use diesel::result::{Error as DieselError};
 
 use models;
-use models::{DbExecutor,RepoState,PublishedState, CommitJob};
+use models::{DbExecutor,RepoState,PublishedState, CommitJob, PublishJob, JobKind};
 use errors::ApiError;
 use schema;
 
@@ -183,7 +183,7 @@ impl Handler<StartCommitJob> for DbExecutor {
                 .get_result::<models::Build>(conn)?;
             diesel::insert_into(schema::jobs::table)
                 .values(models::NewJob {
-                    kind: 0,
+                    kind: JobKind::Commit.to_db(),
                     contents: json!(CommitJob {
                         build: msg.id,
                         endoflife: msg.endoflife
@@ -202,7 +202,59 @@ impl Handler<StartCommitJob> for DbExecutor {
 }
 
 
+#[derive(Deserialize, Debug)]
+pub struct StartPublishJob {
+    pub id: i32,
+}
 
+impl Message for StartPublishJob {
+    type Result = Result<models::Build, ApiError>;
+}
+
+impl Handler<StartPublishJob> for DbExecutor {
+    type Result = Result<models::Build, ApiError>;
+
+    fn handle(&mut self, msg: StartPublishJob, _: &mut Self::Context) -> Self::Result {
+        let conn = &self.0.get().unwrap();
+        conn.transaction::<models::Build, DieselError, _>(|| {
+            let current_build = schema::builds::table
+                .filter(schema::builds::id.eq(msg.id))
+                .get_result::<models::Build>(conn)?;
+            let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
+            if !current_published_state.same_state_as(&PublishedState::Unpublished) {
+                println!("Unexpected publishing state {:?}", current_published_state);
+                return Err(DieselError::RollbackTransaction) // Already published
+            };
+            let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
+            if !current_repo_state.same_state_as(&RepoState::Ready) {
+                println!("Unexpected repo state {:?}", current_repo_state);
+                return Err(DieselError::RollbackTransaction) // Not commited correctly
+            };
+            let (val, reason) = PublishedState::to_db(&PublishedState::Publishing);
+            let new_build =
+                diesel::update(schema::builds::table)
+                .filter(schema::builds::id.eq(msg.id))
+                .set((schema::builds::published_state.eq(val),
+                      schema::builds::published_state_reason.eq(reason)))
+                .get_result::<models::Build>(conn)?;
+            diesel::insert_into(schema::jobs::table)
+                .values(models::NewJob {
+                    kind: JobKind::Publish.to_db(),
+                    contents: json!(PublishJob {
+                        build: msg.id,
+                    }),
+                })
+                .execute(conn)?;
+            Ok(new_build)
+        })
+            .map_err(|e| {
+                match e {
+                    DieselError::RollbackTransaction => ApiError::BadRequest("Invalid build state for publish".to_string()),
+                    _ => From::from(e)
+                }
+            })
+    }
+}
 
 #[derive(Deserialize, Debug)]
 pub struct ChangeRepoState {

@@ -133,18 +133,21 @@ pub enum JobStatus {
 #[derive(Debug,PartialEq)]
 pub enum JobKind {
     Commit,
+    Publish,
 }
 
 impl JobKind {
-    pub fn _to_db(&self) -> i16 {
+    pub fn to_db(&self) -> i16 {
         match self {
             JobKind::Commit => 0,
+            JobKind::Publish => 1,
         }
     }
 
     pub fn from_db(val: i16) -> Option<Self> {
         match val {
             0 => Some(JobKind::Commit),
+            1 => Some(JobKind::Publish),
             _ => None,
         }
     }
@@ -190,4 +193,10 @@ pub struct JobDependencyWithStatus {
 pub struct CommitJob {
     pub build: i32,
     pub endoflife: Option<String>,
+}
+
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PublishJob {
+    pub build: i32,
 }
