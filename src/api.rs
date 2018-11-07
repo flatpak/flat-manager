@@ -1,6 +1,5 @@
 use actix_web::{dev, error, multipart, http};
 use actix_web::{AsyncResponder, FutureResponse, HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
-use actix_web::error::{ErrorBadRequest,};
 
 use futures::prelude::*;
 use futures::future;
@@ -8,7 +7,6 @@ use std::cell::RefCell;
 use std::clone::Clone;
 use std::fs;
 use std::io::Write;
-use std::io;
 use std::path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -256,16 +254,13 @@ fn objectname_is_valid(name: &str) -> bool {
          v[1] == "commit")
 }
 
-fn get_object_name(field: &multipart::Field<dev::Payload>) -> error::Result<String, io::Error> {
+fn get_object_name(field: &multipart::Field<dev::Payload>) -> error::Result<String, ApiError> {
     let cd = field.content_disposition().ok_or(
-        io::Error::new(io::ErrorKind::InvalidInput,
-                       "No content disposition for multipart item"))?;
+        ApiError::BadRequest("No content disposition for multipart item".to_string()))?;
     let filename = cd.get_filename().ok_or(
-        io::Error::new(io::ErrorKind::InvalidInput,
-                       "No filename for multipart item"))?;
+        ApiError::BadRequest("No filename for multipart item".to_string()))?;
     if !objectname_is_valid(filename) {
-        Err(io::Error::new(io::ErrorKind::InvalidInput,
-                           "Invalid object name"))
+        Err(ApiError::BadRequest("Invalid object name".to_string()))
     } else {
         Ok(filename.to_string())
     }
@@ -295,15 +290,15 @@ fn start_save(
 fn save_file(
     field: multipart::Field<dev::Payload>,
     state: &Arc<UploadState>
-) -> Box<Future<Item = i64, Error = error::Error>> {
-    let object = match  get_object_name (&field) {
+) -> Box<Future<Item = i64, Error = ApiError>> {
+    let object = match get_object_name (&field) {
         Ok(name) => name,
-        Err(e) => return Box::new(future::err(ErrorBadRequest(e))),
+        Err(e) => return Box::new(future::err(e)),
     };
 
     let (named_file, object_file) = match start_save (object, state) {
         Ok((named_file, object_file)) => (named_file, object_file),
-        Err(e) => return Box::new(future::err(error::ErrorInternalServerError(e))),
+        Err(e) => return Box::new(future::err(ApiError::InternalServerError(e.to_string()))),
     };
 
     // We need file in two continuations below, so put it in a Rc+RefCell
@@ -323,14 +318,15 @@ fn save_file(
             })
             .map_err(|e| {
                 println!("save_file failed, {:?}", e);
-                error::ErrorInternalServerError(e)
-            }).and_then (move |res| {
+                ApiError::InternalServerError(e.to_string())
+            })
+            .and_then (move |res| {
                 // persist consumes the named file, so we need to
                 // completely move it out of the shared Rc+RefCell
                 let named_file = Rc::try_unwrap(shared_file2).unwrap().into_inner();
                 match named_file.persist(object_file) {
                     Ok(_persisted_file) => future::result(Ok(res)),
-                    Err(e) => future::err(error::ErrorInternalServerError(e))
+                    Err(e) => future::err(ApiError::InternalServerError(e.to_string()))
                 }
             }),
     )
@@ -339,14 +335,17 @@ fn save_file(
 fn handle_multipart_item(
     item: multipart::MultipartItem<dev::Payload>,
     state: &Arc<UploadState>
-) -> Box<Stream<Item = i64, Error = error::Error>> {
+) -> Box<Stream<Item = i64, Error = ApiError>> {
     match item {
         multipart::MultipartItem::Field(field) => {
             Box::new(save_file(field, state).into_stream())
         }
         multipart::MultipartItem::Nested(mp) => {
             let s = state.clone();
-            Box::new(mp.map_err(error::ErrorInternalServerError)
+            Box::new(mp
+                     .map_err(|e| {
+                         ApiError::InternalServerError(e.to_string())
+                     })
                      .map(move |item| { handle_multipart_item (item, &s) })
                      .flatten())
         }
@@ -364,14 +363,14 @@ pub fn upload(
     let uploadstate = Arc::new(UploadState { repo_path: state.config.build_repo_base_path.join(params.id.to_string()).join("upload") });
     Box::new(
         req.multipart()
-            .map_err(error::ErrorInternalServerError)
+            .map_err(|e| ApiError::InternalServerError(e.to_string()))
             .map(move |item| { handle_multipart_item (item, &uploadstate) })
             .flatten()
             .collect()
             .map(|sizes| HttpResponse::Ok().json(sizes))
             .map_err(|e| {
                 println!("failed: {}", e);
-                e
+                From::from(e)
             }),
     )
 }
