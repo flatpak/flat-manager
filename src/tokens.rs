@@ -105,6 +105,8 @@ impl<S: 'static> Middleware<S> for TokenParser {
         let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
 
+        info!("{} Presented token: {:?}", req.connection_info().remote().unwrap_or("-"), &claims);
+
         req.extensions_mut().insert(claims);
 
         Ok(Started::Done)
