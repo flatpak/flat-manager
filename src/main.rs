@@ -24,7 +24,6 @@ use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use dotenv::dotenv;
 use std::env;
-use std::sync::mpsc;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -38,7 +37,7 @@ mod tokens;
 mod jobs;
 
 use models::{DbExecutor};
-use jobs::start_job_executor;
+use jobs::{start_job_executor};
 
 fn main() {
     ::std::env::set_var("RUST_LOG", "info");
@@ -73,14 +72,13 @@ fn main() {
         .build(manager)
         .expect("Failed to create pool.");
 
-    let (jobs_tx, jobs_rx) = mpsc::channel();
+    let pool_copy = pool.clone();
+    let addr = SyncArbiter::start(3, move || DbExecutor(pool_copy.clone()));
 
-    start_job_executor (&config, pool.clone(), jobs_rx);
-
-    let addr = SyncArbiter::start(3, move || DbExecutor(pool.clone()));
+    let jobs_addr = start_job_executor(config.clone(), pool.clone());
 
     server::new(move || {
-        app::create_app(addr.clone(), &config, jobs_tx.clone())
+        app::create_app(addr.clone(), &config, jobs_addr.clone())
     }).bind("127.0.0.1:8080")
         .unwrap()
         .start();

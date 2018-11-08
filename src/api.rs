@@ -20,6 +20,7 @@ use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, StartCommitJo
 use models::{NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
+use jobs::ProcessJobs;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenSubsetArgs {
@@ -384,7 +385,7 @@ pub fn commit(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    let tx = state.job_tx_channel.clone();
+    let job_executor = state.job_executor.clone();
     state
         .db
         .send(StartCommitJob {
@@ -394,7 +395,7 @@ pub fn commit(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                tx.send(()).unwrap();
+                job_executor.do_send(ProcessJobs());
                 match req.url_for("show_build", &[params.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())
@@ -416,7 +417,7 @@ pub fn publish(
         return From::from(e);
     }
 
-    let tx = state.job_tx_channel.clone();
+    let job_executor = state.job_executor.clone();
     state
         .db
         .send(StartPublishJob {
@@ -425,7 +426,7 @@ pub fn publish(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                tx.send(()).unwrap();
+                job_executor.do_send(ProcessJobs());
                 match req.url_for("show_build", &[params.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())

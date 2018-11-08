@@ -4,11 +4,11 @@ use actix_web::{App, http::Method, HttpRequest, fs::NamedFile};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
-use std::sync::mpsc;
 use std::sync::Arc;
 
 use api;
 use tokens::{TokenParser};
+use jobs::{JobExecutor};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -33,7 +33,7 @@ pub struct Config {
 pub struct AppState {
     pub db: Addr<DbExecutor>,
     pub config: Arc<Config>,
-    pub job_tx_channel: mpsc::Sender<()>,
+    pub job_executor: Addr<JobExecutor>,
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
@@ -50,11 +50,11 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
 pub fn create_app(
     db: Addr<DbExecutor>,
     config: &Arc<Config>,
-    job_tx_channel: mpsc::Sender<()>
+    job_executor: Addr<JobExecutor>,
 ) -> App<AppState> {
     let state = AppState {
         db: db.clone(),
-        job_tx_channel: job_tx_channel.clone(),
+        job_executor: job_executor.clone(),
         config: config.clone(),
     };
 

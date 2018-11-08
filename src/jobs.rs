@@ -1,3 +1,5 @@
+use actix::prelude::*;
+use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -12,7 +14,7 @@ use std::io::{self, Read, Write};
 use std::path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc};
-use std::sync::mpsc::{self, channel, Sender};
+use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time;
 
@@ -22,10 +24,13 @@ use models::{Job, JobKind, CommitJob, PublishJob, JobStatus, job_dependencies_wi
 use models;
 use schema::*;
 
-struct JobExecutor {
+pub struct JobExecutor {
     pub config: Arc<Config>,
     pub pool: Pool<ConnectionManager<PgConnection>>,
-    pub wakeup_channel: mpsc::Receiver<()>,
+}
+
+impl Actor for JobExecutor {
+    type Context = SyncContext<Self>;
 }
 
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
@@ -400,54 +405,98 @@ fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
     }
 }
 
-fn executor_thread (executor: JobExecutor) {
+fn process_one_job (executor: &JobExecutor, conn: &PgConnection) -> bool {
     use diesel::dsl::exists;
     use diesel::dsl::not;
 
-    loop {
-        let conn = &executor.pool.get().unwrap();
-
-        let new_job = conn.transaction::<models::Job, _, _>(|| {
-            let maybe_new_job = jobs::table
-                .filter(jobs::status.eq(JobStatus::New as i16)
-                        .and(
-                            not(exists(
-                                job_dependencies_with_status::table.filter(
-                                    job_dependencies_with_status::job_id.eq(jobs::id)
-                                        .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
-                                )
-                            ))
-                        )
-                )
-                .get_result::<models::Job>(conn);
-            if let Ok(new_job) = maybe_new_job {
-                diesel::update(jobs::table)
-                    .filter(jobs::id.eq(new_job.id))
-                    .set((jobs::status.eq(JobStatus::Started as i16),))
-                    .get_result::<models::Job>(conn)
-            } else {
-                maybe_new_job
-            }
-        });
-
-        if let Ok(job) = new_job {
-            handle_job (&executor, conn, &job);
+    let new_job = conn.transaction::<models::Job, _, _>(|| {
+        let maybe_new_job = jobs::table
+            .filter(jobs::status.eq(JobStatus::New as i16)
+                    .and(
+                        not(exists(
+                            job_dependencies_with_status::table.filter(
+                                job_dependencies_with_status::job_id.eq(jobs::id)
+                                    .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
+                            )
+                        ))
+                    )
+            )
+            .get_result::<models::Job>(conn);
+        if let Ok(new_job) = maybe_new_job {
+            diesel::update(jobs::table)
+                .filter(jobs::id.eq(new_job.id))
+                .set((jobs::status.eq(JobStatus::Started as i16),))
+                .get_result::<models::Job>(conn)
         } else {
-            // diesel/pq-sys does not currently support NOTIFY/LISTEN, so we use an in-process channel
-            // and a 3 sec poll for now
-            let _r = executor.wakeup_channel.recv_timeout(time::Duration::from_secs(3));
+            maybe_new_job
         }
+    });
 
+    match new_job {
+        Ok(job) => {
+            handle_job (&executor, conn, &job);
+            true
+        },
+        Err(diesel::NotFound) => {
+            false
+        },
+        Err(e) => {
+            error!("Unexpected db error processing job: {}", e);
+            false
+        },
     }
 }
 
-pub fn start_job_executor(config: &Arc<Config>,
-                    pool: Pool<ConnectionManager<PgConnection>>,
-                    wakeup_channel: mpsc::Receiver<()> ) {
-    let executor = JobExecutor {
-        config: config.clone(),
-        pool: pool,
-        wakeup_channel: wakeup_channel,
-    };
-    thread::spawn(move || executor_thread (executor));
+pub struct ProcessJobs();
+
+impl Message for ProcessJobs {
+    type Result = Result<(), ()>;
+}
+
+impl Handler<ProcessJobs> for JobExecutor {
+    type Result = Result<(), ()>;
+
+    fn handle(&mut self, _msg: ProcessJobs, _ctx: &mut Self::Context) -> Self::Result {
+        let conn = &self.pool.get().unwrap();
+        while process_one_job (&self, conn) {
+            /* loop over all ready jobs in queue */
+        }
+        Ok(())
+    }
+}
+
+// We send a ProcessJobs message each time we added something to the
+// db, but case something external modifes the db we have a 10 sec
+// polling loop here.  Ideally this should be using NOTIFY/LISTEN
+// postgre, but diesel/pq-sys does not currently support it.
+
+struct KickJobs(Addr<JobExecutor>);
+
+impl KickJobs {
+    fn kick(&mut self, ctx: &mut Context<Self>) {
+        let addr = self.0.clone();
+        addr.do_send(ProcessJobs());
+        ctx.run_later(time::Duration::new(10, 0), move |act, ctx| {
+            act.kick(ctx);
+        });
+    }
+}
+
+impl Actor for KickJobs {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        self.kick(ctx);
+    }
+}
+
+pub fn start_job_executor(config: Arc<Config>,
+                          pool: Pool<ConnectionManager<PgConnection>>) -> Addr<JobExecutor> {
+    let config_copy = config.clone();
+    let jobs_addr = SyncArbiter::start(1, move || JobExecutor {
+        config: config_copy.clone(),
+        pool: pool.clone()
+    });
+    KickJobs(jobs_addr.clone()).start();
+    jobs_addr
 }
