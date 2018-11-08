@@ -38,7 +38,7 @@ mod tokens;
 mod jobs;
 
 use models::{DbExecutor};
-use jobs::start_worker;
+use jobs::start_job_executor;
 
 fn main() {
     ::std::env::set_var("RUST_LOG", "info");
@@ -75,7 +75,7 @@ fn main() {
 
     let (jobs_tx, jobs_rx) = mpsc::channel();
 
-    start_worker (&config, pool.clone(), jobs_rx);
+    start_job_executor (&config, pool.clone(), jobs_rx);
 
     let addr = SyncArbiter::start(3, move || DbExecutor(pool.clone()));
 

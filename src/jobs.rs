@@ -17,12 +17,12 @@ use std::thread;
 use std::time;
 
 use app::Config;
-use errors::{WorkerError, WorkerResult};
+use errors::{JobError, JobResult};
 use models::{Job, JobKind, CommitJob, PublishJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
 use models;
 use schema::*;
 
-struct Worker {
+struct JobExecutor {
     pub config: Arc<Config>,
     pub pool: Pool<ConnectionManager<PgConnection>>,
     pub wakeup_channel: mpsc::Receiver<()>,
@@ -98,7 +98,7 @@ fn send_reads<T: Read>(sender: Sender<CommandOutput>, source: CommandOutputSourc
     }
 }
 
-fn run_command(mut cmd: Command) -> WorkerResult<(bool, String, String)>
+fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
 {
     info!("/ Running: {:?}", cmd);
     let mut child = cmd
@@ -106,7 +106,7 @@ fn run_command(mut cmd: Command) -> WorkerResult<(bool, String, String)>
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .or_else(|e| Err(WorkerError::new(&format!("Can't start command: {}", e))))?;
+        .or_else(|e| Err(JobError::new(&format!("Can't start command: {}", e))))?;
 
     let (sender1, receiver) = channel();
     let sender2 = sender1.clone();
@@ -138,7 +138,7 @@ fn run_command(mut cmd: Command) -> WorkerResult<(bool, String, String)>
     stdout_thread.join().unwrap();
     stderr_thread.join().unwrap();
 
-    let status = child.wait().or_else(|e| Err(WorkerError::new(&format!("Can't wait for command: {}", e))))?;
+    let status = child.wait().or_else(|e| Err(JobError::new(&format!("Can't wait for command: {}", e))))?;
 
     info!("\\ status {:?}", status.code().unwrap_or(-1));
 
@@ -150,7 +150,7 @@ fn run_command(mut cmd: Command) -> WorkerResult<(bool, String, String)>
 fn do_commit_build_refs (build_id: i32,
                       build_refs: &Vec<models::BuildRef>,
                       endoflife: &Option<String>,
-                      config: &Arc<Config>)  -> WorkerResult<serde_json::Value> {
+                      config: &Arc<Config>)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
@@ -196,7 +196,7 @@ fn do_commit_build_refs (build_id: i32,
 
         let (success, _log, stderr) = run_command(cmd)?;
         if !success {
-            return Err(WorkerError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
+            return Err(JobError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
         }
 
         if build_ref.ref_name.starts_with("app/") {
@@ -227,7 +227,7 @@ IsRuntime=false
 
     let (success, _log, stderr) = run_command(cmd)?;
     if !success {
-        return Err(WorkerError::new(&format!("Failed to updaterepo: {}", stderr.trim())))
+        return Err(JobError::new(&format!("Failed to updaterepo: {}", stderr.trim())))
     }
 
     info!("Removing upload directory");
@@ -238,20 +238,20 @@ IsRuntime=false
 }
 
 
-fn handle_commit_job (worker: &Worker, conn: &PgConnection, job: &CommitJob) -> WorkerResult<serde_json::Value> {
+fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJob) -> JobResult<serde_json::Value> {
     // Get the uploaded refs from db
 
     let build_refs = build_refs::table
         .filter(build_refs::build_id.eq(job.build))
         .get_results::<models::BuildRef>(conn)
-        .or_else(|_e| Err(WorkerError::new("Can't load build refs")))?;
+        .or_else(|_e| Err(JobError::new("Can't load build refs")))?;
     if build_refs.len() == 0 {
-        return Err(WorkerError::new("No refs in build"));
+        return Err(JobError::new("No refs in build"));
     }
 
     // Do the actual work
 
-    let res = do_commit_build_refs(job.build, &build_refs, &&job.endoflife, &worker.config);
+    let res = do_commit_build_refs(job.build, &build_refs, &&job.endoflife, &executor.config);
 
     // Update the build repo state in db
 
@@ -281,7 +281,7 @@ fn handle_commit_job (worker: &Worker, conn: &PgConnection, job: &CommitJob) -> 
 }
 
 fn do_publish (build_id: i32,
-               config: &Arc<Config>)  -> WorkerResult<serde_json::Value> {
+               config: &Arc<Config>)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
 
     let mut src_repo_arg = OsString::from("--src-repo=");
@@ -308,7 +308,7 @@ fn do_publish (build_id: i32,
 
     let (success, _log, stderr) = run_command(cmd)?;
     if !success {
-        return Err(WorkerError::new(&format!("Failed to publish repo: {}", stderr.trim())));
+        return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
 
     info!("running flatpak build-update-repo");
@@ -320,16 +320,16 @@ fn do_publish (build_id: i32,
 
     let (success, _log, stderr) = run_command(cmd)?;
     if !success {
-        return Err(WorkerError::new(&format!("Failed to update repo: {}", stderr.trim())));
+        return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
     }
 
     Ok(json!({}))
 }
 
-fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -> WorkerResult<serde_json::Value> {
+fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection, job: &PublishJob) -> JobResult<serde_json::Value> {
     // Do the actual work
 
-    let res = do_publish(job.build, &worker.config);
+    let res = do_publish(job.build, &executor.config);
 
     // Update the publish repo state in db
 
@@ -360,26 +360,26 @@ fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -
 }
 
 
-fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
+fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
     let handler_res = match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => {
             if let Ok(commit_job) = serde_json::from_value::<CommitJob>(job.contents.clone()) {
                 info!("Handling Commit Job {}: {:?}", job.id, commit_job);
-                handle_commit_job (worker, conn, &commit_job)
+                handle_commit_job (executor, conn, &commit_job)
             } else {
-                Err(WorkerError::new("Can't parse commit job"))
+                Err(JobError::new("Can't parse commit job"))
             }
         },
         Some(JobKind::Publish) => {
             if let Ok(publish_job) = serde_json::from_value::<PublishJob>(job.contents.clone()) {
                 info!("Handling Publish Job {}: {:?}", job.id, publish_job);
-                handle_publish_job (worker, conn, &publish_job)
+                handle_publish_job (executor, conn, &publish_job)
             } else {
-                Err(WorkerError::new("Can't parse publish job"))
+                Err(JobError::new("Can't parse publish job"))
             }
         },
         _ => {
-            Err(WorkerError::new("Unknown job type"))
+            Err(JobError::new("Unknown job type"))
         }
     };
     let (new_status, new_results) = match handler_res {
@@ -400,12 +400,12 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
     }
 }
 
-fn worker_thread (worker: Worker) {
+fn executor_thread (executor: JobExecutor) {
     use diesel::dsl::exists;
     use diesel::dsl::not;
 
     loop {
-        let conn = &worker.pool.get().unwrap();
+        let conn = &executor.pool.get().unwrap();
 
         let new_job = conn.transaction::<models::Job, _, _>(|| {
             let maybe_new_job = jobs::table
@@ -431,23 +431,23 @@ fn worker_thread (worker: Worker) {
         });
 
         if let Ok(job) = new_job {
-            handle_job (&worker, conn, &job);
+            handle_job (&executor, conn, &job);
         } else {
             // diesel/pq-sys does not currently support NOTIFY/LISTEN, so we use an in-process channel
             // and a 3 sec poll for now
-            let _r = worker.wakeup_channel.recv_timeout(time::Duration::from_secs(3));
+            let _r = executor.wakeup_channel.recv_timeout(time::Duration::from_secs(3));
         }
 
     }
 }
 
-pub fn start_worker(config: &Arc<Config>,
+pub fn start_job_executor(config: &Arc<Config>,
                     pool: Pool<ConnectionManager<PgConnection>>,
                     wakeup_channel: mpsc::Receiver<()> ) {
-    let worker = Worker {
+    let executor = JobExecutor {
         config: config.clone(),
         pool: pool,
         wakeup_channel: wakeup_channel,
     };
-    thread::spawn(move || worker_thread (worker));
+    thread::spawn(move || executor_thread (executor));
 }

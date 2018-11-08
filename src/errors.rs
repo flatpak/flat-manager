@@ -6,7 +6,7 @@ use std::io;
 use actix_web::http::StatusCode;
 
 #[derive(Fail, Debug)]
-pub enum WorkerError {
+pub enum JobError {
     #[fail(display = "InternalError: {}", _0)]
     InternalError(String),
 
@@ -14,29 +14,29 @@ pub enum WorkerError {
     DBError(String),
 }
 
-impl WorkerError {
+impl JobError {
     pub fn new(s: &str) -> Self {
-        WorkerError::InternalError(s.to_string())
+        JobError::InternalError(s.to_string())
     }
 }
 
-pub type WorkerResult<T> = Result<T, WorkerError>;
+pub type JobResult<T> = Result<T, JobError>;
 
-impl From<DieselError> for WorkerError {
+impl From<DieselError> for JobError {
     fn from(e: DieselError) -> Self {
         match e {
             _ => {
-                WorkerError::DBError(e.to_string())
+                JobError::DBError(e.to_string())
             }
         }
     }
 }
 
-impl From<io::Error> for WorkerError {
+impl From<io::Error> for JobError {
     fn from(e: io::Error) -> Self {
         match e {
             _ => {
-                WorkerError::InternalError(e.to_string())
+                JobError::InternalError(e.to_string())
             }
         }
     }
