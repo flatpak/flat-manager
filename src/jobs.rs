@@ -90,7 +90,7 @@ fn send_reads<T: Read>(sender: Sender<CommandOutput>, source: CommandOutputSourc
                 }
             },
             Err(e) => {
-                info!("Error reading from Command {:?} {}", source, e);
+                error!("Error reading from Command {:?} {}", source, e);
                 sender.send(CommandOutput::Closed(source)).unwrap();
                 break;
             }
@@ -345,7 +345,7 @@ fn handle_publish_job (worker: &Worker, conn: &PgConnection, job: &PublishJob) -
         let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
         if !current_published_state.same_state_as(&PublishedState::Publishing) {
             // Something weird was happening, we expected this build to be in the publishing state
-            info!("Unexpected publishing state {:?}", current_published_state);
+            error!("Unexpected publishing state {:?}", current_published_state);
             return Err(DieselError::RollbackTransaction)
         };
         let (val, reason) = PublishedState::to_db(&new_published_state);
@@ -385,7 +385,7 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
     let (new_status, new_results) = match handler_res {
         Ok(json) =>  (JobStatus::Ended, json),
         Err(e) => {
-            info!("Job {} failed: {}", job.id, e.to_string());
+            error!("Job {} failed: {}", job.id, e.to_string());
             (JobStatus::Broken, json!(e.to_string()))
         }
     };
@@ -396,7 +396,7 @@ fn handle_job (worker: &Worker, conn: &PgConnection, job: &Job) {
               jobs::results.eq(new_results)))
         .execute(conn);
     if let Err(e) = update_res {
-        info!("handle_job: Error updating job {}", e);
+        error!("handle_job: Error updating job {}", e);
     }
 }
 
