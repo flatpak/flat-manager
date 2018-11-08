@@ -5,16 +5,16 @@ use diesel::result::{Error as DieselError};
 use diesel;
 use serde_json;
 use std::env;
+use std::str;
 use std::ffi::OsString;
-use std::fs::File;
-use std::fs;
-use std::io::Write;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
 use std::path;
-use std::process::{Command};
-use std::sync::Arc;
-use std::sync::mpsc;
-use std::{thread, time};
+use std::process::{Command, Stdio};
+use std::sync::{Arc};
+use std::sync::mpsc::{self, channel, Sender};
+use std::thread;
+use std::time;
 
 use app::Config;
 use errors::{WorkerError, WorkerResult};
@@ -53,6 +53,98 @@ mode=archive-z2
                            },
                            parent_repo_absolute_path.display()).as_bytes())?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CommandOutputSource {
+    Stdout,
+    Stderr,
+}
+
+impl CommandOutputSource {
+    fn prefix(&self) -> &str {
+        match self {
+            CommandOutputSource::Stdout => "|",
+            CommandOutputSource::Stderr => ">",
+        }
+    }
+}
+
+#[derive(Debug)]
+enum CommandOutput {
+    Data(CommandOutputSource, Vec<u8>),
+    Closed(CommandOutputSource),
+}
+
+fn send_reads<T: Read>(sender: Sender<CommandOutput>, source: CommandOutputSource, mut reader: T) {
+    let mut buffer = [0; 4096];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(num_read) => {
+                if num_read == 0 {
+                    sender.send(CommandOutput::Closed(source)).unwrap();
+                    return;
+                } else {
+                    let data = buffer[0..num_read].to_vec();
+                    sender.send(CommandOutput::Data(source,data)).unwrap();
+                }
+            },
+            Err(e) => {
+                info!("Error reading from Command {:?} {}", source, e);
+                sender.send(CommandOutput::Closed(source)).unwrap();
+                break;
+            }
+        }
+    }
+}
+
+fn run_command(mut cmd: Command) -> WorkerResult<(bool, String, String)>
+{
+    info!("/ Running: {:?}", cmd);
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .or_else(|e| Err(WorkerError::new(&format!("Can't start command: {}", e))))?;
+
+    let (sender1, receiver) = channel();
+    let sender2 = sender1.clone();
+
+    let stdout_reader = child.stdout.take().unwrap();
+    let stdout_thread = thread::spawn(move || send_reads(sender1, CommandOutputSource::Stdout, stdout_reader));
+
+    let stderr_reader = child.stderr.take().unwrap();
+    let stderr_thread = thread::spawn(move || send_reads(sender2, CommandOutputSource::Stderr, stderr_reader));
+
+    let mut remaining = 2;
+    let mut stderr = Vec::new();
+    let mut log = Vec::<u8>::new();
+    while remaining > 0 {
+        match receiver.recv() {
+            Ok(CommandOutput::Data(source, v)) => {
+                for line in String::from_utf8_lossy(&v).split_terminator("\n") {
+                    info!("{} {}", source.prefix(), line);
+                }
+                log.extend(&v);
+                if source == CommandOutputSource::Stderr {
+                    stderr.extend(&v);
+                }
+            },
+            Ok(CommandOutput::Closed(_)) => remaining -= 1,
+            Err(_e) => break,
+        }
+    }
+    stdout_thread.join().unwrap();
+    stderr_thread.join().unwrap();
+
+    let status = child.wait().or_else(|e| Err(WorkerError::new(&format!("Can't wait for command: {}", e))))?;
+
+    info!("\\ status {:?}", status.code().unwrap_or(-1));
+
+    Ok((status.success(),
+        String::from_utf8_lossy(&log).to_string(),
+        String::from_utf8_lossy(&stderr).to_string()))
 }
 
 fn do_commit_build_refs (build_id: i32,
@@ -96,21 +188,15 @@ fn do_commit_build_refs (build_id: i32,
                 .arg(format!("--end-of-life={}", endoflife));
         };
 
-        info!("running {:?} {:?} {:?} {:?} {:?}",
-                 cmd,
-                 &src_repo_arg,
-                 &src_ref_arg,
-                 &build_repo_path,
-                 &build_ref.ref_name);
-
-        let output = cmd
+        cmd
             .arg(&src_repo_arg)
             .arg(&src_ref_arg)
             .arg(&build_repo_path)
-            .arg(&build_ref.ref_name)
-            .output()?;
-        if !output.status.success() {
-            return Err(WorkerError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, String::from_utf8_lossy(&output.stderr))));
+            .arg(&build_ref.ref_name);
+
+        let (success, _log, stderr) = run_command(cmd)?;
+        if !success {
+            return Err(WorkerError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
         }
 
         if build_ref.ref_name.starts_with("app/") {
@@ -134,15 +220,17 @@ IsRuntime=false
 
     info!("running build-update-repo");
 
-    let output = Command::new("flatpak")
+    let mut cmd = Command::new("flatpak");
+    cmd
         .arg("build-update-repo")
-        .arg(&build_repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(WorkerError::new(&format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
+        .arg(&build_repo_path);
+
+    let (success, _log, stderr) = run_command(cmd)?;
+    if !success {
+        return Err(WorkerError::new(&format!("Failed to updaterepo: {}", stderr.trim())))
     }
 
-    info!("remove upload path");
+    info!("Removing upload directory");
 
     fs::remove_dir_all(&upload_path)?;
 
@@ -214,30 +302,27 @@ fn do_publish (build_id: i32,
             .arg(format!("--gpg-sign=={}", key));
     };
 
-    info!("running {:?} {:?} {:?}",
-             cmd,
-             &src_repo_arg,
-             &config.repo_path);
-
-    let output = cmd
+    cmd
         .arg(&src_repo_arg)
-        .arg(&config.repo_path)
-        .output()?;
-    if !output.status.success() {
-        return Err(WorkerError::new(&format!("Failed to publish repo: {}", String::from_utf8_lossy(&output.stderr))));
+        .arg(&config.repo_path);
+
+    let (success, _log, stderr) = run_command(cmd)?;
+    if !success {
+        return Err(WorkerError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
 
     info!("running flatpak build-update-repo");
 
-    let output = Command::new("flatpak")
+    let mut cmd = Command::new("flatpak");
+    cmd
         .arg("build-update-repo")
-        .arg(&config.repo_path)
-        .output()
-        .map_err(|e| WorkerError::new(&format!("Failed to update repo: {}", e.to_string())))
-        ?;
-    if !output.status.success() {
-        return Err(WorkerError::new(&format!("Failed to update repo: {}", String::from_utf8_lossy(&output.stderr))));
+        .arg(&config.repo_path);
+
+    let (success, _log, stderr) = run_command(cmd)?;
+    if !success {
+        return Err(WorkerError::new(&format!("Failed to update repo: {}", stderr.trim())));
     }
+
     Ok(json!({}))
 }
 
