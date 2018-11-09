@@ -36,6 +36,31 @@ impl Actor for JobExecutor {
     type Context = SyncContext<Self>;
 }
 
+fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &Arc<Config>) -> (String, String) {
+    let parts: Vec<&str> = ref_name.split('/').collect();
+
+    let filename = format!("{}.flatpakref", parts[1]);
+
+    let url = match maybe_build_id {
+        Some(build_id) => format!("{}/build-repo/{}", config.base_url, build_id),
+        None => format!("{}/repo", config.base_url),
+    };
+
+    // TODO: We should also add GPGKey here if config.build_gpg_key is set
+    let contents = format!(r#"
+[Flatpak Ref]
+Name={}
+Branch={}
+Url={}
+RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+IsRuntime=false
+"#,
+                          parts[1],
+                          parts[3],
+                          url);
+    (filename, contents)
+}
+
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
 
@@ -219,21 +244,9 @@ fn do_commit_build_refs (build_id: i32,
         commits.insert(build_ref.ref_name.to_string(), commit);
 
         if build_ref.ref_name.starts_with("app/") {
-            let parts: Vec<&str> = build_ref.ref_name.split('/').collect();
-            let mut file = File::create(build_repo_path.join(format!("{}.flatpakref", parts[1])))?;
-            // TODO: We should also add GPGKey here if state.build_gpg_key is set
-            file.write_all(format!(r#"
-[Flatpak Ref]
-Name={}
-Branch={}
-Url={}/build-repo/{}
-RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
-IsRuntime=false
-"#,
-                                   parts[1],
-                                   parts[3],
-                                   config.base_url,
-                                   build_id).as_bytes())?;
+            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(build_id), config);
+            let mut file = File::create(build_repo_path.join(filename))?;
+            file.write_all(contents.as_bytes())?;
         }
     }
 
