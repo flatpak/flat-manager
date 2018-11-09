@@ -300,6 +300,8 @@ fn do_publish (build_id: i32,
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&build_repo_path);
 
+    // Import commit and modify refs
+
     let mut cmd = Command::new("flatpak");
     cmd
         .arg("build-commit-from")
@@ -324,11 +326,14 @@ fn do_publish (build_id: i32,
         return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
 
+    // Update repo
+
     info!("running flatpak build-update-repo");
 
     let mut cmd = Command::new("flatpak");
     cmd
         .arg("build-update-repo")
+        .arg("--generate-static-deltas")
         .arg(&config.repo_path);
 
     let (success, _log, stderr) = run_command(cmd)?;
