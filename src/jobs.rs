@@ -183,6 +183,7 @@ fn do_commit_build_refs (build_id: i32,
             .arg("--timestamp=NOW")     // All builds have the same timestamp, not when the individual builds finished
             .arg("--no-update-summary") // We update it once at the end
             .arg("--untrusted")         // Verify that the uploaded objects are correct
+            .arg("--force")             // Always generate a new commit even if nothing changed
             .arg("--disable-fsync");    // There is a sync in flatpak build-update-repo, so avoid it here
 
         if let Some(gpg_homedir) = &config.gpg_homedir {
@@ -197,7 +198,6 @@ fn do_commit_build_refs (build_id: i32,
 
         if let Some(endoflife) = &endoflife {
             cmd
-                .arg("--force")         // Even if the content is the same, the metadata is not, so ensure its updated
                 .arg(format!("--end-of-life={}", endoflife));
         };
 
