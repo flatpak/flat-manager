@@ -1054,6 +1054,7 @@ name = "repo-manager"
 version = "0.1.0"
 dependencies = [
  "actix 0.7.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "actix-net 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "actix-web 0.7.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "base64 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -447,56 +447,155 @@ fn process_one_job (executor: &JobExecutor, conn: &PgConnection) -> bool {
     }
 }
 
+pub struct StopJobs();
+
+impl Message for StopJobs {
+    type Result = Result<(), ()>;
+}
+
+impl Handler<StopJobs> for JobExecutor {
+    type Result = Result<(), ()>;
+
+    fn handle(&mut self, _msg: StopJobs, ctx: &mut Self::Context) -> Self::Result {
+        ctx.stop();
+        Ok(())
+    }
+}
+
+pub struct ProcessOneJob();
+
+impl Message for ProcessOneJob {
+    type Result = Result<bool, ()>;
+}
+
+impl Handler<ProcessOneJob> for JobExecutor {
+    type Result = Result<bool, ()>;
+
+    fn handle(&mut self, _msg: ProcessOneJob, _ctx: &mut Self::Context) -> Self::Result {
+        let conn = &self.pool.get().map_err(|_e| ())?;
+        Ok(process_one_job (&self, conn))
+    }
+}
+
+
+// We have an async JobQueue object that wraps the sync JobExecutor, because
+// that way we can respond to incomming requests immediately and decide in
+// what order to handle them. In particular, we want to prioritize stop
+// operations and exit cleanly with outstanding jobs for next run
+
+pub struct JobQueue {
+    executor: Addr<JobExecutor>,
+    running: bool,
+    processing_job: bool,
+    jobs_queued: bool,
+}
+
+impl JobQueue {
+    fn kick(&mut self, ctx: &mut Context<Self>) {
+        if !self.running {
+            return
+        }
+        if self.processing_job {
+            self.jobs_queued = true;
+        } else {
+            self.processing_job = true;
+            self.jobs_queued = false;
+
+            ctx.spawn(
+                self.executor
+                    .send (ProcessOneJob())
+                    .into_actor(self)
+                    .then(|result, queue, ctx| {
+                        queue.processing_job = false;
+
+                        if queue.running {
+                            let processed_job = match result {
+                                Ok(Ok(true)) => true,
+                                Ok(Ok(false)) => false,
+                                res => {
+                                    error!("Unexpected ProcessOneJob result {:?}", res);
+                                    false
+                                },
+                            };
+
+                            // If we ran a job, or a job was queued, kick again
+                            if queue.jobs_queued || processed_job {
+                                queue.kick(ctx);
+                            } else  {
+                                // We send a ProcessJobs message each time we added something to the
+                                // db, but case something external modifes the db we have a 10 sec
+                                // polling loop here.  Ideally this should be using NOTIFY/LISTEN
+                                // postgre, but diesel/pq-sys does not currently support it.
+
+                                ctx.run_later(time::Duration::new(10, 0), move |queue, ctx| {
+                                    queue.kick(ctx);
+                                });
+                            }
+
+                        }
+                        actix::fut::ok(())
+                    })
+            );
+        }
+    }
+}
+
+impl Actor for JobQueue {
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        self.kick(ctx); // Run any jobs in db
+    }
+}
+
 pub struct ProcessJobs();
 
 impl Message for ProcessJobs {
     type Result = Result<(), ()>;
 }
 
-impl Handler<ProcessJobs> for JobExecutor {
+impl Handler<ProcessJobs> for JobQueue {
     type Result = Result<(), ()>;
 
-    fn handle(&mut self, _msg: ProcessJobs, _ctx: &mut Self::Context) -> Self::Result {
-        let conn = &self.pool.get().unwrap();
-        while process_one_job (&self, conn) {
-            /* loop over all ready jobs in queue */
-        }
+    fn handle(&mut self, _msg: ProcessJobs, ctx: &mut Self::Context) -> Self::Result {
+        self.kick(ctx);
         Ok(())
     }
 }
 
-// We send a ProcessJobs message each time we added something to the
-// db, but case something external modifes the db we have a 10 sec
-// polling loop here.  Ideally this should be using NOTIFY/LISTEN
-// postgre, but diesel/pq-sys does not currently support it.
+pub struct StopJobQueue();
 
-struct KickJobs(Addr<JobExecutor>);
+impl Message for StopJobQueue {
+    type Result = Result<(), ()>;
+}
 
-impl KickJobs {
-    fn kick(&mut self, ctx: &mut Context<Self>) {
-        let addr = self.0.clone();
-        addr.do_send(ProcessJobs());
-        ctx.run_later(time::Duration::new(10, 0), move |act, ctx| {
-            act.kick(ctx);
-        });
+impl Handler<StopJobQueue> for JobQueue {
+    type Result = ActorResponse<JobQueue, (), ()>;
+
+    fn handle(&mut self, _msg: StopJobQueue, _ctx: &mut Self::Context) -> Self::Result {
+        self.running = false;
+        ActorResponse::async(
+            self.executor
+                .send (StopJobs())
+                .into_actor(self)
+                .then(|_result, _queue, _ctx| {
+                    actix::fut::ok(())
+                }))
     }
 }
 
-impl Actor for KickJobs {
-    type Context = Context<Self>;
-
-    fn started(&mut self, ctx: &mut Context<Self>) {
-        self.kick(ctx);
-    }
-}
 
 pub fn start_job_executor(config: Arc<Config>,
-                          pool: Pool<ConnectionManager<PgConnection>>) -> Addr<JobExecutor> {
+                          pool: Pool<ConnectionManager<PgConnection>>) -> Addr<JobQueue> {
     let config_copy = config.clone();
     let jobs_addr = SyncArbiter::start(1, move || JobExecutor {
         config: config_copy.clone(),
         pool: pool.clone()
     });
-    KickJobs(jobs_addr.clone()).start();
-    jobs_addr
+    JobQueue {
+        executor: jobs_addr.clone(),
+        running: true,
+        processing_job: false,
+        jobs_queued: false,
+    }.start()
 }

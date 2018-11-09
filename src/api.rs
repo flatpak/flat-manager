@@ -385,7 +385,7 @@ pub fn commit(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    let job_executor = state.job_executor.clone();
+    let job_queue = state.job_queue.clone();
     state
         .db
         .send(StartCommitJob {
@@ -395,7 +395,7 @@ pub fn commit(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                job_executor.do_send(ProcessJobs());
+                job_queue.do_send(ProcessJobs());
                 match req.url_for("show_build", &[params.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())
@@ -417,7 +417,7 @@ pub fn publish(
         return From::from(e);
     }
 
-    let job_executor = state.job_executor.clone();
+    let job_queue = state.job_queue.clone();
     state
         .db
         .send(StartPublishJob {
@@ -426,7 +426,7 @@ pub fn publish(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
-                job_executor.do_send(ProcessJobs());
+                job_queue.do_send(ProcessJobs());
                 match req.url_for("show_build", &[params.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())
