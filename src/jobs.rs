@@ -272,9 +272,9 @@ fn do_commit_build_refs (build_id: i32,
     Ok(json!({ "refs": commits}))
 }
 
-fn parse_ostree_ref (build_repo_path: &path::PathBuf, ref_name: &String) ->JobResult<String> {
+fn parse_ostree_ref (repo_path: &path::PathBuf, ref_name: &String) ->JobResult<String> {
     let mut repo_arg = OsString::from("--repo=");
-    repo_arg.push(&build_repo_path);
+    repo_arg.push(&repo_path);
 
     match Command::new("ostree")
         .arg("rev-parse")
@@ -292,6 +292,27 @@ fn parse_ostree_ref (build_repo_path: &path::PathBuf, ref_name: &String) ->JobRe
             Err(e) => Err(JobError::new(&format!("Can't find commit for ref {} build refs: {}", ref_name, e.to_string())))
         }
 }
+
+fn list_ostree_refs (repo_path: &path::PathBuf, prefix: &str) ->JobResult<Vec<String>> {
+    let mut repo_arg = OsString::from("--repo=");
+    repo_arg.push(&repo_path);
+
+    match Command::new("ostree")
+        .arg("refs")
+        .arg(repo_arg)
+        .arg(prefix)
+        .output() {
+            Ok(output) => {
+                if output.status.success() {
+                    Ok(String::from_utf8_lossy(&output.stdout).split_whitespace().map(|s| s.to_string()).collect())
+                } else {
+                    Err(JobError::new(&format!("Can't list refs: {}", String::from_utf8_lossy(&output.stderr).trim())))
+                }
+            },
+            Err(e) => Err(JobError::new(&format!("Can't list refs: {}", e.to_string())))
+        }
+}
+
 
 fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJob) -> JobResult<serde_json::Value> {
     // Get the uploaded refs from db
@@ -398,6 +419,24 @@ fn do_publish (build_id: i32,
     if !success {
         return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
     }
+
+    // TODO: PURGE summary and summary.sig files here
+
+    let appstream_arches = list_ostree_refs (&config.repo_path, "appstream")?;
+    for arch in appstream_arches {
+        let mut cmd = Command::new("ostree");
+        cmd
+            .arg(&format!("--repo={}", &config.repo_path.to_str().unwrap()))
+            .arg("checkout")
+            .arg("--user-mode")
+            .arg("--union")
+            .arg(&format!("appstream/{}", arch))
+            .arg(appstream_dir.join(arch));
+        let (success, _log, stderr) = run_command(cmd)?;
+        if !success {
+            return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
+        }
+    };
 
     Ok(json!({ "refs": commits}))
 }
