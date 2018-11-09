@@ -353,6 +353,12 @@ fn do_publish (build_id: i32,
         return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
 
+    let mut commits = HashMap::new();
+    for build_ref in build_refs.iter() {
+        let commit = parse_ostree_ref(&config.repo_path, &build_ref.ref_name)?;
+        commits.insert(build_ref.ref_name.to_string(), commit);
+    }
+
     // Update repo
 
     info!("running flatpak build-update-repo");
@@ -368,7 +374,7 @@ fn do_publish (build_id: i32,
         return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
     }
 
-    Ok(json!({}))
+    Ok(json!({ "refs": commits}))
 }
 
 fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection, job: &PublishJob) -> JobResult<serde_json::Value> {
