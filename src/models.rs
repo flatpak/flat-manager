@@ -167,6 +167,7 @@ pub struct Job {
     pub status: i16,
     pub contents: serde_json::Value,
     pub results: Option<serde_json::Value>,
+    pub log: String,
 }
 
 #[derive(Debug, Queryable, Identifiable, Associations)]

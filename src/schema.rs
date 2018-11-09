@@ -40,6 +40,7 @@ table! {
         status -> Int2,
         contents -> Jsonb,
         results -> Nullable<Jsonb>,
+        log -> Text,
     }
 }
 

@@ -3,7 +3,8 @@ CREATE TABLE jobs (
     kind SMALLINT NOT NULL DEFAULT 0,
     status SMALLINT NOT NULL DEFAULT 0, -- 0 == unstarted, 1 == in progress, 2 == completed, 2 == broken
     contents jsonb NOT NULL,
-    results jsonb
+    results jsonb,
+    log TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE job_dependencies (

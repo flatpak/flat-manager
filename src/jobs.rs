@@ -134,9 +134,19 @@ fn send_reads<T: Read>(sender: Sender<CommandOutput>, source: CommandOutputSourc
     }
 }
 
-fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
+fn append_job_log(job_id: i32, conn: &PgConnection, output: &str) {
+    if let Err(e) = diesel::update(jobs::table)
+        .filter(jobs::id.eq(job_id))
+        .set((jobs::log.eq(jobs::log.concat(&output)),))
+        .execute(conn) {
+            error!("Error appending to job {} log: {}", job_id, e.to_string());
+        }
+}
+
+fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<(bool, String, String)>
 {
     info!("/ Running: {:?}", cmd);
+    append_job_log(job_id, conn, &format!("Running: {:?}\n", cmd));
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -165,7 +175,9 @@ fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
     while remaining > 0 {
         match receiver.recv() {
             Ok(CommandOutput::Data(source, v)) => {
-                for line in String::from_utf8_lossy(&v).split_terminator("\n") {
+                let output = String::from_utf8_lossy(&v);
+                append_job_log(job_id, conn, &output);
+                 for line in output.split_terminator("\n") {
                     info!("{} {}", source.prefix(), line);
                 }
                 log.extend(&v);
@@ -182,6 +194,7 @@ fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
 
     let status = child.wait().or_else(|e| Err(JobError::new(&format!("Can't wait for command: {}", e))))?;
 
+    append_job_log(job_id, conn, &format!("status {:?}", status.code().unwrap_or(-1)));
     info!("\\ status {:?}", status.code().unwrap_or(-1));
 
     Ok((status.success(),
@@ -189,10 +202,12 @@ fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
         String::from_utf8_lossy(&stderr).to_string()))
 }
 
-fn do_commit_build_refs (build_id: i32,
+fn do_commit_build_refs (job_id: i32,
+                         build_id: i32,
                          build_refs: &Vec<models::BuildRef>,
                          endoflife: &Option<String>,
-                         config: &Arc<Config>)  -> JobResult<serde_json::Value> {
+                         config: &Arc<Config>,
+                         conn: &PgConnection)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
@@ -238,7 +253,7 @@ fn do_commit_build_refs (build_id: i32,
             .arg(&build_repo_path)
             .arg(&build_ref.ref_name);
 
-        let (success, _log, stderr) = run_command(cmd)?;
+        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
         if !success {
             return Err(JobError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
         }
@@ -260,7 +275,7 @@ fn do_commit_build_refs (build_id: i32,
         .arg("build-update-repo")
         .arg(&build_repo_path);
 
-    let (success, _log, stderr) = run_command(cmd)?;
+    let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
     if !success {
         return Err(JobError::new(&format!("Failed to updaterepo: {}", stderr.trim())))
     }
@@ -314,7 +329,7 @@ fn list_ostree_refs (repo_path: &path::PathBuf, prefix: &str) ->JobResult<Vec<St
 }
 
 
-fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJob) -> JobResult<serde_json::Value> {
+fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job_id: i32, job: &CommitJob) -> JobResult<serde_json::Value> {
     // Get the uploaded refs from db
 
     let build_refs = build_refs::table
@@ -327,7 +342,7 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJ
 
     // Do the actual work
 
-    let res = do_commit_build_refs(job.build, &build_refs, &&job.endoflife, &executor.config);
+    let res = do_commit_build_refs(job_id, job.build, &build_refs, &&job.endoflife, &executor.config, conn);
 
     // Update the build repo state in db
 
@@ -356,9 +371,11 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJ
     res
 }
 
-fn do_publish (build_id: i32,
+fn do_publish (job_id: i32,
+               build_id: i32,
                build_refs: &Vec<models::BuildRef>,
-               config: &Arc<Config>)  -> JobResult<serde_json::Value> {
+               config: &Arc<Config>,
+               conn: &PgConnection)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
 
     let mut src_repo_arg = OsString::from("--src-repo=");
@@ -385,7 +402,7 @@ fn do_publish (build_id: i32,
         .arg(&src_repo_arg)
         .arg(&config.repo_path);
 
-    let (success, _log, stderr) = run_command(cmd)?;
+    let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
     if !success {
         return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
@@ -423,7 +440,7 @@ fn do_publish (build_id: i32,
                 .arg("--union")
                 .arg(&build_ref.ref_name)
                 .arg(&screenshots_dir);
-            let (success, _log, stderr) = run_command(cmd)?;
+            let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
             if !success {
                 return Err(JobError::new(&format!("Failed to extract screenshots: {}", stderr.trim())));
             }
@@ -440,7 +457,7 @@ fn do_publish (build_id: i32,
         .arg("--generate-static-deltas")
         .arg(&config.repo_path);
 
-    let (success, _log, stderr) = run_command(cmd)?;
+    let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
     if !success {
         return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
     }
@@ -457,7 +474,7 @@ fn do_publish (build_id: i32,
             .arg("--union")
             .arg(&format!("appstream/{}", arch))
             .arg(appstream_dir.join(arch));
-        let (success, _log, stderr) = run_command(cmd)?;
+        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
         if !success {
             return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
         }
@@ -466,7 +483,7 @@ fn do_publish (build_id: i32,
     Ok(json!({ "refs": commits}))
 }
 
-fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection, job: &PublishJob) -> JobResult<serde_json::Value> {
+fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32, job: &PublishJob) -> JobResult<serde_json::Value> {
     // Get the uploaded refs from db
 
     let build_refs = build_refs::table
@@ -479,7 +496,7 @@ fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection, job: &Publis
 
     // Do the actual work
 
-    let res = do_publish(job.build, &build_refs, &executor.config);
+    let res = do_publish(job_id, job.build, &build_refs, &executor.config, conn);
 
     // Update the publish repo state in db
 
@@ -515,7 +532,7 @@ fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
         Some(JobKind::Commit) => {
             if let Ok(commit_job) = serde_json::from_value::<CommitJob>(job.contents.clone()) {
                 info!("Handling Commit Job {}: {:?}", job.id, commit_job);
-                handle_commit_job (executor, conn, &commit_job)
+                handle_commit_job (executor, conn, job.id, &commit_job)
             } else {
                 Err(JobError::new("Can't parse commit job"))
             }
@@ -523,7 +540,7 @@ fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
         Some(JobKind::Publish) => {
             if let Ok(publish_job) = serde_json::from_value::<PublishJob>(job.contents.clone()) {
                 info!("Handling Publish Job {}: {:?}", job.id, publish_job);
-                handle_publish_job (executor, conn, &publish_job)
+                handle_publish_job (executor, conn, job.id, &publish_job)
             } else {
                 Err(JobError::new("Can't parse publish job"))
             }
