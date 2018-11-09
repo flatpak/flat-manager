@@ -19,6 +19,7 @@ use std::thread;
 use std::time;
 use std::os::unix::process::CommandExt;
 use libc;
+use std::collections::HashMap;
 
 use app::Config;
 use errors::{JobError, JobResult};
@@ -161,9 +162,9 @@ fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
 }
 
 fn do_commit_build_refs (build_id: i32,
-                      build_refs: &Vec<models::BuildRef>,
-                      endoflife: &Option<String>,
-                      config: &Arc<Config>)  -> JobResult<serde_json::Value> {
+                         build_refs: &Vec<models::BuildRef>,
+                         endoflife: &Option<String>,
+                         config: &Arc<Config>)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
@@ -172,6 +173,8 @@ fn do_commit_build_refs (build_id: i32,
 
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&upload_path);
+
+    let mut commits = HashMap::new();
 
     for build_ref in build_refs.iter() {
         let mut src_ref_arg = String::from("--src-ref=");
@@ -212,6 +215,9 @@ fn do_commit_build_refs (build_id: i32,
             return Err(JobError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
         }
 
+        let commit = parse_ostree_ref(&build_repo_path, &build_ref.ref_name)?;
+        commits.insert(build_ref.ref_name.to_string(), commit);
+
         if build_ref.ref_name.starts_with("app/") {
             let parts: Vec<&str> = build_ref.ref_name.split('/').collect();
             let mut file = File::create(build_repo_path.join(format!("{}.flatpakref", parts[1])))?;
@@ -247,9 +253,29 @@ IsRuntime=false
 
     fs::remove_dir_all(&upload_path)?;
 
-    Ok(json!({}))
+    Ok(json!({ "refs": commits}))
 }
 
+fn parse_ostree_ref (build_repo_path: &path::PathBuf, ref_name: &String) ->JobResult<String> {
+    let mut repo_arg = OsString::from("--repo=");
+    repo_arg.push(&build_repo_path);
+
+    match Command::new("ostree")
+        .arg("rev-parse")
+        .arg(repo_arg)
+        .arg(ref_name)
+        .output() {
+            Ok(output) => {
+                if output.status.success() {
+                    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                } else {
+                    Err(JobError::new(&format!("Can't find commit for ref {} build refs: {}", ref_name, String::from_utf8_lossy(&output.stderr).trim())))
+                }
+
+            },
+            Err(e) => Err(JobError::new(&format!("Can't find commit for ref {} build refs: {}", ref_name, e.to_string())))
+        }
+}
 
 fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJob) -> JobResult<serde_json::Value> {
     // Get the uploaded refs from db
@@ -294,6 +320,7 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job: &CommitJ
 }
 
 fn do_publish (build_id: i32,
+               build_refs: &Vec<models::BuildRef>,
                config: &Arc<Config>)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
 
@@ -345,9 +372,19 @@ fn do_publish (build_id: i32,
 }
 
 fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection, job: &PublishJob) -> JobResult<serde_json::Value> {
+    // Get the uploaded refs from db
+
+    let build_refs = build_refs::table
+        .filter(build_refs::build_id.eq(job.build))
+        .get_results::<models::BuildRef>(conn)
+        .or_else(|_e| Err(JobError::new("Can't load build refs")))?;
+    if build_refs.len() == 0 {
+        return Err(JobError::new("No refs in build"));
+    }
+
     // Do the actual work
 
-    let res = do_publish(job.build, &executor.config);
+    let res = do_publish(job.build, &build_refs, &executor.config);
 
     // Update the publish repo state in db
 
