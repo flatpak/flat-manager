@@ -393,15 +393,40 @@ fn do_publish (build_id: i32,
     let appstream_dir = config.repo_path.join("appstream");
     fs::create_dir_all(&appstream_dir)?;
 
+    let screenshots_dir = config.repo_path.join("screenshots");
+    fs::create_dir_all(&screenshots_dir)?;
+
     let mut commits = HashMap::new();
     for build_ref in build_refs.iter() {
-        let commit = parse_ostree_ref(&config.repo_path, &build_ref.ref_name)?;
-        commits.insert(build_ref.ref_name.to_string(), commit);
+        println!("build_ref {:?}", build_ref);
+        if build_ref.ref_name.starts_with("app/") || build_ref.ref_name.starts_with("runtime/") {
+            let commit = parse_ostree_ref(&config.repo_path, &build_ref.ref_name)?;
+            commits.insert(build_ref.ref_name.to_string(), commit);
+        }
 
         if build_ref.ref_name.starts_with("app/") {
             let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config);
+            info!("generating {}", filename);
             let mut file = File::create(appstream_dir.join(filename))?;
             file.write_all(contents.as_bytes())?;
+        }
+    }
+
+    for build_ref in build_refs.iter() {
+        if build_ref.ref_name.starts_with("screenshots/") {
+            info!("extracting screenshots for {}", build_ref.ref_name);
+            let mut cmd = Command::new("ostree");
+            cmd
+                .arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
+                .arg("checkout")
+                .arg("--user-mode")
+                .arg("--union")
+                .arg(&build_ref.ref_name)
+                .arg(&screenshots_dir);
+            let (success, _log, stderr) = run_command(cmd)?;
+            if !success {
+                return Err(JobError::new(&format!("Failed to extract screenshots: {}", stderr.trim())));
+            }
         }
     }
 
