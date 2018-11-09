@@ -18,6 +18,7 @@ extern crate tempfile;
 extern crate jsonwebtoken as jwt;
 #[macro_use]
 extern crate log;
+extern crate libc;
 
 use actix::prelude::*;
 use actix::{Actor, actors::signal};

@@ -17,6 +17,8 @@ use std::sync::{Arc};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
 use std::time;
+use std::os::unix::process::CommandExt;
+use libc;
 
 use app::Config;
 use errors::{JobError, JobResult};
@@ -110,6 +112,12 @@ fn run_command(mut cmd: Command) -> JobResult<(bool, String, String)>
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .before_exec (|| {
+            // Setsid in the child to avoid SIGINT on server killing
+            // child and breaking the graceful shutdown
+            unsafe { libc::setsid() };
+            Ok(())
+        })
         .spawn()
         .or_else(|e| Err(JobError::new(&format!("Can't start command: {}", e))))?;
 
