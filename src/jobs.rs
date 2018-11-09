@@ -51,12 +51,15 @@ fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &
 [Flatpak Ref]
 Name={}
 Branch={}
+Title={} from flathub
 Url={}
 RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+SuggestRemoteName=flathub
 IsRuntime=false
 "#,
                           parts[1],
                           parts[3],
+                          parts[1],
                           url);
     (filename, contents)
 }
@@ -366,10 +369,19 @@ fn do_publish (build_id: i32,
         return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
 
+    let appstream_dir = config.repo_path.join("appstream");
+    fs::create_dir_all(&appstream_dir)?;
+
     let mut commits = HashMap::new();
     for build_ref in build_refs.iter() {
         let commit = parse_ostree_ref(&config.repo_path, &build_ref.ref_name)?;
         commits.insert(build_ref.ref_name.to_string(), commit);
+
+        if build_ref.ref_name.starts_with("app/") {
+            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config);
+            let mut file = File::create(appstream_dir.join(filename))?;
+            file.write_all(contents.as_bytes())?;
+        }
     }
 
     // Update repo
