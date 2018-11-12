@@ -23,3 +23,7 @@ CREATE VIEW job_dependencies_with_status AS
   FROM job_dependencies
        INNER JOIN jobs
                ON job_dependencies.depends_on = jobs.id;
+
+
+ALTER TABLE builds ADD commit_job_id INTEGER REFERENCES jobs (id);
+ALTER TABLE builds ADD publish_job_id INTEGER REFERENCES jobs (id);

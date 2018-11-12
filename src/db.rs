@@ -82,6 +82,60 @@ impl Handler<LookupJob> for DbExecutor {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct LookupCommitJob {
+    pub build_id: i32
+}
+
+impl Message for LookupCommitJob {
+    type Result = Result<models::Job, ApiError>;
+}
+
+impl Handler<LookupCommitJob> for DbExecutor {
+    type Result = Result<models::Job, ApiError>;
+
+    fn handle(&mut self, msg: LookupCommitJob, _: &mut Self::Context) -> Self::Result {
+        use schema::jobs::dsl::*;
+        use schema::builds::dsl::*;
+        let conn = &self.0.get().unwrap();
+        jobs
+            .inner_join(builds.on(commit_job_id.eq(schema::jobs::dsl::id.nullable())))
+            .select(schema::jobs::all_columns)
+            .filter(schema::builds::dsl::id.eq(msg.build_id))
+            .get_result::<models::Job>(conn)
+            .map_err(|e| {
+                From::from(e)
+            })
+    }
+}
+
+#[derive(Deserialize, Debug)]
+pub struct LookupPublishJob {
+    pub build_id: i32
+}
+
+impl Message for LookupPublishJob {
+    type Result = Result<models::Job, ApiError>;
+}
+
+impl Handler<LookupPublishJob> for DbExecutor {
+    type Result = Result<models::Job, ApiError>;
+
+    fn handle(&mut self, msg: LookupPublishJob, _: &mut Self::Context) -> Self::Result {
+        use schema::jobs::dsl::*;
+        use schema::builds::dsl::*;
+        let conn = &self.0.get().unwrap();
+        jobs
+            .inner_join(builds.on(publish_job_id.eq(schema::jobs::dsl::id.nullable())))
+            .select(schema::jobs::all_columns)
+            .filter(schema::builds::dsl::id.eq(msg.build_id))
+            .get_result::<models::Job>(conn)
+            .map_err(|e| {
+                From::from(e)
+            })
+    }
+}
+
+#[derive(Deserialize, Debug)]
 pub struct LookupBuild {
     pub id: i32
 }
@@ -175,12 +229,7 @@ impl Handler<StartCommitJob> for DbExecutor {
                 return Err(DieselError::RollbackTransaction)
             };
             let (val, reason) = RepoState::to_db(&RepoState::Verifying);
-            let new_build =
-                diesel::update(schema::builds::table)
-                .filter(schema::builds::id.eq(msg.id))
-                .set((schema::builds::repo_state.eq(val),
-                      schema::builds::repo_state_reason.eq(reason)))
-                .get_result::<models::Build>(conn)?;
+            let job =
             diesel::insert_into(schema::jobs::table)
                 .values(models::NewJob {
                     kind: JobKind::Commit.to_db(),
@@ -189,7 +238,14 @@ impl Handler<StartCommitJob> for DbExecutor {
                         endoflife: msg.endoflife
                     }),
                 })
-                .execute(conn)?;
+                .get_result::<models::Job>(conn)?;
+            let new_build =
+                diesel::update(schema::builds::table)
+                .filter(schema::builds::id.eq(msg.id))
+                .set((schema::builds::commit_job_id.eq(job.id),
+                      schema::builds::repo_state.eq(val),
+                      schema::builds::repo_state_reason.eq(reason)))
+                .get_result::<models::Build>(conn)?;
             Ok(new_build)
         })
             .map_err(|e| {
@@ -231,20 +287,22 @@ impl Handler<StartPublishJob> for DbExecutor {
                 return Err(DieselError::RollbackTransaction) // Not commited correctly
             };
             let (val, reason) = PublishedState::to_db(&PublishedState::Publishing);
-            let new_build =
-                diesel::update(schema::builds::table)
-                .filter(schema::builds::id.eq(msg.id))
-                .set((schema::builds::published_state.eq(val),
-                      schema::builds::published_state_reason.eq(reason)))
-                .get_result::<models::Build>(conn)?;
-            diesel::insert_into(schema::jobs::table)
+            let job =
+                diesel::insert_into(schema::jobs::table)
                 .values(models::NewJob {
                     kind: JobKind::Publish.to_db(),
                     contents: json!(PublishJob {
                         build: msg.id,
                     }),
                 })
-                .execute(conn)?;
+                .get_result::<models::Job>(conn)?;
+            let new_build =
+                diesel::update(schema::builds::table)
+                .filter(schema::builds::id.eq(msg.id))
+                .set((schema::builds::publish_job_id.eq(job.id),
+                      schema::builds::published_state.eq(val),
+                      schema::builds::published_state_reason.eq(reason)))
+                .get_result::<models::Build>(conn)?;
             Ok(new_build)
         })
             .map_err(|e| {

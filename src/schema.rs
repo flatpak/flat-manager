@@ -15,6 +15,8 @@ table! {
         repo_state_reason -> Nullable<Text>,
         published_state -> Int2,
         published_state_reason -> Nullable<Text>,
+        commit_job_id -> Nullable<Int4>,
+        publish_job_id -> Nullable<Int4>,
     }
 }
 

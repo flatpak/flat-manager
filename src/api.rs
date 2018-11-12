@@ -16,7 +16,7 @@ use jwt;
 
 use app::{AppState,Claims};
 use errors::ApiError;
-use db::{CreateBuild, CreateBuildRef, LookupBuild, LookupBuildRef, StartCommitJob, StartPublishJob};
+use db::*;
 use models::{NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
@@ -75,7 +75,7 @@ pub fn get_job(
     }
     state
         .db
-        .send(LookupBuild { id: params.id })
+        .send(LookupJob { id: params.id })
         .from_err()
         .and_then(|res| match res {
             Ok(job) => Ok(HttpResponse::Ok().json(job)),
@@ -371,6 +371,26 @@ pub fn upload(
     )
 }
 
+
+pub fn get_commit_job(
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
+    state
+        .db
+        .send(LookupCommitJob { build_id: params.id })
+        .from_err()
+        .and_then(|res| match res {
+            Ok(job) => Ok(HttpResponse::Ok().json(job)),
+            Err(e) => Ok(e.error_response())
+        })
+        .responder()
+}
+
 #[derive(Deserialize)]
 pub struct CommitArgs {
     endoflife: Option<String>,
@@ -403,6 +423,26 @@ pub fn commit(
                     Err(e) => Ok(e.error_response())
                 }
             },
+            Err(e) => Ok(e.error_response())
+        })
+        .responder()
+}
+
+
+pub fn get_publish_job(
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
+    state
+        .db
+        .send(LookupPublishJob { build_id: params.id })
+        .from_err()
+        .and_then(|res| match res {
+            Ok(job) => Ok(HttpResponse::Ok().json(job)),
             Err(e) => Ok(e.error_response())
         })
         .responder()

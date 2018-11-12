@@ -21,6 +21,9 @@ pub struct Build {
     pub repo_state_reason: Option<String>,
     pub published_state: i16,
     pub published_state_reason: Option<String>,
+    pub commit_job_id: Option<i32>,
+    pub publish_job_id: Option<i32>,
+
 }
 
 #[derive(Deserialize, Debug,PartialEq)]
