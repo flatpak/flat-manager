@@ -36,17 +36,36 @@ impl Actor for JobExecutor {
     type Context = SyncContext<Self>;
 }
 
+fn get_collection_id (maybe_build_id: &Option<i32>, config: &Arc<Config>) -> Option<String> {
+    match &config.collection_id {
+        Some(collection_id) => match maybe_build_id {
+            Some(build_id) => Some(format!("{}.Build{}\n", collection_id, build_id)),
+            None => Some(collection_id.to_string()),
+        }
+        None => None,
+    }
+}
+
 fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &Arc<Config>) -> (String, String) {
     let parts: Vec<&str> = ref_name.split('/').collect();
 
     let filename = format!("{}.flatpakref", parts[1]);
 
-    let url = match maybe_build_id {
-        Some(build_id) => format!("{}/build-repo/{}", config.base_url, build_id),
-        None => format!("{}/repo", config.base_url),
+    let (url, maybe_gpg_content) = match maybe_build_id {
+        Some(build_id) => (format!("{}/build-repo/{}", config.base_url, build_id), &config.build_gpg_key_content),
+        None => (format!("{}/repo", config.base_url), &config.main_gpg_key_content),
     };
 
-    // TODO: We should also add GPGKey here if config.build_gpg_key is set
+    let gpg_line = match maybe_gpg_content {
+        Some(gpg_content) => format!("GPGKey={}\n", gpg_content),
+        None => "".to_string(),
+    };
+
+    let collection_id_line = match get_collection_id (&maybe_build_id, config) {
+        Some(collection_id) => format!("CollectionID={}\n", collection_id),
+        None => "".to_string(),
+    };
+
     let contents = format!(r#"
 [Flatpak Ref]
 Name={}
@@ -56,11 +75,13 @@ Url={}
 RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
 SuggestRemoteName=flathub
 IsRuntime=false
-"#,
-                          parts[1],
-                          parts[3],
-                          parts[1],
-                          url);
+{}{}"#,
+                           parts[1],
+                           parts[3],
+                           parts[1],
+                           url,
+                           gpg_line,
+                           collection_id_line);
     (filename, contents)
 }
 
@@ -141,6 +162,18 @@ fn append_job_log(job_id: i32, conn: &PgConnection, output: &str) {
         .execute(conn) {
             error!("Error appending to job {} log: {}", job_id, e.to_string());
         }
+}
+
+fn add_gpg_args(cmd: &mut Command, maybe_gpg_key: &Option<String>, maybe_gpg_homedir: &Option<String>) {
+    if let Some(gpg_homedir) = maybe_gpg_homedir {
+        cmd
+            .arg(format!("--gpg-homedir={}", gpg_homedir));
+    };
+
+    if let Some(key) = maybe_gpg_key {
+        cmd
+            .arg(format!("--gpg-sign={}", key));
+    };
 }
 
 fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<(bool, String, String)>
@@ -235,15 +268,7 @@ fn do_commit_build_refs (job_id: i32,
             .arg("--force")             // Always generate a new commit even if nothing changed
             .arg("--disable-fsync");    // There is a sync in flatpak build-update-repo, so avoid it here
 
-        if let Some(gpg_homedir) = &config.gpg_homedir {
-            cmd
-                .arg(format!("--gpg-homedir=={}", gpg_homedir));
-        };
-
-        if let Some(key) = &config.build_gpg_key {
-            cmd
-                .arg(format!("--gpg-sign=={}", key));
-        };
+        add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
         if let Some(endoflife) = &endoflife {
             cmd
@@ -277,6 +302,8 @@ fn do_commit_build_refs (job_id: i32,
     cmd
         .arg("build-update-repo")
         .arg(&build_repo_path);
+
+    add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
     let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
     if !success {
@@ -391,15 +418,7 @@ fn do_publish (job_id: i32,
         .arg("build-commit-from")
         .arg("--no-update-summary"); // We update it separately
 
-        if let Some(gpg_homedir) = &config.gpg_homedir {
-            cmd
-                .arg(format!("--gpg-homedir=={}", gpg_homedir));
-        };
-
-    if let Some(key) = &config.build_gpg_key {
-        cmd
-            .arg(format!("--gpg-sign=={}", key));
-    };
+    add_gpg_args(&mut cmd, &config.main_gpg_key, &config.gpg_homedir);
 
     cmd
         .arg(&src_repo_arg)
@@ -457,7 +476,11 @@ fn do_publish (job_id: i32,
     let mut cmd = Command::new("flatpak");
     cmd
         .arg("build-update-repo")
-        .arg("--generate-static-deltas")
+        .arg("--generate-static-deltas");
+
+    add_gpg_args(&mut cmd, &config.main_gpg_key, &config.gpg_homedir);
+
+    cmd
         .arg(&config.repo_path);
 
     let (success, _log, stderr) = run_command(cmd, job_id, conn)?;

@@ -27,9 +27,11 @@ use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
 use dotenv::dotenv;
 use std::env;
+use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::process::{Command};
 
 mod api;
 mod app;
@@ -95,6 +97,28 @@ impl Handler<signal::Signal> for HandleSignals {
     }
 }
 
+fn load_gpg_key (maybe_gpg_key: &Option<String>, maybe_gpg_homedir: &Option<String>) -> io::Result<Option<String>> {
+    match maybe_gpg_key {
+        Some(gpg_key) => {
+            let mut cmd = Command::new("gpg2");
+            if let Some(gpg_homedir) = maybe_gpg_homedir {
+                cmd.arg(&format!("--homedir={}", gpg_homedir));
+            }
+            cmd
+                .arg("--export")
+                .arg(gpg_key);
+
+            let output = cmd.output()?;
+            if output.status.success() {
+                Ok(Some(base64::encode(&output.stdout)))
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "gpg2 --export failed"))
+            }
+        },
+        None => Ok(None),
+    }
+}
+
 fn main() {
     ::std::env::set_var("RUST_LOG", "info");
     env_logger::init();
@@ -112,16 +136,23 @@ fn main() {
         .expect("SECRET must be set");
 
     let secret = base64::decode(&secret_base64).unwrap();
+
+    let gpg_homedir = env::var("GPG_HOMEDIR").ok();
+    let build_gpg_key = env::var("BUILD_GPG_KEY").ok();
+    let main_gpg_key = env::var("MAIN_GPG_KEY").ok();
     let config = Arc::new(app::Config {
         repo_path: PathBuf::from(repo_path),
         build_repo_base_path: PathBuf::from(build_repo_base_path),
         base_url: env::var("BASE_URL").unwrap_or("http://127.0.0.1:8080".to_string()),
         collection_id: env::var("COLLECTION_ID").ok(),
-        gpg_homedir: env::var("GPG_HOMEDIR").ok(),
-        build_gpg_key: env::var("BUILD_GPG_KEY").ok(),
-        main_gpg_key: env::var("MAIN_GPG_KEY").ok(),
+        build_gpg_key_content: load_gpg_key (&build_gpg_key, &gpg_homedir).expect("Failed to load build gpg key"),
+        main_gpg_key_content: load_gpg_key (&main_gpg_key, &gpg_homedir).expect("Failed to load main gpg key"),
+        gpg_homedir: gpg_homedir,
+        build_gpg_key: build_gpg_key,
+        main_gpg_key: main_gpg_key,
         secret: secret.clone(),
     });
+
 
     let manager = ConnectionManager::<PgConnection>::new(database_url.clone());
     let pool = r2d2::Pool::builder()

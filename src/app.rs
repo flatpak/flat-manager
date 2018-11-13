@@ -24,8 +24,10 @@ pub struct Config {
     pub base_url: String,
     pub collection_id: Option<String>,
     pub gpg_homedir: Option<String>,
-    pub build_gpg_key: Option<String>,
+    pub build_gpg_key : Option<String>,
+    pub build_gpg_key_content : Option<String>,
     pub main_gpg_key: Option<String>,
+    pub main_gpg_key_content: Option<String>,
     pub secret: Vec<u8>,
 }
 
