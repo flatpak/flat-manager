@@ -414,12 +414,12 @@ pub fn commit(
         })
         .from_err()
         .and_then(move |res| match res {
-            Ok(build) => {
+            Ok(job) => {
                 job_queue.do_send(ProcessJobs());
-                match req.url_for("show_build", &[params.id.to_string()]) {
+                match req.url_for("show_commit_job", &[params.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())
-                                  .json(build)),
+                                  .json(job)),
                     Err(e) => Ok(e.error_response())
                 }
             },
@@ -465,12 +465,12 @@ pub fn publish(
         })
         .from_err()
         .and_then(move |res| match res {
-            Ok(build) => {
+            Ok(job) => {
                 job_queue.do_send(ProcessJobs());
-                match req.url_for("show_build", &[params.id.to_string()]) {
+                match req.url_for("show_publish_job", &[params.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())
-                                  .json(build)),
+                                  .json(job)),
                     Err(e) => Ok(e.error_response())
                 }
             },

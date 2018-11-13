@@ -206,33 +206,57 @@ async def get_build(session, build_url, token):
         if resp.status != 200:
             raise ApiError(resp, await resp.json())
         data = await resp.json()
-    return data
+        return data
+
+async def wait_for_job(session, job_url, token):
+    old_job_status  = 0
+    printed_len = 0
+    while True:
+        async with session.get(job_url, headers={'Authorization': 'Bearer ' + token}) as resp:
+            if resp.status != 200:
+                raise ApiError(resp, await resp.json())
+            job = await resp.json()
+            job_status = job['status']
+            if job_status > 0 and old_job_status == 0:
+                print("/ Job was started");
+            old_job_status = job_status
+            log = job['log']
+            if len(log) > printed_len:
+                for line in log[printed_len:].splitlines(True):
+                    print("| %s" % line, end="")
+                printed_len = len(log)
+            if job_status > 1:
+                if job_status == 2:
+                    print("\ Job completed successfully")
+                else:
+                    print("\ Job failed")
+                return job
+            await asyncio.sleep(1)
 
 async def commit_build(session, build_url, wait, token):
     print("Commiting build %s" % (build_url))
     async with session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
         if resp.status != 200:
             raise ApiError(resp, await resp.json())
-        data = await resp.json()
+        job = await resp.json()
+        job_url = resp.headers['location'];
+        print("job: %s" % job)
         if wait:
-            print("Waiting for commit to finish")
-            while data['repo_state'] == 1:
-                await asyncio.sleep(3)
-                data = await get_build(session, build_url, token)
-        return data;
+            print("Waiting for commit job")
+            job = await wait_for_job (session, job_url, token);
+        return job
 
 async def publish_build(session, build_url, wait, token):
     print("Publishing build %s" % (build_url))
     async with session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
         if resp.status != 200:
             raise ApiError(resp, await resp.json())
-        data = await resp.json()
+        job = await resp.json()
+        job_url = resp.headers['location'];
         if wait:
-            print("Waiting for publish to finish")
-            while data['published_state'] == 1:
-                await asyncio.sleep(3)
-                data = await get_build(session, build_url, token)
-        return data;
+            print("Waiting for publish job")
+            job = await wait_for_job (session, job_url, token);
+        return job;
 
 async def purge_build(session, build_url, token):
     print("Purging build %s" % (build_url))
@@ -318,26 +342,19 @@ async def push_command(args, session):
 
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
-        c = await commit_build(session, args.build_url, args.publish or args.wait, args.token)
-    else:
-        c = await get_build(session, args.build_url, token)
+        await commit_build(session, args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
-        c = await publish_build(session, args.build_url, args.wait, args.token)
-
-    print(c)
+        await publish_build(session, args.build_url, args.wait, args.token)
 
 async def commit_command(args, session):
-    c = await commit_build(session, args.build_url, args.wait, args.token)
-    print(c)
+    await commit_build(session, args.build_url, args.wait, args.token)
 
 async def publish_command(args, session):
-    c = await publish_build(session, args.build_url, args.wait, args.token)
-    print(c)
+    await publish_build(session, args.build_url, args.wait, args.token)
 
 async def purge_command(args, session):
-    c = await purge_build(session, args.build_url, args.token)
-    print(c)
+    await purge_build(session, args.build_url, args.token)
 
 async def create_token_command(args, session):
     new_token = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)

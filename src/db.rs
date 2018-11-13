@@ -212,15 +212,15 @@ pub struct StartCommitJob {
 }
 
 impl Message for StartCommitJob {
-    type Result = Result<models::Build, ApiError>;
+    type Result = Result<models::Job, ApiError>;
 }
 
 impl Handler<StartCommitJob> for DbExecutor {
-    type Result = Result<models::Build, ApiError>;
+    type Result = Result<models::Job, ApiError>;
 
     fn handle(&mut self, msg: StartCommitJob, _: &mut Self::Context) -> Self::Result {
         let conn = &self.0.get().unwrap();
-        conn.transaction::<models::Build, DieselError, _>(|| {
+        conn.transaction::<models::Job, DieselError, _>(|| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(msg.id))
                 .get_result::<models::Build>(conn)?;
@@ -239,14 +239,13 @@ impl Handler<StartCommitJob> for DbExecutor {
                     }),
                 })
                 .get_result::<models::Job>(conn)?;
-            let new_build =
-                diesel::update(schema::builds::table)
+            diesel::update(schema::builds::table)
                 .filter(schema::builds::id.eq(msg.id))
                 .set((schema::builds::commit_job_id.eq(job.id),
                       schema::builds::repo_state.eq(val),
                       schema::builds::repo_state_reason.eq(reason)))
                 .get_result::<models::Build>(conn)?;
-            Ok(new_build)
+            Ok(job)
         })
             .map_err(|e| {
                 match e {
@@ -264,15 +263,15 @@ pub struct StartPublishJob {
 }
 
 impl Message for StartPublishJob {
-    type Result = Result<models::Build, ApiError>;
+    type Result = Result<models::Job, ApiError>;
 }
 
 impl Handler<StartPublishJob> for DbExecutor {
-    type Result = Result<models::Build, ApiError>;
+    type Result = Result<models::Job, ApiError>;
 
     fn handle(&mut self, msg: StartPublishJob, _: &mut Self::Context) -> Self::Result {
         let conn = &self.0.get().unwrap();
-        conn.transaction::<models::Build, DieselError, _>(|| {
+        conn.transaction::<models::Job, DieselError, _>(|| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(msg.id))
                 .get_result::<models::Build>(conn)?;
@@ -296,14 +295,13 @@ impl Handler<StartPublishJob> for DbExecutor {
                     }),
                 })
                 .get_result::<models::Job>(conn)?;
-            let new_build =
-                diesel::update(schema::builds::table)
+            diesel::update(schema::builds::table)
                 .filter(schema::builds::id.eq(msg.id))
                 .set((schema::builds::publish_job_id.eq(job.id),
                       schema::builds::published_state.eq(val),
                       schema::builds::published_state_reason.eq(reason)))
                 .get_result::<models::Build>(conn)?;
-            Ok(new_build)
+            Ok(job)
         })
             .map_err(|e| {
                 match e {

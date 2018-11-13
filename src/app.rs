@@ -74,9 +74,11 @@ pub fn create_app(
                 .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
                 .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
                 .resource("/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
-                .resource("/build/{id}/commit", |r| { r.method(Method::POST).with(api::commit);
+                .resource("/build/{id}/commit", |r| { r.name("show_commit_job");
+                                                      r.method(Method::POST).with(api::commit);
                                                       r.method(Method::GET).with(api::get_commit_job) })
-                .resource("/build/{id}/publish", |r| { r.method(Method::POST).with(api::publish);
+                .resource("/build/{id}/publish", |r| { r.name("show_publish_job");
+                                                      r.method(Method::POST).with(api::publish);
                                                        r.method(Method::GET).with(api::get_publish_job) })
                 .resource("/build/{id}/purge", |r| { r.method(Method::POST).with(api::purge) })
         })

@@ -194,7 +194,10 @@ fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<
 
     let status = child.wait().or_else(|e| Err(JobError::new(&format!("Can't wait for command: {}", e))))?;
 
-    append_job_log(job_id, conn, &format!("status {:?}", status.code().unwrap_or(-1)));
+    let code = status.code().unwrap_or(-1);
+    if code != 0 {
+        append_job_log(job_id, conn, &format!("status {:?}\n", code))
+    }
     info!("\\ status {:?}", status.code().unwrap_or(-1));
 
     Ok((status.success(),
