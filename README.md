@@ -39,8 +39,11 @@ Configuration
 
 All configuration is done via environment variables, but it will
 also look for a '.env' file in the current directory or one
-of its parents. The source repository contains a version
-that should work fine for testing.
+of its parents. The source repository contains example.env
+that can be used as a basis:
+
+    cp example.env .env
+    # edit .env
 
 Database
 --------
