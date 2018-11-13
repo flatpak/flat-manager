@@ -315,86 +315,89 @@ impl Handler<StartPublishJob> for DbExecutor {
 }
 
 #[derive(Deserialize, Debug)]
-pub struct ChangeRepoState {
+pub struct InitPurge {
     pub id: i32,
-    pub new: RepoState,
-    pub expected: Option<RepoState>,
 }
 
-impl Message for ChangeRepoState {
-    type Result = Result<models::Build, ApiError>;
+impl Message for InitPurge {
+    type Result = Result<(), ApiError>;
 }
 
-impl Handler<ChangeRepoState> for DbExecutor {
-    type Result = Result<models::Build, ApiError>;
+impl Handler<InitPurge> for DbExecutor {
+    type Result = Result<(), ApiError>;
 
-    fn handle(&mut self, msg: ChangeRepoState, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InitPurge, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
-        conn.transaction::<models::Build, DieselError, _>(|| {
-            if let Some(expected) = msg.expected {
-                let current_build = builds
-                    .filter(id.eq(msg.id))
-                    .get_result::<models::Build>(conn)?;
-                let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
-                if !current_repo_state.same_state_as(&expected) {
-                    return Err(DieselError::RollbackTransaction)
-                };
-            }
-            let (val, reason) = RepoState::to_db(&msg.new);
+        conn.transaction::<(), DieselError, _>(|| {
+            let current_build = builds
+                .filter(id.eq(msg.id))
+                .get_result::<models::Build>(conn)?;
+            let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
+            let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
+            if current_repo_state.same_state_as(&RepoState::Verifying) ||
+                current_repo_state.same_state_as(&RepoState::Purging) ||
+                current_published_state.same_state_as(&PublishedState::Publishing) {
+                    /* Only allow pruning when we're not working on the build repo */
+                return Err(DieselError::RollbackTransaction)
+            };
+            let (val, reason) = RepoState::to_db(&RepoState::Purging);
             diesel::update(builds)
                 .filter(id.eq(msg.id))
                 .set((repo_state.eq(val),
                       repo_state_reason.eq(reason)))
-                .get_result::<models::Build>(conn)
+                .execute(conn)?;
+            Ok(())
         })
             .map_err(|e| {
                 match e {
-                    DieselError::RollbackTransaction => ApiError::BadRequest("Build is already commited".to_string()),
+                    DieselError::RollbackTransaction => ApiError::BadRequest("Can't prune build while in use".to_string()),
                     _ => From::from(e)
                 }
             })
     }
 }
 
-
 #[derive(Deserialize, Debug)]
-pub struct ChangePublishedState {
+pub struct FinishPurge {
     pub id: i32,
-    pub new: PublishedState,
-    pub expected: Option<PublishedState>,
+    pub error: Option<String>,
 }
 
-impl Message for ChangePublishedState {
+impl Message for FinishPurge {
     type Result = Result<models::Build, ApiError>;
 }
 
-impl Handler<ChangePublishedState> for DbExecutor {
+impl Handler<FinishPurge> for DbExecutor {
     type Result = Result<models::Build, ApiError>;
 
-    fn handle(&mut self, msg: ChangePublishedState, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: FinishPurge, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         conn.transaction::<models::Build, DieselError, _>(|| {
-            if let Some(expected) = msg.expected {
-                let current_build = builds
-                    .filter(id.eq(msg.id))
-                    .get_result::<models::Build>(conn)?;
-                let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
-                if !current_published_state.same_state_as(&expected) {
-                    return Err(DieselError::RollbackTransaction)
-                };
-            }
-            let (val, reason) = PublishedState::to_db(&msg.new);
-            diesel::update(builds)
+            let current_build = builds
                 .filter(id.eq(msg.id))
-                .set((published_state.eq(val),
-                      published_state_reason.eq(reason)))
-                .get_result::<models::Build>(conn)
+                .get_result::<models::Build>(conn)?;
+            let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
+            if !current_repo_state.same_state_as(&RepoState::Purging) {
+                return Err(DieselError::RollbackTransaction)
+            };
+            let new_state = match msg.error {
+                None => RepoState::Purged,
+                Some(err_string) => RepoState::Failed(format!("Failed to Purge build: {}", err_string)),
+            };
+            let (val, reason) = RepoState::to_db(&new_state);
+            let new_build =
+                diesel::update(builds)
+                .filter(id.eq(msg.id))
+                .set((repo_state.eq(val),
+                      repo_state_reason.eq(reason)))
+                .get_result::<models::Build>(conn)?;
+            Ok(new_build)
         })
             .map_err(|e| {
                 match e {
-                    DieselError::RollbackTransaction => ApiError::BadRequest("Build is already published".to_string()),
+                    DieselError::RollbackTransaction => ApiError::BadRequest("Unexpected repo state, was not purging".to_string()),
                     _ => From::from(e)
                 }
             })

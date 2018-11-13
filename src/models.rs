@@ -65,6 +65,7 @@ pub enum RepoState {
     Verifying,
     Ready,
     Failed(String),
+    Purging,
     Purged,
 }
 
@@ -79,7 +80,8 @@ impl RepoState {
             RepoState::Verifying => (1, None),
             RepoState::Ready => (2, None),
             RepoState::Failed(s) => (3, Some(s.to_string())),
-            RepoState::Purged => (4, None),
+            RepoState::Purging => (4, None),
+            RepoState::Purged => (5, None),
         }
     }
 
@@ -89,7 +91,8 @@ impl RepoState {
             1 => RepoState::Verifying,
             2 => RepoState::Ready,
             3 => RepoState::Failed(reason.as_ref().unwrap_or(&"Unknown reason".to_string()).to_string()),
-            4 => RepoState::Purged,
+            4 => RepoState::Purging,
+            5 => RepoState::Purged,
             _ => RepoState::Failed("Unknown state".to_string()),
         }
     }

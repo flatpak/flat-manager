@@ -478,3 +478,56 @@ pub fn publish(
         })
         .responder()
 }
+
+pub fn purge(
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
+        return From::from(e);
+    }
+
+    let build_repo_path = state.config.build_repo_base_path.join(params.id.to_string());
+    let build_id1 = params.id;
+    let build_id2 = params.id;
+    state
+        .db
+        .send(InitPurge {
+            id: build_id1,
+        })
+        .from_err()
+        .and_then(move |init_result| match init_result {
+            Ok(()) => {
+                let res = fs::remove_dir_all(&build_repo_path);
+                future::Either::A(
+                    state
+                        .db
+                        .send(FinishPurge {
+                            id: build_id2,
+                            error: match res {
+                                Ok(()) => None,
+                                Err(e) => Some(e.to_string()),
+                            },
+                        })
+                        .from_err()
+                )
+            },
+            Err(api_error) => {
+                future::Either::B(future::err(api_error))
+            }
+        })
+        .and_then(move |res| match res {
+            Ok(build) => {
+                match req.url_for("show_build", &[params.id.to_string()]) {
+                    Ok(url) => Ok(HttpResponse::Ok()
+                                  .header(http::header::LOCATION, url.to_string())
+                                  .json(build)),
+                Err(e) => Ok(e.error_response())
+                }
+            },
+            Err(e) => Ok(e.error_response()),
+        })
+        .from_err()
+        .responder()
+}

@@ -78,6 +78,7 @@ pub fn create_app(
                                                       r.method(Method::GET).with(api::get_commit_job) })
                 .resource("/build/{id}/publish", |r| { r.method(Method::POST).with(api::publish);
                                                        r.method(Method::GET).with(api::get_publish_job) })
+                .resource("/build/{id}/purge", |r| { r.method(Method::POST).with(api::purge) })
         })
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))

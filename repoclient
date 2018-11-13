@@ -234,6 +234,13 @@ async def publish_build(session, build_url, wait, token):
                 data = await get_build(session, build_url, token)
         return data;
 
+async def purge_build(session, build_url, token):
+    print("Purging build %s" % (build_url))
+    async with session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
+        if resp.status != 200:
+            raise ApiError(resp, await resp.json())
+        return await resp.json()
+
 async def create_token(session, manager_url, token, name, subject, scope, duration):
     token_url = yarl.URL(manager_url).with_path("/api/v1/token_subset")
     async with session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
@@ -325,7 +332,12 @@ async def commit_command(args, session):
     print(c)
 
 async def publish_command(args, session):
-    await publish_build(session, args.build_url, args.wait, args.token)
+    c = await publish_build(session, args.build_url, args.wait, args.token)
+    print(c)
+
+async def purge_command(args, session):
+    c = await purge_build(session, args.build_url, args.token)
+    print(c)
 
 async def create_token_command(args, session):
     new_token = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
@@ -387,6 +399,10 @@ if __name__ == '__main__':
                              help='wait for publish to finish')
     publish_parser.add_argument('build_url', help='remote build url')
     publish_parser.set_defaults(func=publish_command)
+
+    purge_parser = subparsers.add_parser('purge', help='Purge build')
+    purge_parser.add_argument('build_url', help='remote build url')
+    purge_parser.set_defaults(func=purge_command)
 
     create_token_parser = subparsers.add_parser('create-token', help='Create subset token')
     create_token_parser.add_argument('manager_url', help='remote repo manager url')
