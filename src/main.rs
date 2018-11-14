@@ -42,8 +42,8 @@ mod schema;
 mod tokens;
 mod jobs;
 
-use models::{DbExecutor};
-use jobs::{JobQueue, StopJobQueue, start_job_executor};
+use models::DbExecutor;
+use jobs::{JobQueue, StopJobQueue, start_job_executor, cleanup_started_jobs};
 
 struct HandleSignals {
     server: Addr<actix_net::server::Server>,
@@ -159,8 +159,11 @@ fn main() {
         .build(manager)
         .expect("Failed to create pool.");
 
+    cleanup_started_jobs(&pool).expect("Failed to cleanup started jobs");
+
     let pool_copy = pool.clone();
     let db_addr = SyncArbiter::start(3, move || DbExecutor(pool_copy.clone()));
+
 
     let pool_copy2 = pool.clone();
     let jobs_addr = start_job_executor(config.clone(), pool_copy2.clone());

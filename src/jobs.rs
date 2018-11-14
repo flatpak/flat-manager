@@ -787,3 +787,46 @@ pub fn start_job_executor(config: Arc<Config>,
         jobs_queued: false,
     }.start()
 }
+
+
+pub fn cleanup_started_jobs(pool: &Pool<ConnectionManager<PgConnection>>) -> Result<(), diesel::result::Error> {
+    let conn = &pool.get().unwrap();
+    {
+        use schema::builds::dsl::*;
+        let (verifying, _) = RepoState::Verifying.to_db();
+        let (purging, _) = RepoState::Purging.to_db();
+        let (failed, failed_reason) = RepoState::Failed("Server was restarted during job".to_string()).to_db();
+        let n_updated =
+            diesel::update(builds)
+            .filter(repo_state.eq(verifying).or(repo_state.eq(purging)))
+            .set((repo_state.eq(failed),
+                  repo_state_reason.eq(failed_reason)))
+            .execute(conn)?;
+        if n_updated != 0 {
+            error!("Marked {} builds as failed due to in progress jobs on startup", n_updated);
+        }
+        let (publishing, _) = PublishedState::Publishing.to_db();
+        let (failed_publish, failed_publish_reason) = PublishedState::Failed("Server was restarted during publish".to_string()).to_db();
+        let n_updated2 =
+            diesel::update(builds)
+            .filter(published_state.eq(publishing))
+            .set((published_state.eq(failed_publish),
+                  published_state_reason.eq(failed_publish_reason)))
+            .execute(conn)?;
+        if n_updated2 != 0 {
+            error!("Marked {} builds as failed to publish due to in progress jobs on startup", n_updated2);
+        }
+    };
+    {
+        use schema::jobs::dsl::*;
+        let n_updated =
+            diesel::update(jobs)
+            .filter(status.eq(JobStatus::Started as i16))
+            .set((status.eq(JobStatus::Broken as i16),))
+            .execute(conn)?;
+        if n_updated != 0 {
+            error!("Marked {} jobs as broken due to being started already at startup", n_updated);
+        }
+    };
+    Ok(())
+}
