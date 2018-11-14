@@ -109,6 +109,26 @@ pub fn create_build(
         .responder()
 }
 
+pub fn builds(
+    state: State<AppState>,
+    req: HttpRequest<AppState>
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims("build", "build") {
+        return From::from(e);
+    }
+    state
+        .db
+        .send(ListBuilds { })
+        .from_err()
+        .and_then(move |res| match res {
+            Ok(builds) => {
+                Ok(HttpResponse::Ok().json(builds))
+            },
+            Err(e) => Ok(e.error_response())
+        })
+        .responder()
+}
+
 
 #[derive(Deserialize)]
 pub struct BuildPathParams {

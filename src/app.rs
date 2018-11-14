@@ -70,7 +70,8 @@ pub fn create_app(
                 .middleware(TokenParser::new(&config.secret))
                 .resource("/token_subset", |r| r.method(Method::POST).with(api::token_subset))
                 .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::POST).with(api::get_job)})
-                .resource("/build", |r| r.method(Method::POST).with(api::create_build))
+                .resource("/build", |r| { r.method(Method::POST).with(api::create_build);
+                                          r.method(Method::GET).with(api::builds) })
                 .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
                 .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
                 .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })

@@ -18,10 +18,14 @@ pub struct Build {
     pub id: i32,
     pub created: chrono::NaiveDateTime,
     pub repo_state: i16,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub repo_state_reason: Option<String>,
     pub published_state: i16,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub published_state_reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub commit_job_id: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_job_id: Option<i32>,
 
 }
@@ -172,6 +176,7 @@ pub struct Job {
     pub kind: i16,
     pub status: i16,
     pub contents: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<serde_json::Value>,
     pub log: String,
 }

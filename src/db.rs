@@ -206,6 +206,31 @@ impl Handler<LookupBuildRefs> for DbExecutor {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct ListBuilds {
+}
+
+impl Message for ListBuilds {
+    type Result = Result<Vec<models::Build>, ApiError>;
+}
+
+impl Handler<ListBuilds> for DbExecutor {
+    type Result = Result<Vec<models::Build>, ApiError>;
+
+    fn handle(&mut self, _msg: ListBuilds, _: &mut Self::Context) -> Self::Result {
+        use schema::builds::dsl::*;
+        let conn = &self.0.get().unwrap();
+        let (val, _) = RepoState::Purged.to_db();
+        builds
+            .filter(repo_state.ne(val))
+            .get_results::<models::Build>(conn)
+            .map_err(|e| {
+                From::from(e)
+            })
+    }
+}
+
+
+#[derive(Deserialize, Debug)]
 pub struct StartCommitJob {
     pub id: i32,
     pub endoflife: Option<String>,
