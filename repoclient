@@ -151,19 +151,28 @@ def local_needed_metadata(repo, commits):
                 local_needed_metadata_dirtree(repo, objects, d.out_content_checksum, d.out_meta_checksum)
     return objects
 
+
+def chunks(l, n):
+    """Yield successive n-sized chunks from l."""
+    for i in range(0, len(l), n):
+        yield l[i:i + n]
+
 async def missing_objects(session, build_url, token, wanted):
-    wanted_json=json.dumps({'wanted': wanted}).encode('utf-8')
-    data=gzip.compress(wanted_json)
-    headers = {
-        'Authorization': 'Bearer ' + token,
-        'Content-Encoding': 'gzip',
-        'Content-Type': 'application/json'
-    }
-    async with session.get(build_url + "/missing_objects", data=data, headers=headers) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        data = await resp.json()
-        return data["missing"];
+    missing=[]
+    for chunk in chunks(wanted, 2000):
+        wanted_json=json.dumps({'wanted': chunk}).encode('utf-8')
+        data=gzip.compress(wanted_json)
+        headers = {
+            'Authorization': 'Bearer ' + token,
+            'Content-Encoding': 'gzip',
+            'Content-Type': 'application/json'
+        }
+        async with session.get(build_url + "/missing_objects", data=data, headers=headers) as resp:
+            if resp.status != 200:
+                raise ApiError(resp, await resp.json())
+            data = await resp.json()
+            missing.extend(data["missing"])
+    return missing
 
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:
