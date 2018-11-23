@@ -14,6 +14,7 @@ use jobs::{JobQueue};
 pub struct Claims {
     pub sub: String, // "build", "build/N"
     pub scope: Vec<String>, // "build", "upload" "publish"
+    pub prefix: Option<Vec<String>>,
     pub name: String, // for debug/logs only
     pub exp: i64,
 }

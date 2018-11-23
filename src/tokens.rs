@@ -11,6 +11,7 @@ pub trait ClaimsValidator {
     fn validate_claims<Func>(&self, func: Func) -> bool
         where Func: Fn(&Claims) -> bool;
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
+    fn has_token_prefix(&self, id: &str) -> Result<(), ApiError>;
 }
 
 pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
@@ -24,6 +25,23 @@ pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
         }
     };
     false
+}
+
+pub fn id_matches_prefix(id: &str, prefix: &str) -> bool {
+    if prefix == "" {
+        return true
+    }
+    if id.starts_with(prefix) {
+        let rest = &id[prefix.len()..];
+        if rest.len() == 0 || rest.starts_with(".") {
+            return true
+        }
+    };
+    false
+}
+
+pub fn id_matches_one_prefix(id: &str, prefixes: &Vec<String>) -> bool {
+    prefixes.iter().any(|prefix| id_matches_prefix(id, prefix))
 }
 
 impl<S> ClaimsValidator for HttpRequest<S> {
@@ -48,6 +66,21 @@ impl<S> ClaimsValidator for HttpRequest<S> {
                 //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
                 if sub_has_prefix(required_sub, &claims.sub) {
                     claims.scope.contains(&required_scope.to_string())
+                } else {
+                    false
+                }
+            }) {
+            Ok(())
+        } else {
+            Err(ApiError::NotEnoughPermissions)
+        }
+    }
+
+    fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
+        if self.validate_claims(
+            |claims| {
+                if let Some(prefixes) = &claims.prefix {
+                    id_matches_one_prefix(id, &prefixes)
                 } else {
                     false
                 }

@@ -27,12 +27,22 @@ pub struct TokenSubsetArgs {
     sub: String,
     scope: Vec<String>,
     duration: i64,
+    prefix: Option<Vec<String>>,
     name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenSubsetResponse {
     token: String,
+}
+
+pub fn prefix_is_subset(maybe_subset_prefix: &Option<Vec<String>>, maybe_claimed_prefix: &Option<Vec<String>>) -> bool {
+    match (maybe_subset_prefix, maybe_claimed_prefix)  {
+        (Some(subset_prefix), Some(claimed_prefix)) =>
+            subset_prefix.iter().all(|s| tokens::id_matches_one_prefix(s, &claimed_prefix)),
+        (Some(_), None) => false,
+        (None, _) => true,
+    }
 }
 
 pub fn token_subset(
@@ -44,11 +54,13 @@ pub fn token_subset(
         let new_exp = Utc::now().timestamp().saturating_add(i64::max(args.duration, 0));
         if new_exp <= claims.exp &&
             tokens::sub_has_prefix (&args.sub, &claims.sub) &&
-            args.scope.iter().all(|s| claims.scope.contains(s)) {
+            args.scope.iter().all(|s| claims.scope.contains(s)) &&
+            prefix_is_subset(&args.prefix, &claims.prefix) {
                 let new_claims = Claims {
                     sub: args.sub.clone(),
                     scope: args.scope.clone(),
                     name: claims.name + "/" + &args.name,
+                    prefix: args.prefix.clone(),
                     exp: new_exp,
                 };
                 return match jwt::encode(&jwt::Header::default(), &new_claims, &state.config.secret) {
@@ -239,6 +251,28 @@ pub fn create_build_ref (
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return From::from(e);
     }
+
+    let ref_parts: Vec<&str> = args.ref_name.split('/').collect();
+
+    match ref_parts[0] {
+        "screenshots" => {
+            if ref_parts.len() != 2 {
+                return From::from(ApiError::BadRequest(format!("Invalid ref_name {}", args.ref_name)))
+            }
+        },
+        "app" | "runtime" => {
+            if ref_parts.len() != 4 {
+                return From::from(ApiError::BadRequest(format!("Invalid ref_name {}", args.ref_name)))
+            }
+            if let Err(e) = req.has_token_prefix(ref_parts[1]) {
+                return From::from(e);
+            }
+        },
+        _  => {
+            return From::from(ApiError::BadRequest(format!("Invalid ref_name {}", args.ref_name)))
+        }
+    };
+
     state
         .db
         .send(CreateBuildRef {
