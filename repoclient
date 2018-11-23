@@ -391,6 +391,7 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true',
                         help='enable debugging output')
     parser.add_argument('--token', help='use this token')
+    parser.add_argument('--token-file', help='use token from file')
     subparsers = parser.add_subparsers(title='subcommands',
                                        dest='subparser_name',
                                        description='valid subcommands',
@@ -456,10 +457,13 @@ if __name__ == '__main__':
         exit(1)
 
     if not args.token:
-        if "REPO_TOKEN" in os.environ:
+        if args.token_file:
+            file = open(args.token_file, 'rb')
+            args.token = file.read().splitlines()[0].decode("utf-8").strip()
+        elif "REPO_TOKEN" in os.environ:
             args.token = os.environ["REPO_TOKEN"]
         else:
-            print("No token available, pass with --token or $REPO_TOKEN")
+            print("No token available, pass with --token, --token-file or $REPO_TOKEN")
             exit(1)
 
     loop = asyncio.get_event_loop()
