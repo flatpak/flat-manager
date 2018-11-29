@@ -333,10 +333,13 @@ async def push_command(args, session):
         print("Can't open repo %s: %s" % (args.repo_path, err.message))
         return 1
 
+    refs = {}
     if len(args.branches) == 0:
-        _, refs = local_repo.list_refs(None, None)
+        _, all_refs = local_repo.list_refs(None, None)
+        for ref in all_refs:
+            if ref.startswith("app/") or ref.startswith("runtime/") or branch.startswith("screenshots/"):
+                refs[ref] = all_refs[ref]
     else:
-        refs = {}
         for branch in args.branches:
             _, rev = local_repo.resolve_rev(branch, False)
             refs[branch] = rev
