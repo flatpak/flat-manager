@@ -25,6 +25,7 @@ import sys
 import traceback
 import urllib.parse
 import yarl
+import errno
 
 from aiohttp.abc import AbstractStreamWriter
 from argparse import ArgumentParser
@@ -220,27 +221,52 @@ async def get_build(session, build_url, token):
 async def wait_for_job(session, job_url, token):
     old_job_status  = 0
     printed_len = 0
+    iterations_since_change=0
     while True:
-        async with session.get(job_url, headers={'Authorization': 'Bearer ' + token}) as resp:
-            if resp.status != 200:
-                raise ApiError(resp, await resp.json())
-            job = await resp.json()
-            job_status = job['status']
-            if job_status > 0 and old_job_status == 0:
-                print("/ Job was started");
-            old_job_status = job_status
-            log = job['log']
-            if len(log) > printed_len:
-                for line in log[printed_len:].splitlines(True):
-                    print("| %s" % line, end="")
-                printed_len = len(log)
-            if job_status > 1:
-                if job_status == 2:
-                    print("\ Job completed successfully")
+        try:
+            async with session.get(job_url, headers={'Authorization': 'Bearer ' + token}) as resp:
+                if resp.status != 200:
+                    raise ApiError(resp, await resp.json())
+                job = await resp.json()
+                job_status = job['status']
+                if job_status > 0 and old_job_status == 0:
+                    print("/ Job was started");
+                old_job_status = job_status
+                log = job['log']
+                if len(log) > printed_len:
+                    iterations_since_change=0
+                    for line in log[printed_len:].splitlines(True):
+                        print("| %s" % line, end="")
+                    printed_len = len(log)
                 else:
-                    print("\ Job failed")
-                return job
-            await asyncio.sleep(1)
+                    iterations_since_change=iterations_since_change+1
+                if job_status > 1:
+                    if job_status == 2:
+                        print("\ Job completed successfully")
+                    else:
+                        print("\ Job failed")
+                    return job
+        except OSError as e:
+            if e.args[0] == errno.ECONNRESET:
+                # Client disconnected, retry
+                # Not sure exactly why, but i got this a lot in tests
+                # I guess the server stops reusing a http2 session after a bit
+                # Should be fine to retry
+                pass
+            else:
+                raise
+        # Some polling backoff to avoid loading the server
+        if iterations_since_change <= 1:
+            sleep_time=1
+        elif iterations_since_change < 5:
+            sleep_time=3
+        elif iterations_since_change < 15:
+            sleep_time=5
+        elif iterations_since_change < 30:
+            sleep_time=10
+        else:
+            sleep_time=60
+        await asyncio.sleep(sleep_time)
 
 async def commit_build(session, build_url, wait, token):
     print("Commiting build %s" % (build_url))
