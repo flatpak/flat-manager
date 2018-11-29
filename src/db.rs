@@ -260,7 +260,7 @@ impl Handler<StartCommitJob> for DbExecutor {
                     contents: json!(CommitJob {
                         build: msg.id,
                         endoflife: msg.endoflife
-                    }),
+                    }).to_string(),
                 })
                 .get_result::<Job>(conn)?;
             diesel::update(schema::builds::table)
@@ -316,7 +316,7 @@ impl Handler<StartPublishJob> for DbExecutor {
                     kind: JobKind::Publish.to_db(),
                     contents: json!(PublishJob {
                         build: msg.id,
-                    }),
+                    }).to_string(),
                 })
                 .get_result::<Job>(conn)?;
             diesel::update(schema::builds::table)

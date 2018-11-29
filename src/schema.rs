@@ -32,8 +32,8 @@ table! {
         id -> Int4,
         kind -> Int2,
         status -> Int2,
-        contents -> Jsonb,
-        results -> Nullable<Jsonb>,
+        contents -> Text,
+        results -> Nullable<Text>,
         log -> Text,
     }
 }

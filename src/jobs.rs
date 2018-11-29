@@ -556,7 +556,7 @@ fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32
 fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
     let handler_res = match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => {
-            if let Ok(commit_job) = serde_json::from_value::<CommitJob>(job.contents.clone()) {
+            if let Ok(commit_job) = serde_json::from_str::<CommitJob>(&job.contents) {
                 info!("Handling Commit Job {}: {:?}", job.id, commit_job);
                 handle_commit_job (executor, conn, job.id, &commit_job)
             } else {
@@ -564,7 +564,7 @@ fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
             }
         },
         Some(JobKind::Publish) => {
-            if let Ok(publish_job) = serde_json::from_value::<PublishJob>(job.contents.clone()) {
+            if let Ok(publish_job) = serde_json::from_str::<PublishJob>(&job.contents) {
                 info!("Handling Publish Job {}: {:?}", job.id, publish_job);
                 handle_publish_job (executor, conn, job.id, &publish_job)
             } else {
@@ -576,10 +576,10 @@ fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
         }
     };
     let (new_status, new_results) = match handler_res {
-        Ok(json) =>  (JobStatus::Ended, json),
+        Ok(json) =>  (JobStatus::Ended, json.to_string()),
         Err(e) => {
             error!("Job {} failed: {}", job.id, e.to_string());
-            (JobStatus::Broken, json!(e.to_string()))
+            (JobStatus::Broken, json!(e.to_string()).to_string())
         }
     };
     let update_res =

@@ -2,7 +2,6 @@ use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool};
 use std::mem;
-use serde_json;
 
 use chrono;
 use schema::{ builds, build_refs, jobs, job_dependencies };
@@ -167,7 +166,7 @@ impl JobKind {
 #[table_name = "jobs"]
 pub struct NewJob {
     pub kind: i16,
-    pub contents: serde_json::Value,
+    pub contents: String,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
@@ -175,9 +174,9 @@ pub struct Job {
     pub id: i32,
     pub kind: i16,
     pub status: i16,
-    pub contents: serde_json::Value,
+    pub contents: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub results: Option<serde_json::Value>,
+    pub results: Option<String>,
     pub log: String,
 }
 

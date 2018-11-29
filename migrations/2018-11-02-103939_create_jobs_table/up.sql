@@ -2,8 +2,8 @@ CREATE TABLE jobs (
     id SERIAL PRIMARY KEY,
     kind SMALLINT NOT NULL DEFAULT 0,
     status SMALLINT NOT NULL DEFAULT 0, -- 0 == unstarted, 1 == in progress, 2 == completed, 2 == broken
-    contents jsonb NOT NULL,
-    results jsonb,
+    contents TEXT NOT NULL,
+    results TEXT,
     log TEXT NOT NULL DEFAULT ''
 );
 
