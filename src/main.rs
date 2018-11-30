@@ -6,6 +6,7 @@ extern crate actix_web;
 extern crate base64;
 extern crate chrono;
 #[macro_use] extern crate diesel;
+#[macro_use] extern crate diesel_migrations;
 extern crate dotenv;
 extern crate env_logger;
 #[macro_use] extern crate failure;
@@ -24,7 +25,7 @@ use actix::prelude::*;
 use actix::{Actor, actors::signal};
 use actix_web::{server, server::StopServer};
 use diesel::prelude::*;
-use diesel::r2d2::ConnectionManager;
+use diesel::r2d2::{ConnectionManager, ManageConnection};
 use dotenv::dotenv;
 use std::env;
 use std::io;
@@ -119,6 +120,8 @@ fn load_gpg_key (maybe_gpg_key: &Option<String>, maybe_gpg_homedir: &Option<Stri
     }
 }
 
+embed_migrations!();
+
 fn main() {
     ::std::env::set_var("RUST_LOG", "info");
     env_logger::init();
@@ -155,6 +158,12 @@ fn main() {
 
 
     let manager = ConnectionManager::<PgConnection>::new(database_url.clone());
+
+    {
+        let conn = manager.connect().unwrap();
+        embedded_migrations::run_with_output(&conn, &mut std::io::stdout()).unwrap();
+    }
+
     let pool = r2d2::Pool::builder()
         .build(manager)
         .expect("Failed to create pool.");
