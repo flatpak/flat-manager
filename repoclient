@@ -65,14 +65,13 @@ class NamedFilePayload(aiohttp.payload.Payload):
 
         self._size = os.stat(value).st_size
 
-    @asyncio.coroutine
-    def write(self, writer):
+    async def write(self, writer: AbstractStreamWriter) -> None:
         if self._file is None:
             self._file = open(self._value, 'rb')
         try:
             chunk = self._file.read(DEFAULT_LIMIT)
             while chunk:
-                yield from writer.write(chunk)
+                await writer.write(chunk)
                 chunk = self._file.read(DEFAULT_LIMIT)
         finally:
             self._file.close()
