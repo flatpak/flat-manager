@@ -14,8 +14,7 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-import aiohttp
-import asyncio
+import requests
 import gzip
 import json
 import logging
@@ -26,18 +25,16 @@ import traceback
 import urllib.parse
 import yarl
 import errno
+import time
 
-from aiohttp.abc import AbstractStreamWriter
 from argparse import ArgumentParser
-from multidict import CIMultiDict
-from typing import (Any, Optional)
 from functools import reduce
 
 import gi
 gi.require_version('OSTree', '1.0')
 from gi.repository import GLib, Gio, OSTree
 
-UPLOAD_CHUNK_LIMIT = 2 * 1024 * 1024
+UPLOAD_CHUNK_LIMIT = 4 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
 
 class ApiError(Exception):
@@ -45,41 +42,24 @@ class ApiError(Exception):
         self.response = response
         self.body = body
     def __str__(self):
-         return "API call %s to %s returned status %s: %s: %s" % (self.response.method, self.response.url, self.response.status, self.response.reason, self.body)
+        return "API call %s returned status %s: %s: %s" % (self.response.url, self.response.status_code, self.response.reason, self.body)
 
 # This is similar to the regular payload, but opens the file lazily
-class NamedFilePayload(aiohttp.payload.Payload):
-    def __init__(self,
-                 value: str,
-                 disposition: str='attachment',
-                 *args: Any,
-                 **kwargs: Any) -> None:
-        self._file = None
-        if 'filename' not in kwargs:
-            kwargs['filename'] = os.path.basename(value)
+class NamedFilePart:
+    def __init__(self, filename, objectname):
+        self.filename = filename
+        self.objectname = objectname
+        self._size = None
 
-        super().__init__(value, *args, **kwargs)
-
-        if self._filename is not None and disposition is not None:
-            self.set_content_disposition(disposition, filename=self._filename)
-
-        self._size = os.stat(value).st_size
-
-    async def write(self, writer: AbstractStreamWriter) -> None:
-        if self._file is None:
-            self._file = open(self._value, 'rb')
-        try:
-            chunk = self._file.read(DEFAULT_LIMIT)
-            while chunk:
-                await writer.write(chunk)
-                chunk = self._file.read(DEFAULT_LIMIT)
-        finally:
-            self._file.close()
-
-    @property
-    def size(self) -> Optional[float]:
+    def size(self):
+        if self._size is None:
+            self._size = os.stat(self.filename).st_size
         return self._size
 
+    def add_to_dict(self, file_dict):
+        with open(self.filename, 'rb') as content_file:
+            content = content_file.read()
+            file_dict[self.objectname] = (self.objectname, content, 'application/octet-stream')
 
 def ostree_object_path(repo, obj):
     repodir = repo.get_path().get_path()
@@ -158,7 +138,7 @@ def chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
-async def missing_objects(session, build_url, token, wanted):
+def missing_objects(session, build_url, token, wanted):
     missing=[]
     for chunk in chunks(wanted, 2000):
         wanted_json=json.dumps({'wanted': chunk}).encode('utf-8')
@@ -168,93 +148,96 @@ async def missing_objects(session, build_url, token, wanted):
             'Content-Encoding': 'gzip',
             'Content-Type': 'application/json'
         }
-        async with session.get(build_url + "/missing_objects", data=data, headers=headers) as resp:
-            if resp.status != 200:
-                raise ApiError(resp, await resp.json())
-            data = await resp.json()
-            missing.extend(data["missing"])
+        resp = session.get(build_url + "/missing_objects", data=data, headers=headers)
+        if resp.status_code != 200:
+            raise ApiError(resp, resp.json())
+        data = resp.json()
+        missing.extend(data["missing"])
     return missing
 
-async def upload_files(session, build_url, token, files):
+def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
-    print("Uploading %d objects (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size, files))))
-    with aiohttp.MultipartWriter() as writer:
-        for f in files:
-            writer.append(f)
-    writer.headers['Authorization'] = 'Bearer ' + token
-    resp = await session.request("post", build_url + '/upload',
-                                 data=writer, headers=writer.headers)
-    if resp.status != 200:
-        raise ApiError(resp, await resp.json())
+    print("Uploading %d objects (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size(), files))))
+    file_dict = {}
+    for f in files:
+        f.add_to_dict(file_dict)
+    resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
 
-async def upload_objects(session, repo_path, build_url, token, objects):
+def upload_objects(session, repo_path, build_url, token, objects):
     req = []
     total_size = 0
     for file_obj in objects:
         named = get_object_multipart(repo_path, file_obj)
-        total_size = total_size + named.size
-        req.append(named);
+        file_size = named.size()
+        if total_size + file_size > UPLOAD_CHUNK_LIMIT: # The new object would bring us over the chunk limit
+            if len(req) > 0: # We already have some objects, upload those first
+                next_req = [named]
+                total_size = file_size
+            else:
+                next_req  =  []
+                req.append(named)
+                total_size = 0
+            upload_files(session, build_url, token, req)
+            req = next_req
+        else:
+            total_size = total_size + file_size
+            req.append(named);
 
-        if total_size > UPLOAD_CHUNK_LIMIT:
-            await upload_files(session, build_url, token, req)
-            req = []
-            total_size = 0
+    # Upload any remainder
+    upload_files(session, build_url, token, req)
 
-    await upload_files(session, build_url, token, req)
-
-async def create_ref(session, build_url, token, ref, commit):
+def create_ref(session, build_url, token, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
-    async with session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + args.token}, json= { "ref": ref, "commit": commit} ) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        data = await resp.json()
-        return data;
+    resp = session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + args.token}, json= { "ref": ref, "commit": commit} )
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    data = resp.json()
+    return data;
 
-async def get_build(session, build_url, token):
-    async with session.get(build_url, headers={'Authorization': 'Bearer ' + token}) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        data = await resp.json()
-        return data
+def get_build(session, build_url, token):
+    resp = session.get(build_url, headers={'Authorization': 'Bearer ' + token})
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    data = resp.json()
+    return data
 
-async def wait_for_job(session, job_url, token):
+def wait_for_job(session, job_url, token):
     old_job_status  = 0
     printed_len = 0
     iterations_since_change=0
     while True:
         try:
-            async with session.get(job_url, headers={'Authorization': 'Bearer ' + token}) as resp:
-                if resp.status != 200:
-                    raise ApiError(resp, await resp.json())
-                job = await resp.json()
-                job_status = job['status']
-                if job_status > 0 and old_job_status == 0:
-                    print("/ Job was started");
-                old_job_status = job_status
-                log = job['log']
-                if len(log) > printed_len:
-                    iterations_since_change=0
-                    for line in log[printed_len:].splitlines(True):
-                        print("| %s" % line, end="")
-                    printed_len = len(log)
-                else:
-                    iterations_since_change=iterations_since_change+1
-                if job_status > 1:
-                    if job_status == 2:
-                        print("\ Job completed successfully")
-                    else:
-                        print("\ Job failed")
-                    return job
-        except OSError as e:
-            if e.args[0] == errno.ECONNRESET:
-                # Client disconnected, retry
-                # Not sure exactly why, but i got this a lot in tests
-                # I guess the server stops reusing a http2 session after a bit
-                # Should be fine to retry
-                pass
+            resp = session.get(job_url, headers={'Authorization': 'Bearer ' + token})
+            if resp.status_code != 200:
+                raise ApiError(resp, resp.json())
+            job = resp.json()
+            job_status = job['status']
+            if job_status > 0 and old_job_status == 0:
+                print("/ Job was started");
+            old_job_status = job_status
+            log = job['log']
+            if len(log) > printed_len:
+                iterations_since_change=0
+                for line in log[printed_len:].splitlines(True):
+                    print("| %s" % line, end="")
+                printed_len = len(log)
             else:
-                raise
+                iterations_since_change=iterations_since_change+1
+            if job_status > 1:
+                if job_status == 2:
+                    print("\ Job completed successfully")
+                else:
+                    print("\ Job failed")
+                return job
+        except requests.exceptions.ConnectionError as e:
+            # Client disconnected, retry
+            # Not sure exactly why, but i got a lot of ConnectionResetErrors here
+            # in tests. I guess the server stops reusing a http2 session after a bit
+            # Should be fine to retry with the backof
+            pass
         # Some polling backoff to avoid loading the server
         if iterations_since_change <= 1:
             sleep_time=1
@@ -266,66 +249,67 @@ async def wait_for_job(session, job_url, token):
             sleep_time=10
         else:
             sleep_time=60
-        await asyncio.sleep(sleep_time)
+        time.sleep(sleep_time)
 
-async def commit_build(session, build_url, wait, token):
+def commit_build(session, build_url, wait, token):
     print("Commiting build %s" % (build_url))
-    async with session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        job = await resp.json()
-        job_url = resp.headers['location'];
-        print("job: %s" % job)
-        if wait:
-            print("Waiting for commit job")
-            job = await wait_for_job (session, job_url, token);
-        return job
+    resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} )
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    job = resp.json()
+    job_url = resp.headers['location'];
+    print("job: %s" % job)
+    if wait:
+        print("Waiting for commit job")
+        job = wait_for_job (session, job_url, token);
+    return job
 
-async def publish_build(session, build_url, wait, token):
+def publish_build(session, build_url, wait, token):
     print("Publishing build %s" % (build_url))
-    async with session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        job = await resp.json()
-        job_url = resp.headers['location'];
-        if wait:
-            print("Waiting for publish job")
-            job = await wait_for_job (session, job_url, token);
-        return job;
+    resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= {} )
+    if resp.status_code != 200:
+        print ("resp.json(): ", resp.json())
+        raise ApiError(resp, resp.json())
+    job = resp.json()
+    job_url = resp.headers['location'];
+    if wait:
+        print("Waiting for publish job")
+        job = wait_for_job (session, job_url, token);
+    return job;
 
-async def purge_build(session, build_url, token):
+def purge_build(session, build_url, token):
     print("Purging build %s" % (build_url))
-    async with session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} ) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        return await resp.json()
+    resp = session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    return resp.json()
 
-async def create_token(session, manager_url, token, name, subject, scope, duration):
+def create_token(session, manager_url, token, name, subject, scope, duration):
     token_url = yarl.URL(manager_url).with_path("/api/v1/token_subset")
-    async with session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
-            "name": name,
-            "sub": subject,
-            "scope": scope,
-            "duration": duration,
-    } ) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        data = await resp.json()
-        return data["token"]
+    resp = session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
+        "name": name,
+        "sub": subject,
+        "scope": scope,
+        "duration": duration,
+    } )
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    data = resp.json()
+    return data["token"]
 
 def get_object_multipart(repo_path, object):
-    return NamedFilePayload(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
+    return NamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], object)
 
-async def create_command(args, session):
+def create_command(args, session):
     build_url = yarl.URL(args.manager_url).with_path("/api/v1/build")
-    async with session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={} ) as resp:
-        if resp.status != 200:
-            raise ApiError(resp, await resp.json())
-        data = await resp.json()
-        print(resp.headers['location'])
+    resp = session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={} )
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    data = resp.json()
+    print(resp.headers['location'])
+    return 0
 
-
-async def push_command(args, session):
+def push_command(args, session):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
         local_repo.open(None)
@@ -346,7 +330,7 @@ async def push_command(args, session):
 
     if (args.minimal_token):
         id = yarl.URL(args.build_url).parts[-1]
-        token = await create_token(session, args.build_url, args.token, "minimal-upload", "build/%s" % (id), ["upload"], 60*60)
+        token = create_token(session, args.build_url, args.token, "minimal-upload", "build/%s" % (id), ["upload"], 60*60)
     else:
         token = args.token
 
@@ -356,60 +340,51 @@ async def push_command(args, session):
 
     print("Refs contain %d metadata objects" % (len(metadata_objects)))
 
-    missing_metadata_objects = await missing_objects(session, args.build_url, token, list(metadata_objects))
+    missing_metadata_objects = missing_objects(session, args.build_url, token, list(metadata_objects))
 
     print("Remote missing %d of those" % (len(missing_metadata_objects)))
 
     file_objects = local_needed_files(local_repo, missing_metadata_objects)
     print("Has %d file objects for those" % (len(file_objects)))
 
-    missing_file_objects = await missing_objects(session, args.build_url, token, list(file_objects))
+    missing_file_objects = missing_objects(session, args.build_url, token, list(file_objects))
     print("Remote missing %d of those" % (len(missing_file_objects)))
 
     # First upload all missing file objects
     print("Uploading file objects")
-    await upload_objects(session, args.repo_path, args.build_url, token, missing_file_objects)
+    upload_objects(session, args.repo_path, args.build_url, token, missing_file_objects)
 
     # Then all the metadata
     print("Uploading metadata objects")
-    await upload_objects(session, args.repo_path, args.build_url, token, missing_metadata_objects)
+    upload_objects(session, args.repo_path, args.build_url, token, missing_metadata_objects)
 
     # Then the refs
     for ref, commit in refs.items():
-        await create_ref(session, args.build_url, token, ref, commit)
+        create_ref(session, args.build_url, token, ref, commit)
 
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
-        await commit_build(session, args.build_url, args.publish or args.wait, args.token)
+        commit_build(session, args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
-        await publish_build(session, args.build_url, args.wait, args.token)
+        publish_build(session, args.build_url, args.wait, args.token)
 
-async def commit_command(args, session):
-    await commit_build(session, args.build_url, args.wait, args.token)
+def commit_command(args, session):
+    commit_build(session, args.build_url, args.wait, args.token)
+    return 0
 
-async def publish_command(args, session):
-    await publish_build(session, args.build_url, args.wait, args.token)
+def publish_command(args, session):
+    publish_build(session, args.build_url, args.wait, args.token)
+    return 0
 
-async def purge_command(args, session):
-    await purge_build(session, args.build_url, args.token)
+def purge_command(args, session):
+    purge_build(session, args.build_url, args.token)
+    return 0
 
-async def create_token_command(args, session):
-    new_token = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
+def create_token_command(args, session):
+    new_token = create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
     print(new_token)
-
-async def run_with_session(args):
-    async with aiohttp.ClientSession() as session:
-        res = 1
-        try:
-            res = await args.func(args, session)
-        except SystemExit:
-            raise # Pass on regular exit callse
-        except:
-            print("\n\nUnexpected error in %s:" % (args.subparser_name))
-            traceback.print_exc()
-        exit(res)
-
+    return 0
 
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
@@ -495,5 +470,14 @@ if __name__ == '__main__':
             print("No token available, pass with --token, --token-file or $REPO_TOKEN")
             exit(1)
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_with_session(args))
+
+    session = requests.Session()
+    res = 1
+    try:
+        res = args.func(args, session)
+    except SystemExit:
+        raise # Pass on regular exit callse
+    except:
+        print("\n\nUnexpected error in %s:" % (args.subparser_name))
+        traceback.print_exc()
+    exit(res)
