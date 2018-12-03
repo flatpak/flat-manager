@@ -22,8 +22,8 @@ import os
 import os
 import sys
 import traceback
-import urllib.parse
-import yarl
+from urllib.parse import urlparse
+from urllib.parse import urljoin
 import errno
 import time
 
@@ -285,7 +285,7 @@ def purge_build(session, build_url, token):
     return resp.json()
 
 def create_token(session, manager_url, token, name, subject, scope, duration):
-    token_url = yarl.URL(manager_url).with_path("/api/v1/token_subset")
+    token_url = urljoin(manager_url, "/api/v1/token_subset")
     resp = session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
         "name": name,
         "sub": subject,
@@ -301,7 +301,7 @@ def get_object_multipart(repo_path, object):
     return NamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], object)
 
 def create_command(args, session):
-    build_url = yarl.URL(args.manager_url).with_path("/api/v1/build")
+    build_url = urljoin(args.manager_url, "/api/v1/build")
     resp = session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={} )
     if resp.status_code != 200:
         raise ApiError(resp, resp.json())
@@ -329,7 +329,7 @@ def push_command(args, session):
             refs[branch] = rev
 
     if (args.minimal_token):
-        id = yarl.URL(args.build_url).parts[-1]
+        id = os.path.basename(urlparse(args.build_url).path)
         token = create_token(session, args.build_url, args.token, "minimal-upload", "build/%s" % (id), ["upload"], 60*60)
     else:
         token = args.token
