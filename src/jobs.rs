@@ -36,16 +36,6 @@ impl Actor for JobExecutor {
     type Context = SyncContext<Self>;
 }
 
-fn get_collection_id (maybe_build_id: &Option<i32>, config: &Arc<Config>) -> Option<String> {
-    match &config.collection_id {
-        Some(collection_id) => match maybe_build_id {
-            Some(build_id) => Some(format!("{}.Build{}\n", collection_id, build_id)),
-            None => Some(collection_id.to_string()),
-        }
-        None => None,
-    }
-}
-
 fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &Arc<Config>) -> (String, String) {
     let parts: Vec<&str> = ref_name.split('/').collect();
 
@@ -61,11 +51,6 @@ fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &
         None => "".to_string(),
     };
 
-    let collection_id_line = match get_collection_id (&maybe_build_id, config) {
-        Some(collection_id) => format!("CollectionID={}\n", collection_id),
-        None => "".to_string(),
-    };
-
     let contents = format!(r#"
 [Flatpak Ref]
 Name={}
@@ -75,13 +60,12 @@ Url={}
 RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
 SuggestRemoteName=flathub
 IsRuntime=false
-{}{}"#,
+{}"#,
                            parts[1],
                            parts[3],
                            parts[1],
                            url,
-                           gpg_line,
-                           collection_id_line);
+                           gpg_line);
     (filename, contents)
 }
 
