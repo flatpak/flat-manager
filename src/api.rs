@@ -206,7 +206,7 @@ pub struct MissingObjectsResponse {
 
 fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 {
-    let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
+    let subpath: path::PathBuf = ["upload/objects", &object[..2], &object[2..]].iter().collect();
     let build_path = state.config.build_repo_base_path.join(build_id.to_string()).join(&subpath);
     if build_path.exists() {
         true
