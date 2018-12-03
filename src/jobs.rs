@@ -51,8 +51,8 @@ fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &
         None => "".to_string(),
     };
 
-    let contents = format!(r#"
-[Flatpak Ref]
+    let contents = format!(
+r#"[Flatpak Ref]
 Name={}
 Branch={}
 Title={} from flathub
@@ -83,8 +83,8 @@ fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf,
     }
 
     let mut file = File::create(repo_path.join("config"))?;
-    file.write_all(format!(r#"
-[core]
+    file.write_all(format!(
+r#"[core]
 repo_version=1
 mode=archive-z2
 {}parent={}"#,
