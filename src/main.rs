@@ -140,6 +140,8 @@ fn main() {
 
     let secret = base64::decode(&secret_base64).unwrap();
 
+    let bind_to = env::var("BIND_TO").unwrap_or("127.0.0.1:8080".to_string());
+
     let gpg_homedir = env::var("GPG_HOMEDIR").ok();
     let build_gpg_key = env::var("BUILD_GPG_KEY").ok();
     let main_gpg_key = env::var("MAIN_GPG_KEY").ok();
@@ -182,7 +184,7 @@ fn main() {
         app::create_app(db_addr.clone(), &config, jobs_addr_copy.clone())
     });
     let server_addr = http_server
-        .bind("127.0.0.1:8080")
+        .bind(&bind_to)
         .unwrap()
         .disable_signals()
         .start();
