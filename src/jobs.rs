@@ -85,7 +85,7 @@ IsRuntime=false
     (filename, contents)
 }
 
-fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf) -> io::Result<()> {
+fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
 
     for &d in ["extensions",
@@ -103,7 +103,11 @@ fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf)
 [core]
 repo_version=1
 mode=archive-z2
-parent={}"#,
+{}parent={}"#,
+                           match opt_collection_id {
+                               Some(collection_id) => format!("collection-id={}.Build{}\n", collection_id, build_id),
+                               _ => "".to_string(),
+                           },
                            parent_repo_absolute_path.display()).as_bytes())?;
     Ok(())
 }
@@ -243,8 +247,8 @@ fn do_commit_build_refs (job_id: i32,
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
-    init_ostree_repo (&build_repo_path, &config.repo_path)?;
-    init_ostree_repo (&upload_path, &config.repo_path)?;
+    init_ostree_repo (&build_repo_path, &config.repo_path, build_id, &config.collection_id)?;
+    init_ostree_repo (&upload_path, &config.repo_path, build_id, &None)?;
 
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&upload_path);
