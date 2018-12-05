@@ -1,6 +1,6 @@
 [package]
 name = "repo-manager"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
 # Needs nightly, so disable for now:
 # default-run = "repo-manager"
