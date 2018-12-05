@@ -9,6 +9,7 @@ use std::sync::Arc;
 use api;
 use tokens::{TokenParser};
 use jobs::{JobQueue};
+use actix_web::dev::FromParam;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -43,9 +44,13 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     let tail: String = req.match_info().query("tail")?;
     let id: String = req.match_info().query("id")?;
     let state = req.state();
-    let path = Path::new(&state.config.build_repo_base_path).join(&id).join(tail.trim_left_matches('/'));
+    // Strip out any "../.." or other unsafe things
+    let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
+    // The id won't have slashes, but it could have ".." or some other unsafe thing
+    let safe_id = PathBuf::from_param(&id)?;
+    let path = Path::new(&state.config.build_repo_base_path).join(&safe_id).join(&relpath);
     NamedFile::open(path).or_else(|_e| {
-        let fallback_path = Path::new(&state.config.repo_path).join(tail.trim_left_matches('/'));
+        let fallback_path = Path::new(&state.config.repo_path).join(relpath);
         Ok(NamedFile::open(fallback_path)?)
     })
 }
