@@ -1083,7 +1083,7 @@ dependencies = [
 
 [[package]]
 name = "repo-manager"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "actix 0.7.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "actix-net 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",

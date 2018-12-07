@@ -76,6 +76,11 @@ impl<S> ClaimsValidator for HttpRequest<S> {
         }
     }
 
+    /* A token prefix is something like org.my.App, and should allow
+     * you to create refs like org.my.App, org.my.App.Debug, and
+     * org.my.App.Some.Long.Thing. However, it should not allow
+     * org.my.AppSuffix.
+     */
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
         if self.validate_claims(
             |claims| {
