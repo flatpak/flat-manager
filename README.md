@@ -68,13 +68,6 @@ And create the 'repo' database owned by your user:
     sudo -u postgres createuser $(whoami)
     sudo -u postgres createdb --owner=$(whoami) repo
 
-You must the initialize the tables and resources needed
-by the service. This is done using the diesel cli app:
-
-    cargo install diesel_cli --no-default-features --features postgres
-    # At this point, ensure $HOME/.cargo/bin is in $PATH
-    diesel setup
-
 Repos
 -----
 
