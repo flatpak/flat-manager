@@ -26,7 +26,7 @@ pub struct Build {
     pub commit_job_id: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_job_id: Option<i32>,
-
+    pub repo: String,
 }
 
 #[derive(Deserialize, Debug,PartialEq)]
