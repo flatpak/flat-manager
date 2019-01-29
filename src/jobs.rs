@@ -6,11 +6,10 @@ use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::result::{Error as DieselError};
 use diesel;
 use serde_json;
-use std::env;
 use std::str;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{Read, Write};
 use std::path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc};
@@ -21,7 +20,7 @@ use std::os::unix::process::CommandExt;
 use libc;
 use std::collections::HashMap;
 
-use app::Config;
+use app::{RepoConfig, Config};
 use errors::{JobError, JobResult};
 use models::{Job, JobKind, CommitJob, PublishJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
 use models;
@@ -36,14 +35,24 @@ impl Actor for JobExecutor {
     type Context = SyncContext<Self>;
 }
 
-fn generate_flatpakref(ref_name: &String, maybe_build_id: Option<i32>, config: &Arc<Config>) -> (String, String) {
+fn generate_flatpakref(ref_name: &String,
+                       maybe_build_id: Option<i32>,
+                       build: &models::Build,
+                       config: &Arc<Config>,
+                       repoconfig: &RepoConfig) -> (String, String) {
     let parts: Vec<&str> = ref_name.split('/').collect();
 
     let filename = format!("{}.flatpakref", parts[1]);
 
     let (url, maybe_gpg_content) = match maybe_build_id {
         Some(build_id) => (format!("{}/build-repo/{}", config.base_url, build_id), &config.build_gpg_key_content),
-        None => (format!("{}/repo", config.base_url), &config.main_gpg_key_content),
+        None => (
+            match &repoconfig.base_url {
+                Some(base_url) => base_url.clone(),
+                None => format!("{}/repo/{}", config.base_url, build.repo)
+            },
+            &repoconfig.gpg_key_content
+        ),
     };
 
     let gpg_line = match maybe_gpg_content {
@@ -67,33 +76,6 @@ IsRuntime=false
                            url,
                            gpg_line);
     (filename, contents)
-}
-
-fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
-    let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
-
-    for &d in ["extensions",
-               "objects",
-               "refs/heads",
-               "refs/mirrors",
-               "refs/remotes",
-               "state",
-               "tmp/cache"].iter() {
-        fs::create_dir_all(repo_path.join(d))?;
-    }
-
-    let mut file = File::create(repo_path.join("config"))?;
-    file.write_all(format!(
-r#"[core]
-repo_version=1
-mode=archive-z2
-{}parent={}"#,
-                           match opt_collection_id {
-                               Some(collection_id) => format!("collection-id={}.Build{}\n", collection_id, build_id),
-                               _ => "".to_string(),
-                           },
-                           parent_repo_absolute_path.display()).as_bytes())?;
-    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -224,15 +206,14 @@ fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<
 
 fn do_commit_build_refs (job_id: i32,
                          build_id: i32,
+                         build: &models::Build,
                          build_refs: &Vec<models::BuildRef>,
                          endoflife: &Option<String>,
                          config: &Arc<Config>,
+                         repoconfig: &RepoConfig,
                          conn: &PgConnection)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
-
-    init_ostree_repo (&build_repo_path, &config.repo_path, build_id, &config.collection_id)?;
-    init_ostree_repo (&upload_path, &config.repo_path, build_id, &None)?;
 
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&upload_path);
@@ -274,7 +255,7 @@ fn do_commit_build_refs (job_id: i32,
         commits.insert(build_ref.ref_name.to_string(), commit);
 
         if build_ref.ref_name.starts_with("app/") {
-            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(build_id), config);
+            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(build_id), &build, config, repoconfig);
             let mut file = File::create(build_repo_path.join(filename))?;
             file.write_all(contents.as_bytes())?;
         }
@@ -344,19 +325,29 @@ fn list_ostree_refs (repo_path: &path::PathBuf, prefix: &str) ->JobResult<Vec<St
 
 
 fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job_id: i32, job: &CommitJob) -> JobResult<serde_json::Value> {
-    // Get the uploaded refs from db
+    // Get build details
+    let build_data = builds::table
+        .filter(builds::id.eq(job.build))
+        .get_result::<models::Build>(conn)
+        .or_else(|_e| Err(JobError::new("Can't load build")))?;
 
+    // Get repo config
+    let repoconfig = executor.config.get_repoconfig(&build_data.repo)
+        .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &build_data.repo))))?;
+
+    // Get the uploaded refs from db
     let build_refs = build_refs::table
         .filter(build_refs::build_id.eq(job.build))
         .get_results::<models::BuildRef>(conn)
         .or_else(|_e| Err(JobError::new("Can't load build refs")))?;
+
     if build_refs.len() == 0 {
         return Err(JobError::new("No refs in build"));
     }
 
     // Do the actual work
 
-    let res = do_commit_build_refs(job_id, job.build, &build_refs, &&job.endoflife, &executor.config, conn);
+    let res = do_commit_build_refs(job_id, job.build, &build_data, &build_refs, &job.endoflife, &executor.config, repoconfig, conn);
 
     // Update the build repo state in db
 
@@ -387,8 +378,10 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job_id: i32, 
 
 fn do_publish (job_id: i32,
                build_id: i32,
+               build: &models::Build,
                build_refs: &Vec<models::BuildRef>,
                config: &Arc<Config>,
+               repoconfig: &RepoConfig,
                conn: &PgConnection)  -> JobResult<serde_json::Value> {
     let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
 
@@ -402,33 +395,33 @@ fn do_publish (job_id: i32,
         .arg("build-commit-from")
         .arg("--no-update-summary"); // We update it separately
 
-    add_gpg_args(&mut cmd, &config.main_gpg_key, &config.gpg_homedir);
+    add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
 
     cmd
         .arg(&src_repo_arg)
-        .arg(&config.repo_path);
+        .arg(&repoconfig.path);
 
     let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
     if !success {
         return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
     }
 
-    let appstream_dir = config.repo_path.join("appstream");
+    let appstream_dir = repoconfig.path.join("appstream");
     fs::create_dir_all(&appstream_dir)?;
 
-    let screenshots_dir = config.repo_path.join("screenshots");
+    let screenshots_dir = repoconfig.path.join("screenshots");
     fs::create_dir_all(&screenshots_dir)?;
 
     let mut commits = HashMap::new();
     for build_ref in build_refs.iter() {
         println!("build_ref {:?}", build_ref);
         if build_ref.ref_name.starts_with("app/") || build_ref.ref_name.starts_with("runtime/") {
-            let commit = parse_ostree_ref(&config.repo_path, &build_ref.ref_name)?;
+            let commit = parse_ostree_ref(&repoconfig.path, &build_ref.ref_name)?;
             commits.insert(build_ref.ref_name.to_string(), commit);
         }
 
         if build_ref.ref_name.starts_with("app/") {
-            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config);
+            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, &build, config, repoconfig);
             info!("generating {}", filename);
             let mut file = File::create(appstream_dir.join(filename))?;
             file.write_all(contents.as_bytes())?;
@@ -462,10 +455,10 @@ fn do_publish (job_id: i32,
         .arg("build-update-repo")
         .arg("--generate-static-deltas");
 
-    add_gpg_args(&mut cmd, &config.main_gpg_key, &config.gpg_homedir);
+    add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
 
     cmd
-        .arg(&config.repo_path);
+        .arg(&repoconfig.path);
 
     let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
     if !success {
@@ -474,11 +467,11 @@ fn do_publish (job_id: i32,
 
     // TODO: PURGE summary and summary.sig files here
 
-    let appstream_arches = list_ostree_refs (&config.repo_path, "appstream")?;
+    let appstream_arches = list_ostree_refs (&repoconfig.path, "appstream")?;
     for arch in appstream_arches {
         let mut cmd = Command::new("ostree");
         cmd
-            .arg(&format!("--repo={}", &config.repo_path.to_str().unwrap()))
+            .arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
             .arg("checkout")
             .arg("--user-mode")
             .arg("--union")
@@ -494,8 +487,17 @@ fn do_publish (job_id: i32,
 }
 
 fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32, job: &PublishJob) -> JobResult<serde_json::Value> {
-    // Get the uploaded refs from db
+    // Get build details
+    let build_data = builds::table
+        .filter(builds::id.eq(job.build))
+        .get_result::<models::Build>(conn)
+        .or_else(|_e| Err(JobError::new("Can't load build")))?;
 
+    // Get repo config
+    let repoconfig = executor.config.get_repoconfig(&build_data.repo)
+        .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &build_data.repo))))?;
+
+    // Get the uploaded refs from db
     let build_refs = build_refs::table
         .filter(build_refs::build_id.eq(job.build))
         .get_results::<models::BuildRef>(conn)
@@ -505,8 +507,7 @@ fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32
     }
 
     // Do the actual work
-
-    let res = do_publish(job_id, job.build, &build_refs, &executor.config, conn);
+    let res = do_publish(job_id, job.build, &build_data, &build_refs, &executor.config, repoconfig, conn);
 
     // Update the publish repo state in db
 

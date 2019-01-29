@@ -1,15 +1,37 @@
 use actix::prelude::*;
-use actix_web::{self, fs, middleware};
+use actix_web::{self, middleware};
 use actix_web::{App, http::Method, HttpRequest, fs::NamedFile};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
 use std::sync::Arc;
+use std::collections::HashMap;
+use std::io;
+use std;
+use std::process::{Command};
+use serde;
+use serde::Deserialize;
+use base64;
 
+use errors::ApiError;
 use api;
 use tokens::{TokenParser};
 use jobs::{JobQueue};
 use actix_web::dev::FromParam;
+
+fn as_base64<S>(key: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where S: serde::Serializer
+{
+    serializer.serialize_str(&base64::encode(key))
+}
+
+fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where D: serde::Deserializer<'de>
+{
+    use serde::de::Error;
+    String::deserialize(deserializer)
+        .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -20,17 +42,103 @@ pub struct Claims {
     pub exp: i64,
 }
 
-pub struct Config {
-    pub repo_path: PathBuf,
-    pub build_repo_base_path: PathBuf,
-    pub base_url: String,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SubsetConfig {
+    #[serde(rename = "collection-id")]
+    pub collection_id: String,
+    #[serde(rename = "base-url")]
+    pub base_url: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RepoConfig {
+    pub path: PathBuf,
+    #[serde(rename = "collection-id")]
     pub collection_id: Option<String>,
+    #[serde(rename = "gpg-key")]
+    pub gpg_key: Option<String>,
+    #[serde(skip)]
+    pub gpg_key_content: Option<String>,
+    #[serde(rename = "base-url")]
+    pub base_url: Option<String>,
+    pub subsets: HashMap<String, SubsetConfig>,
+}
+
+fn default_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+fn default_port() -> i32 {
+    8080
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Config {
+    #[serde(rename = "database-url")]
+    pub database_url: String,
+    #[serde(rename = "host", default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: i32,
+    #[serde(rename = "base-url", default)]
+    pub base_url: String,
+    #[serde(rename = "gpg-homedir")]
     pub gpg_homedir: Option<String>,
-    pub build_gpg_key : Option<String>,
-    pub build_gpg_key_content : Option<String>,
-    pub main_gpg_key: Option<String>,
-    pub main_gpg_key_content: Option<String>,
+    #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
     pub secret: Vec<u8>,
+    pub repos: HashMap<String, RepoConfig>,
+    #[serde(rename = "build-repo-base")]
+    pub build_repo_base_path: PathBuf,
+    #[serde(rename = "build-gpg-key")]
+    pub build_gpg_key: Option<String>,
+    #[serde(skip)]
+    pub build_gpg_key_content: Option<String>,
+}
+
+impl Config {
+    pub fn get_repoconfig(&self, name: &str) -> Result<&RepoConfig, ApiError> {
+        self.repos.get(name).ok_or_else (|| ApiError::BadRequest("No such repo".to_string()))
+    }
+}
+
+
+fn load_gpg_key (maybe_gpg_homedir: &Option<String>, maybe_gpg_key: &Option<String>) -> io::Result<Option<String>> {
+    match maybe_gpg_key {
+        Some(gpg_key) => {
+            let mut cmd = Command::new("gpg2");
+            if let Some(gpg_homedir) = maybe_gpg_homedir {
+                cmd.arg(&format!("--homedir={}", gpg_homedir));
+            }
+            cmd
+                .arg("--export")
+                .arg(gpg_key);
+
+            let output = cmd.output()?;
+            if output.status.success() {
+                Ok(Some(base64::encode(&output.stdout)))
+            } else {
+                Err(io::Error::new(io::ErrorKind::Other, "gpg2 --export failed"))
+            }
+        },
+        None => Ok(None),
+    }
+}
+
+
+pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
+    let config_contents = std::fs::read_to_string(path)?;
+    let mut config_data: Config = serde_json::from_str(&config_contents).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
+    config_data.build_gpg_key_content = load_gpg_key (&config_data.gpg_homedir, &config_data.build_gpg_key)?;
+    for (_reponame, repoconfig) in &mut config_data.repos {
+        repoconfig.gpg_key_content = load_gpg_key (&config_data.gpg_homedir, &config_data.build_gpg_key)?;
+    }
+
+    if config_data.base_url == "" {
+        config_data.base_url = format!("http://{}:{}", config_data.host, config_data.port)
+    }
+
+    Ok(config_data)
 }
 
 #[derive(Clone)]
@@ -44,15 +152,27 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     let tail: String = req.match_info().query("tail")?;
     let id: String = req.match_info().query("id")?;
     let state = req.state();
+
     // Strip out any "../.." or other unsafe things
     let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
     // The id won't have slashes, but it could have ".." or some other unsafe thing
     let safe_id = PathBuf::from_param(&id)?;
     let path = Path::new(&state.config.build_repo_base_path).join(&safe_id).join(&relpath);
     NamedFile::open(path).or_else(|_e| {
-        let fallback_path = Path::new(&state.config.repo_path).join(relpath);
+        let fallback_path = Path::new(&state.config.build_repo_base_path).join(&safe_id).join("parent").join(&relpath);
         Ok(NamedFile::open(fallback_path)?)
     })
+}
+
+fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
+    let tail: String = req.match_info().query("tail")?;
+    let repo: String = req.match_info().query("repo")?;
+    let state = req.state();
+    let repoconfig = state.config.get_repoconfig(&repo)?;
+    // Strip out any "../.." or other unsafe things
+    let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
+    let path = Path::new(&repoconfig.path).join(relpath);
+    Ok(NamedFile::open(path)?)
 }
 
 pub fn create_app(
@@ -65,9 +185,6 @@ pub fn create_app(
         job_queue: job_queue.clone(),
         config: config.clone(),
     };
-
-    let repo_static_files = fs::StaticFiles::new(&state.config.repo_path)
-        .expect("failed constructing repo handler");
 
     App::with_state(state)
         .middleware(middleware::Logger::default())
@@ -94,5 +211,5 @@ pub fn create_app(
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
         })
-        .handler("/repo", repo_static_files)
+        .handler("/repo/{repo}/", |req: &HttpRequest<AppState>| handle_repo(req))
 }

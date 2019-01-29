@@ -134,6 +134,6 @@ we can just do it in a subdirectory:
 Then we can upload this to the repo by doing (assuming the default secret):
 
     export REPO_TOKEN=$(echo -n "secret" | base64 | cargo run --bin gentoken test)
-    ./repoclient push --commit $(./repoclient create http://127.0.0.1:8080) test-build/local-repo
+    ./repoclient push --commit $(./repoclient create http://127.0.0.1:8080 stable) test-build/local-repo
 
 This will create a new "build" upload the build to it and then "commit" the build.

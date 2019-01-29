@@ -1,0 +1,41 @@
+{
+    "repos": {
+        "stable": {
+            "path": "repo",
+            "collection-id": "org.test.Stable",
+            "gpg-key": null,
+            "base-url": null,
+            "subsets": {
+                "all": {
+                    "collection-id": "org.test.Stable",
+                    "base-url": null
+                },
+                "free": {
+                    "collection-id": "org.test.Stable.test",
+                    "base-url": null
+                }
+            }
+        },
+        "beta": {
+            "path": "beta-repo",
+            "collection-id": "org.test.Beta",
+            "gpg-key": null,
+            "subsets": {
+                "all": {
+                    "collection-id": "org.test.Stable",
+                    "base-url": null
+                },
+                "free": {
+                    "collection-id": "org.test.Stable.test",
+                    "base-url": null
+                }
+            }
+        }
+    },
+    "port": 8080,
+    "database-url": "postgres://%2Fvar%2Frun%2Fpostgresql/repo",
+    "build-repo-base": "build-repo",
+    "build-gpg-key": null,
+    "gpg-homedir": null,
+    "secret": "c2VjcmV0"
+}

@@ -5,8 +5,11 @@ use futures::prelude::*;
 use futures::future;
 use std::cell::RefCell;
 use std::clone::Clone;
+use std::env;
 use std::fs;
+use std::io;
 use std::io::Write;
+use std::os::unix;
 use std::path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,6 +24,35 @@ use models::{NewBuild,NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
 use jobs::ProcessJobs;
+
+fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
+    let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
+
+    for &d in ["extensions",
+               "objects",
+               "refs/heads",
+               "refs/mirrors",
+               "refs/remotes",
+               "state",
+               "tmp/cache"].iter() {
+        fs::create_dir_all(repo_path.join(d))?;
+    }
+
+    unix::fs::symlink(&parent_repo_absolute_path, repo_path.join("parent"))?;
+
+    let mut file = fs::File::create(repo_path.join("config"))?;
+    file.write_all(format!(
+r#"[core]
+repo_version=1
+mode=archive-z2
+{}parent={}"#,
+                           match opt_collection_id {
+                               Some(collection_id) => format!("collection-id={}.Build{}\n", collection_id, build_id),
+                               _ => "".to_string(),
+                           },
+                           parent_repo_absolute_path.display()).as_bytes())?;
+    Ok(())
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenSubsetArgs {
@@ -109,6 +141,13 @@ pub fn create_build(
     if let Err(e) = req.has_token_claims("build", "build") {
         return From::from(e);
     }
+
+    // Ensure the repo exists
+    let repoconfig = match state.config.get_repoconfig(&args.repo) {
+        Ok(repoconfig) => repoconfig,
+        Err(e) => return From::from(e)
+    }.clone();
+
     state
         .db
         .send(CreateBuild {
@@ -119,6 +158,12 @@ pub fn create_build(
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {
+                let build_repo_path = state.config.build_repo_base_path.join(build.id.to_string());
+                let upload_path = build_repo_path.join("upload");
+
+                init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
+                init_ostree_repo (&upload_path, &repoconfig.path, build.id, &None)?;
+
                 match req.url_for("show_build", &[build.id.to_string()]) {
                     Ok(url) => Ok(HttpResponse::Ok()
                                   .header(http::header::LOCATION, url.to_string())
@@ -216,13 +261,13 @@ pub struct MissingObjectsResponse {
 
 fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 {
-    let subpath: path::PathBuf = ["upload/objects", &object[..2], &object[2..]].iter().collect();
-    let build_path = state.config.build_repo_base_path.join(build_id.to_string()).join(&subpath);
+    let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
+    let build_path = state.config.build_repo_base_path.join(build_id.to_string()).join("upload").join(&subpath);
     if build_path.exists() {
         true
     } else {
-        let main_path = state.config.repo_path.join(&subpath);
-        main_path.exists()
+        let parent_path = state.config.build_repo_base_path.join(build_id.to_string()).join("parent").join(&subpath);
+        parent_path.exists()
     }
 }
 
