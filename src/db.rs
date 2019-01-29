@@ -10,6 +10,7 @@ use schema;
 
 #[derive(Deserialize, Debug)]
 pub struct CreateBuild {
+    pub data : NewBuild,
 }
 
 impl Message for CreateBuild {
@@ -19,11 +20,11 @@ impl Message for CreateBuild {
 impl Handler<CreateBuild> for DbExecutor {
     type Result = Result<Build, ApiError>;
 
-    fn handle(&mut self, _msg: CreateBuild, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: CreateBuild, _: &mut Self::Context) -> Self::Result {
         use self::schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         diesel::insert_into(builds)
-            .default_values()
+            .values(&msg.data)
             .get_result::<Build>(conn)
             .map_err(|e| {
                 From::from(e)

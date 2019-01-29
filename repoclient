@@ -302,7 +302,9 @@ def get_object_multipart(repo_path, object):
 
 def create_command(args, session):
     build_url = urljoin(args.manager_url, "/api/v1/build")
-    resp = session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={} )
+    resp = session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={
+        "repo": args.repo
+    } )
     if resp.status_code != 200:
         raise ApiError(resp, resp.json())
     data = resp.json()
@@ -403,6 +405,7 @@ if __name__ == '__main__':
 
     create_parser = subparsers.add_parser('create', help='Create new build')
     create_parser.add_argument('manager_url', help='remote repo manager url')
+    create_parser.add_argument('repo', help='repo name')
     create_parser.set_defaults(func=create_command)
 
     push_parser = subparsers.add_parser('push', help='Push to repo manager')

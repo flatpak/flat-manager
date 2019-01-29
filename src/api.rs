@@ -17,7 +17,7 @@ use jwt;
 use app::{AppState,Claims};
 use errors::ApiError;
 use db::*;
-use models::{NewBuildRef};
+use models::{NewBuild,NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
 use jobs::ProcessJobs;
@@ -96,7 +96,13 @@ pub fn get_job(
         .responder()
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateBuildArgs {
+    repo: String
+}
+
 pub fn create_build(
+    args: Json<CreateBuildArgs>,
     state: State<AppState>,
     req: HttpRequest<AppState>
 ) -> FutureResponse<HttpResponse> {
@@ -105,7 +111,11 @@ pub fn create_build(
     }
     state
         .db
-        .send(CreateBuild { })
+        .send(CreateBuild {
+            data: NewBuild {
+                repo: args.repo.clone(),
+            }
+        })
         .from_err()
         .and_then(move |res| match res {
             Ok(build) => {

@@ -12,6 +12,12 @@ impl Actor for DbExecutor {
     type Context = SyncContext<Self>;
 }
 
+#[derive(Deserialize, Insertable, Debug)]
+#[table_name = "builds"]
+pub struct NewBuild {
+    pub repo: String,
+}
+
 #[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
 pub struct Build {
     pub id: i32,
