@@ -59,7 +59,8 @@ pub struct TokenSubsetArgs {
     sub: String,
     scope: Vec<String>,
     duration: i64,
-    prefix: Option<Vec<String>>,
+    prefixes: Option<Vec<String>>,
+    repos: Option<Vec<String>>,
     name: String,
 }
 
@@ -68,12 +69,17 @@ pub struct TokenSubsetResponse {
     token: String,
 }
 
-pub fn prefix_is_subset(maybe_subset_prefix: &Option<Vec<String>>, maybe_claimed_prefix: &Option<Vec<String>>) -> bool {
-    match (maybe_subset_prefix, maybe_claimed_prefix)  {
-        (Some(subset_prefix), Some(claimed_prefix)) =>
-            subset_prefix.iter().all(|s| tokens::id_matches_one_prefix(s, &claimed_prefix)),
-        (Some(_), None) => false,
-        (None, _) => true,
+pub fn repos_is_subset(maybe_subset_repos: &Option<Vec<String>>, claimed_repos: &Vec<String>) -> bool {
+    match maybe_subset_repos  {
+        Some(subset_repos) => subset_repos.iter().all(|subset_repo| tokens::repo_matches_one_claimed(subset_repo, claimed_repos)),
+        None => true,
+    }
+}
+
+pub fn prefix_is_subset(maybe_subset_prefix: &Option<Vec<String>>, claimed_prefixes: &Vec<String>) -> bool {
+    match maybe_subset_prefix  {
+        Some(subset_prefix) => subset_prefix.iter().all(|s| tokens::id_matches_one_prefix(s, &claimed_prefixes)),
+        None => true,
     }
 }
 
@@ -87,12 +93,14 @@ pub fn token_subset(
         if new_exp <= claims.exp &&
             tokens::sub_has_prefix (&args.sub, &claims.sub) &&
             args.scope.iter().all(|s| claims.scope.contains(s)) &&
-            prefix_is_subset(&args.prefix, &claims.prefix) {
+            prefix_is_subset(&args.prefixes, &claims.prefixes) &&
+            repos_is_subset(&args.repos, &claims.repos) {
                 let new_claims = Claims {
                     sub: args.sub.clone(),
                     scope: args.scope.clone(),
                     name: claims.name + "/" + &args.name,
-                    prefix: args.prefix.clone(),
+                    prefixes: { if let Some(ref prefixes) = args.prefixes { prefixes.clone() } else { claims.prefixes.clone() } },
+                    repos: { if let Some(ref repos) = args.repos { repos.clone() } else { claims.repos.clone() } },
                     exp: new_exp,
                 };
                 return match jwt::encode(&jwt::Header::default(), &new_claims, &state.config.secret) {
@@ -149,6 +157,10 @@ pub fn create_build(
     req: HttpRequest<AppState>
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims("build", "build") {
+        return From::from(e);
+    }
+
+    if let Err(e) = req.has_token_repo(&args.repo) {
         return From::from(e);
     }
 

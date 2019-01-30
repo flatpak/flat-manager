@@ -12,6 +12,7 @@ pub trait ClaimsValidator {
         where Func: Fn(&Claims) -> bool;
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError>;
+    fn has_token_repo(&self, repo: &str) -> Result<(), ApiError>;
 }
 
 pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
@@ -42,6 +43,17 @@ pub fn id_matches_prefix(id: &str, prefix: &str) -> bool {
 
 pub fn id_matches_one_prefix(id: &str, prefixes: &Vec<String>) -> bool {
     prefixes.iter().any(|prefix| id_matches_prefix(id, prefix))
+}
+
+pub fn repo_matches_claimed(repo: &str, claimed_repo: &str) -> bool {
+    if claimed_repo == "" {
+        return true
+    }
+    repo == claimed_repo
+}
+
+pub fn repo_matches_one_claimed(repo: &str, claimed_repos: &Vec<String>) -> bool {
+    claimed_repos.iter().any(|claimed_repo| repo_matches_claimed(repo, claimed_repo))
 }
 
 impl<S> ClaimsValidator for HttpRequest<S> {
@@ -82,13 +94,17 @@ impl<S> ClaimsValidator for HttpRequest<S> {
      * org.my.AppSuffix.
      */
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
+        if self.validate_claims(|claims| id_matches_one_prefix(id, &claims.prefixes)) {
+            Ok(())
+        } else {
+            Err(ApiError::NotEnoughPermissions)
+        }
+    }
+
+    fn has_token_repo(&self, repo: &str) -> Result<(), ApiError> {
         if self.validate_claims(
             |claims| {
-                if let Some(prefixes) = &claims.prefix {
-                    id_matches_one_prefix(id, &prefixes)
-                } else {
-                    false
-                }
+                claims.repos.contains(&repo.to_string())
             }) {
             Ok(())
         } else {

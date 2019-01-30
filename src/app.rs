@@ -37,7 +37,8 @@ fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 pub struct Claims {
     pub sub: String, // "build", "build/N"
     pub scope: Vec<String>, // "build", "upload" "publish"
-    pub prefix: Option<Vec<String>>,
+    pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
+    pub repos: Vec<String>, // list of repo names or a '' for match all
     pub name: String, // for debug/logs only
     pub exp: i64,
 }

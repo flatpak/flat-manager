@@ -21,7 +21,8 @@ struct Claims {
     sub: String,
     scope: Vec<String>,
     name: String,
-    prefix: Option<Vec<String>>,
+    prefixes: Vec<String>,
+    repos: Vec<String>,
     exp: i64,
 }
 
@@ -45,7 +46,8 @@ fn main() {
     let mut secret_file: Option<String> = None;
     let mut duration: i64 = Duration::days(365).num_seconds();
     let mut scope: Vec<String> = vec![];
-    let mut prefix: Vec<String> = vec![];
+    let mut prefixes: Vec<String> = vec![];
+    let mut repos: Vec<String> = vec![];
 
     {
         let mut ap = ArgumentParser::new();
@@ -62,9 +64,12 @@ fn main() {
         ap.refer(&mut scope)
             .add_option(&["--scope"], List,
                         "Add scope (default if none: [build, upload, publish, jobs]");
-        ap.refer(&mut prefix)
+        ap.refer(&mut prefixes)
             .add_option(&["--prefix"], List,
                         "Add ref prefix (default if none: ['']");
+        ap.refer(&mut repos)
+            .add_option(&["--repo"], List,
+                        "Add repo (default if none: ['']");
         ap.refer(&mut base64)
             .add_option(&["--base64"], StoreTrue,
                         "The secret is base64 encoded");
@@ -86,8 +91,12 @@ fn main() {
         scope = vec!["build".to_string(), "upload".to_string(), "publish".to_string(), "jobs".to_string()];
     }
 
-    if prefix.len() == 0 {
-        prefix = vec!["".to_string()];
+    if prefixes.len() == 0 {
+        prefixes = vec!["".to_string()];
+    }
+
+    if repos.len() == 0 {
+        repos = vec!["".to_string()];
     }
 
     if let Some(s) = secret {
@@ -114,7 +123,8 @@ fn main() {
     let claims = Claims {
         sub: sub,
         scope: scope,
-        prefix: Some(prefix),
+        prefixes: prefixes,
+        repos: repos,
         name: name.clone(),
         exp: Utc::now().timestamp() + Duration::days(365).num_seconds(),
     };
