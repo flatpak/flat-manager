@@ -17,23 +17,18 @@ impl <T: DbRequest> Message for DbRequestWrapper<T> {
     type Result = Result<T::DbType, ApiError>;
 }
 
-#[derive(Deserialize, Debug)]
-pub struct CreateBuild {
-    pub data : NewBuild,
+impl DbRequest for NewBuild {
+    type DbType = Build;
 }
 
-impl Message for CreateBuild {
-    type Result = Result<Build, ApiError>;
-}
+impl Handler<DbRequestWrapper<NewBuild>> for DbExecutor {
+    type Result = Result<<NewBuild as DbRequest>::DbType, ApiError>;
 
-impl Handler<CreateBuild> for DbExecutor {
-    type Result = Result<Build, ApiError>;
-
-    fn handle(&mut self, msg: CreateBuild, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<NewBuild>, _: &mut Self::Context) -> Self::Result {
         use self::schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         diesel::insert_into(builds)
-            .values(&msg.data)
+            .values(&msg.0)
             .get_result::<Build>(conn)
             .map_err(|e| {
                 From::from(e)
@@ -43,10 +38,6 @@ impl Handler<CreateBuild> for DbExecutor {
 
 impl DbRequest for NewBuildRef {
     type DbType = BuildRef;
-}
-
-impl Message for NewBuildRef {
-    type Result = Result<BuildRef, ApiError>;
 }
 
 impl Handler<DbRequestWrapper<NewBuildRef>> for DbExecutor {
@@ -70,8 +61,8 @@ pub struct LookupJob {
     pub log_offset: Option<usize>,
 }
 
-impl Message for LookupJob {
-    type Result = Result<Job, ApiError>;
+impl DbRequest for LookupJob {
+    type DbType = Job;
 }
 
 // Ideally we'd do this via a SUBSTRING query, but at least do it behind the API
@@ -82,16 +73,16 @@ fn handle_log_offset(mut job: Job, log_offset: Option<usize>) -> Job {
     job
 }
 
-impl Handler<LookupJob> for DbExecutor {
-    type Result = Result<Job, ApiError>;
+impl Handler<DbRequestWrapper<LookupJob>> for DbExecutor {
+    type Result = Result<<LookupJob as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: LookupJob, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<LookupJob>, _: &mut Self::Context) -> Self::Result {
         use schema::jobs::dsl::*;
         let conn = &self.0.get().unwrap();
         jobs
-            .filter(id.eq(msg.id))
+            .filter(id.eq(msg.0.id))
             .get_result::<Job>(conn)
-            .map(|job| handle_log_offset (job, msg.log_offset))
+            .map(|job| handle_log_offset (job, msg.0.log_offset))
             .map_err(|e| {
                 From::from(e)
             })
@@ -104,23 +95,23 @@ pub struct LookupCommitJob {
     pub log_offset: Option<usize>,
 }
 
-impl Message for LookupCommitJob {
-    type Result = Result<Job, ApiError>;
+impl DbRequest for LookupCommitJob {
+    type DbType = Job;
 }
 
-impl Handler<LookupCommitJob> for DbExecutor {
-    type Result = Result<Job, ApiError>;
+impl Handler<DbRequestWrapper<LookupCommitJob>> for DbExecutor {
+    type Result = Result<<LookupCommitJob as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: LookupCommitJob, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<LookupCommitJob>, _: &mut Self::Context) -> Self::Result {
         use schema::jobs::dsl::*;
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         jobs
             .inner_join(builds.on(commit_job_id.eq(schema::jobs::dsl::id.nullable())))
             .select(schema::jobs::all_columns)
-            .filter(schema::builds::dsl::id.eq(msg.build_id))
+            .filter(schema::builds::dsl::id.eq(msg.0.build_id))
             .get_result::<Job>(conn)
-            .map(|job| handle_log_offset (job, msg.log_offset))
+            .map(|job| handle_log_offset (job, msg.0.log_offset))
             .map_err(|e| {
                 From::from(e)
             })
@@ -133,23 +124,23 @@ pub struct LookupPublishJob {
     pub log_offset: Option<usize>,
 }
 
-impl Message for LookupPublishJob {
-    type Result = Result<Job, ApiError>;
+impl DbRequest for LookupPublishJob {
+    type DbType = Job;
 }
 
-impl Handler<LookupPublishJob> for DbExecutor {
-    type Result = Result<Job, ApiError>;
+impl Handler<DbRequestWrapper<LookupPublishJob>> for DbExecutor {
+    type Result = Result<<LookupPublishJob as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: LookupPublishJob, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<LookupPublishJob>, _: &mut Self::Context) -> Self::Result {
         use schema::jobs::dsl::*;
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         jobs
             .inner_join(builds.on(publish_job_id.eq(schema::jobs::dsl::id.nullable())))
             .select(schema::jobs::all_columns)
-            .filter(schema::builds::dsl::id.eq(msg.build_id))
+            .filter(schema::builds::dsl::id.eq(msg.0.build_id))
             .get_result::<Job>(conn)
-            .map(|job| handle_log_offset (job, msg.log_offset))
+            .map(|job| handle_log_offset (job, msg.0.log_offset))
             .map_err(|e| {
                 From::from(e)
             })
@@ -161,18 +152,18 @@ pub struct LookupBuild {
     pub id: i32
 }
 
-impl Message for LookupBuild {
-    type Result = Result<Build, ApiError>;
+impl DbRequest for LookupBuild {
+    type DbType = Build;
 }
 
-impl Handler<LookupBuild> for DbExecutor {
-    type Result = Result<Build, ApiError>;
+impl Handler<DbRequestWrapper<LookupBuild>> for DbExecutor {
+    type Result = Result<<LookupBuild as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: LookupBuild, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<LookupBuild>, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         builds
-            .filter(id.eq(msg.id))
+            .filter(id.eq(msg.0.id))
             .get_result::<Build>(conn)
             .map_err(|e| {
                 From::from(e)
@@ -186,19 +177,19 @@ pub struct LookupBuildRef {
     pub ref_id: i32,
 }
 
-impl Message for LookupBuildRef {
-    type Result = Result<BuildRef, ApiError>;
+impl DbRequest for LookupBuildRef {
+    type DbType = BuildRef;
 }
 
-impl Handler<LookupBuildRef> for DbExecutor {
-    type Result = Result<BuildRef, ApiError>;
+impl Handler<DbRequestWrapper<LookupBuildRef>> for DbExecutor {
+    type Result = Result<<LookupBuildRef as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: LookupBuildRef, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<LookupBuildRef>, _: &mut Self::Context) -> Self::Result {
         use schema::build_refs::dsl::*;
         let conn = &self.0.get().unwrap();
         build_refs
-            .filter(build_id.eq(msg.id))
-            .filter(id.eq(msg.ref_id))
+            .filter(build_id.eq(msg.0.id))
+            .filter(id.eq(msg.0.ref_id))
             .get_result::<BuildRef>(conn)
             .map_err(|e| From::from(e))
     }
@@ -209,18 +200,18 @@ pub struct LookupBuildRefs {
     pub id: i32,
 }
 
-impl Message for LookupBuildRefs {
-    type Result = Result<Vec<BuildRef>, ApiError>;
+impl DbRequest for LookupBuildRefs {
+    type DbType = Vec<BuildRef>;
 }
 
-impl Handler<LookupBuildRefs> for DbExecutor {
-    type Result = Result<Vec<BuildRef>, ApiError>;
+impl Handler<DbRequestWrapper<LookupBuildRefs>> for DbExecutor {
+    type Result = Result<<LookupBuildRefs as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: LookupBuildRefs, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<LookupBuildRefs>, _: &mut Self::Context) -> Self::Result {
         use schema::build_refs::dsl::*;
         let conn = &self.0.get().unwrap();
         build_refs
-            .filter(build_id.eq(msg.id))
+            .filter(build_id.eq(msg.0.id))
             .get_results::<BuildRef>(conn)
             .map_err(|e| From::from(e))
     }
@@ -230,14 +221,14 @@ impl Handler<LookupBuildRefs> for DbExecutor {
 pub struct ListBuilds {
 }
 
-impl Message for ListBuilds {
-    type Result = Result<Vec<Build>, ApiError>;
+impl DbRequest for ListBuilds {
+    type DbType = Vec<Build>;
 }
 
-impl Handler<ListBuilds> for DbExecutor {
-    type Result = Result<Vec<Build>, ApiError>;
+impl Handler<DbRequestWrapper<ListBuilds>> for DbExecutor {
+    type Result = Result<<ListBuilds as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, _msg: ListBuilds, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _msg: DbRequestWrapper<ListBuilds>, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         let (val, _) = RepoState::Purged.to_db();
@@ -257,18 +248,18 @@ pub struct StartCommitJob {
     pub endoflife: Option<String>,
 }
 
-impl Message for StartCommitJob {
-    type Result = Result<Job, ApiError>;
+impl DbRequest for StartCommitJob {
+    type DbType = Job;
 }
 
-impl Handler<StartCommitJob> for DbExecutor {
-    type Result = Result<Job, ApiError>;
+impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
+    type Result = Result<<StartCommitJob as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: StartCommitJob, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<StartCommitJob>, _: &mut Self::Context) -> Self::Result {
         let conn = &self.0.get().unwrap();
         conn.transaction::<Job, DieselError, _>(|| {
             let current_build = schema::builds::table
-                .filter(schema::builds::id.eq(msg.id))
+                .filter(schema::builds::id.eq(msg.0.id))
                 .get_result::<Build>(conn)?;
             let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
             if !current_repo_state.same_state_as(&RepoState::Uploading) {
@@ -280,13 +271,13 @@ impl Handler<StartCommitJob> for DbExecutor {
                 .values(NewJob {
                     kind: JobKind::Commit.to_db(),
                     contents: json!(CommitJob {
-                        build: msg.id,
-                        endoflife: msg.endoflife
+                        build: msg.0.id,
+                        endoflife: msg.0.endoflife
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?;
             diesel::update(schema::builds::table)
-                .filter(schema::builds::id.eq(msg.id))
+                .filter(schema::builds::id.eq(msg.0.id))
                 .set((schema::builds::commit_job_id.eq(job.id),
                       schema::builds::repo_state.eq(val),
                       schema::builds::repo_state_reason.eq(reason)))
@@ -308,18 +299,18 @@ pub struct StartPublishJob {
     pub id: i32,
 }
 
-impl Message for StartPublishJob {
-    type Result = Result<Job, ApiError>;
+impl DbRequest for StartPublishJob {
+    type DbType = Job;
 }
 
-impl Handler<StartPublishJob> for DbExecutor {
-    type Result = Result<Job, ApiError>;
+impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
+    type Result = Result<<StartPublishJob as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: StartPublishJob, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<StartPublishJob>, _: &mut Self::Context) -> Self::Result {
         let conn = &self.0.get().unwrap();
         conn.transaction::<Job, DieselError, _>(|| {
             let current_build = schema::builds::table
-                .filter(schema::builds::id.eq(msg.id))
+                .filter(schema::builds::id.eq(msg.0.id))
                 .get_result::<Build>(conn)?;
             let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
             if !current_published_state.same_state_as(&PublishedState::Unpublished) {
@@ -337,12 +328,12 @@ impl Handler<StartPublishJob> for DbExecutor {
                 .values(NewJob {
                     kind: JobKind::Publish.to_db(),
                     contents: json!(PublishJob {
-                        build: msg.id,
+                        build: msg.0.id,
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?;
             diesel::update(schema::builds::table)
-                .filter(schema::builds::id.eq(msg.id))
+                .filter(schema::builds::id.eq(msg.0.id))
                 .set((schema::builds::publish_job_id.eq(job.id),
                       schema::builds::published_state.eq(val),
                       schema::builds::published_state_reason.eq(reason)))
@@ -363,19 +354,19 @@ pub struct InitPurge {
     pub id: i32,
 }
 
-impl Message for InitPurge {
-    type Result = Result<(), ApiError>;
+impl DbRequest for InitPurge {
+    type DbType = ();
 }
 
-impl Handler<InitPurge> for DbExecutor {
-    type Result = Result<(), ApiError>;
+impl Handler<DbRequestWrapper<InitPurge>> for DbExecutor {
+    type Result = Result<<InitPurge as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: InitPurge, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<InitPurge>, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         conn.transaction::<(), DieselError, _>(|| {
             let current_build = builds
-                .filter(id.eq(msg.id))
+                .filter(id.eq(msg.0.id))
                 .get_result::<Build>(conn)?;
             let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
             let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
@@ -387,7 +378,7 @@ impl Handler<InitPurge> for DbExecutor {
             };
             let (val, reason) = RepoState::to_db(&RepoState::Purging);
             diesel::update(builds)
-                .filter(id.eq(msg.id))
+                .filter(id.eq(msg.0.id))
                 .set((repo_state.eq(val),
                       repo_state_reason.eq(reason)))
                 .execute(conn)?;
@@ -408,32 +399,32 @@ pub struct FinishPurge {
     pub error: Option<String>,
 }
 
-impl Message for FinishPurge {
-    type Result = Result<Build, ApiError>;
+impl DbRequest for FinishPurge {
+    type DbType = Build;
 }
 
-impl Handler<FinishPurge> for DbExecutor {
-    type Result = Result<Build, ApiError>;
+impl Handler<DbRequestWrapper<FinishPurge>> for DbExecutor {
+    type Result = Result<<FinishPurge as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: FinishPurge, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<FinishPurge>, _: &mut Self::Context) -> Self::Result {
         use schema::builds::dsl::*;
         let conn = &self.0.get().unwrap();
         conn.transaction::<Build, DieselError, _>(|| {
             let current_build = builds
-                .filter(id.eq(msg.id))
+                .filter(id.eq(msg.0.id))
                 .get_result::<Build>(conn)?;
             let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
             if !current_repo_state.same_state_as(&RepoState::Purging) {
                 return Err(DieselError::RollbackTransaction)
             };
-            let new_state = match msg.error {
+            let new_state = match msg.0.error {
                 None => RepoState::Purged,
                 Some(err_string) => RepoState::Failed(format!("Failed to Purge build: {}", err_string)),
             };
             let (val, reason) = RepoState::to_db(&new_state);
             let new_build =
                 diesel::update(builds)
-                .filter(id.eq(msg.id))
+                .filter(id.eq(msg.0.id))
                 .set((repo_state.eq(val),
                       repo_state_reason.eq(reason)))
                 .get_result::<Build>(conn)?;

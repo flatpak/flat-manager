@@ -152,17 +152,14 @@ pub fn get_job(
     if let Err(e) = req.has_token_claims("build", "jobs") {
         return From::from(e);
     }
-    state
-        .db
-        .send(LookupJob {
-            id: params.id,
-            log_offset: args.log_offset,
-        })
+
+    db_request (&state,
+                LookupJob {
+                    id: params.id,
+                    log_offset: args.log_offset,
+                })
+        .and_then(|job| Ok(HttpResponse::Ok().json(job)))
         .from_err()
-        .and_then(|res| match res {
-            Ok(job) => Ok(HttpResponse::Ok().json(job)),
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -190,31 +187,25 @@ pub fn create_build(
         Err(e) => return From::from(e)
     }.clone();
 
-    state
-        .db
-        .send(CreateBuild {
-            data: NewBuild {
-                repo: args.repo.clone(),
+    db_request (&state,
+                NewBuild {
+                    repo: args.repo.clone(),
+                })
+        .and_then(move |build| {
+            let build_repo_path = state.config.build_repo_base_path.join(build.id.to_string());
+            let upload_path = build_repo_path.join("upload");
+
+            init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
+            init_ostree_repo (&upload_path, &repoconfig.path, build.id, &None)?;
+
+            match req.url_for("show_build", &[build.id.to_string()]) {
+                Ok(url) => Ok(HttpResponse::Ok()
+                              .header(http::header::LOCATION, url.to_string())
+                              .json(build)),
+                Err(e) => Ok(e.error_response())
             }
         })
         .from_err()
-        .and_then(move |res| match res {
-            Ok(build) => {
-                let build_repo_path = state.config.build_repo_base_path.join(build.id.to_string());
-                let upload_path = build_repo_path.join("upload");
-
-                init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
-                init_ostree_repo (&upload_path, &repoconfig.path, build.id, &None)?;
-
-                match req.url_for("show_build", &[build.id.to_string()]) {
-                    Ok(url) => Ok(HttpResponse::Ok()
-                                  .header(http::header::LOCATION, url.to_string())
-                                  .json(build)),
-                    Err(e) => Ok(e.error_response())
-                }
-            },
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -225,16 +216,9 @@ pub fn builds(
     if let Err(e) = req.has_token_claims("build", "build") {
         return From::from(e);
     }
-    state
-        .db
-        .send(ListBuilds { })
+    db_request (&state, ListBuilds { })
+        .and_then(move |builds| Ok(HttpResponse::Ok().json(builds)))
         .from_err()
-        .and_then(move |res| match res {
-            Ok(builds) => {
-                Ok(HttpResponse::Ok().json(builds))
-            },
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -252,14 +236,9 @@ pub fn get_build(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    state
-        .db
-        .send(LookupBuild { id: params.id })
+    db_request (&state, LookupBuild { id: params.id })
+        .and_then(|build| Ok(HttpResponse::Ok().json(build)))
         .from_err()
-        .and_then(|res| match res {
-            Ok(build) => Ok(HttpResponse::Ok().json(build)),
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -277,17 +256,13 @@ pub fn get_build_ref(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    state
-        .db
-        .send(LookupBuildRef {
-            id: params.id,
-            ref_id: params.ref_id,
-        })
+    db_request (&state,
+                LookupBuildRef {
+                    id: params.id,
+                    ref_id: params.ref_id,
+                })
+        .and_then(|build_ref| Ok(HttpResponse::Ok().json(build_ref)))
         .from_err()
-        .and_then(|res| match res {
-            Ok(build_ref) => Ok(HttpResponse::Ok().json(build_ref)),
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -520,7 +495,6 @@ pub fn upload(
     )
 }
 
-
 pub fn get_commit_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
@@ -530,17 +504,13 @@ pub fn get_commit_job(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    state
-        .db
-        .send(LookupCommitJob {
-            build_id: params.id,
-            log_offset: args.log_offset,
-        })
+    db_request (&state,
+                LookupCommitJob {
+                    build_id: params.id,
+                    log_offset: args.log_offset,
+                })
+        .and_then(|job| Ok(HttpResponse::Ok().json(job)))
         .from_err()
-        .and_then(|res| match res {
-            Ok(job) => Ok(HttpResponse::Ok().json(job)),
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -559,25 +529,21 @@ pub fn commit(
         return From::from(e);
     }
     let job_queue = state.job_queue.clone();
-    state
-        .db
-        .send(StartCommitJob {
-            id: params.id,
-            endoflife: args.endoflife.clone(),
+    db_request (&state,
+                StartCommitJob {
+                    id: params.id,
+                    endoflife: args.endoflife.clone(),
+                })
+        .and_then(move |job| {
+            job_queue.do_send(ProcessJobs());
+            match req.url_for("show_commit_job", &[params.id.to_string()]) {
+                Ok(url) => Ok(HttpResponse::Ok()
+                              .header(http::header::LOCATION, url.to_string())
+                              .json(job)),
+                Err(e) => Ok(e.error_response())
+            }
         })
         .from_err()
-        .and_then(move |res| match res {
-            Ok(job) => {
-                job_queue.do_send(ProcessJobs());
-                match req.url_for("show_commit_job", &[params.id.to_string()]) {
-                    Ok(url) => Ok(HttpResponse::Ok()
-                                  .header(http::header::LOCATION, url.to_string())
-                                  .json(job)),
-                    Err(e) => Ok(e.error_response())
-                }
-            },
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -591,17 +557,13 @@ pub fn get_publish_job(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
         return From::from(e);
     }
-    state
-        .db
-        .send(LookupPublishJob {
-            build_id: params.id,
-            log_offset: args.log_offset,
-        })
+    db_request (&state,
+                LookupPublishJob {
+                    build_id: params.id,
+                    log_offset: args.log_offset,
+                })
+        .and_then(|job| Ok(HttpResponse::Ok().json(job)))
         .from_err()
-        .and_then(|res| match res {
-            Ok(job) => Ok(HttpResponse::Ok().json(job)),
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -615,24 +577,20 @@ pub fn publish(
     }
 
     let job_queue = state.job_queue.clone();
-    state
-        .db
-        .send(StartPublishJob {
-            id: params.id,
+    db_request (&state,
+                StartPublishJob {
+                    id: params.id,
+                })
+        .and_then(move |job| {
+            job_queue.do_send(ProcessJobs());
+            match req.url_for("show_publish_job", &[params.id.to_string()]) {
+                Ok(url) => Ok(HttpResponse::Ok()
+                              .header(http::header::LOCATION, url.to_string())
+                              .json(job)),
+                Err(e) => Ok(e.error_response())
+            }
         })
         .from_err()
-        .and_then(move |res| match res {
-            Ok(job) => {
-                job_queue.do_send(ProcessJobs());
-                match req.url_for("show_publish_job", &[params.id.to_string()]) {
-                    Ok(url) => Ok(HttpResponse::Ok()
-                                  .header(http::header::LOCATION, url.to_string())
-                                  .json(job)),
-                    Err(e) => Ok(e.error_response())
-                }
-            },
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 
@@ -648,42 +606,28 @@ pub fn purge(
     let build_repo_path = state.config.build_repo_base_path.join(params.id.to_string());
     let build_id1 = params.id;
     let build_id2 = params.id;
-    state
-        .db
-        .send(InitPurge {
-            id: build_id1,
-        })
-        .from_err()
-        .and_then(move |init_result| match init_result {
-            Ok(()) => {
-                let res = fs::remove_dir_all(&build_repo_path);
-                future::Either::A(
-                    state
-                        .db
-                        .send(FinishPurge {
+    db_request (&state,
+                InitPurge {
+                    id: build_id1,
+                })
+        .and_then(move |_ok| {
+            let res = fs::remove_dir_all(&build_repo_path);
+            db_request (&state,
+                        FinishPurge {
                             id: build_id2,
                             error: match res {
                                 Ok(()) => None,
                                 Err(e) => Some(e.to_string()),
                             },
                         })
-                        .from_err()
-                )
-            },
-            Err(api_error) => {
-                future::Either::B(future::err(api_error))
-            }
         })
-        .and_then(move |res| match res {
-            Ok(build) => {
-                match req.url_for("show_build", &[params.id.to_string()]) {
-                    Ok(url) => Ok(HttpResponse::Ok()
-                                  .header(http::header::LOCATION, url.to_string())
-                                  .json(build)),
+        .and_then(move |build| {
+            match req.url_for("show_build", &[params.id.to_string()]) {
+                Ok(url) => Ok(HttpResponse::Ok()
+                              .header(http::header::LOCATION, url.to_string())
+                              .json(build)),
                 Err(e) => Ok(e.error_response())
-                }
-            },
-            Err(e) => Ok(e.error_response()),
+            }
         })
         .from_err()
         .responder()
