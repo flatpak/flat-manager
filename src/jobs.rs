@@ -414,7 +414,6 @@ fn do_publish (job_id: i32,
 
     let mut commits = HashMap::new();
     for build_ref in build_refs.iter() {
-        println!("build_ref {:?}", build_ref);
         if build_ref.ref_name.starts_with("app/") || build_ref.ref_name.starts_with("runtime/") {
             let commit = parse_ostree_ref(&repoconfig.path, &build_ref.ref_name)?;
             commits.insert(build_ref.ref_name.to_string(), commit);
