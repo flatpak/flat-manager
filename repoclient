@@ -191,7 +191,7 @@ def upload_objects(session, repo_path, build_url, token, objects):
 
 def create_ref(session, build_url, token, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
-    resp = session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + args.token}, json= { "ref": ref, "commit": commit} )
+    resp = session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
     if resp.status_code != 200:
         raise ApiError(resp, resp.json())
     data = resp.json()
