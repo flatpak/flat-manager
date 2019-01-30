@@ -297,6 +297,7 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
 #[derive(Deserialize, Debug)]
 pub struct StartPublishJob {
     pub id: i32,
+    pub subsets: Option<Vec<String>>
 }
 
 impl DbRequest for StartPublishJob {
@@ -329,6 +330,7 @@ impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
                     kind: JobKind::Publish.to_db(),
                     contents: json!(PublishJob {
                         build: msg.0.id,
+                        subsets: msg.0.subsets,
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?;

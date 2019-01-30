@@ -586,7 +586,13 @@ pub fn get_publish_job(
         .responder()
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PublishArgs {
+    subsets: Option<Vec<String>>
+}
+
 pub fn publish(
+    args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
     state: State<AppState>,
     req: HttpRequest<AppState>,
@@ -599,6 +605,7 @@ pub fn publish(
     db_request (&state,
                 StartPublishJob {
                     id: params.id,
+                    subsets: args.subsets.clone(),
                 })
         .and_then(move |job| {
             job_queue.do_send(ProcessJobs());
