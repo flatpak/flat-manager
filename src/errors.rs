@@ -71,6 +71,16 @@ impl From<DieselError> for ApiError {
     }
 }
 
+impl From<std::io::Error> for ApiError {
+    fn from(io_error: std::io::Error) -> Self {
+        match io_error {
+            _ => {
+                ApiError::InternalServerError(io_error.to_string())
+            }
+        }
+    }
+}
+
 impl From<actix::MailboxError> for ApiError {
     fn from(e: actix::MailboxError) -> Self {
         match e {
