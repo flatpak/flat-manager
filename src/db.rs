@@ -59,11 +59,20 @@ impl Handler<CreateBuildRef> for DbExecutor {
 
 #[derive(Deserialize, Debug)]
 pub struct LookupJob {
-    pub id: i32
+    pub id: i32,
+    pub log_offset: Option<usize>,
 }
 
 impl Message for LookupJob {
     type Result = Result<Job, ApiError>;
+}
+
+// Ideally we'd do this via a SUBSTRING query, but at least do it behind the API
+fn handle_log_offset(mut job: Job, log_offset: Option<usize>) -> Job {
+    if let Some(log_offset) = log_offset {
+        job.log = job.log.split_off(log_offset)
+    }
+    job
 }
 
 impl Handler<LookupJob> for DbExecutor {
@@ -75,6 +84,7 @@ impl Handler<LookupJob> for DbExecutor {
         jobs
             .filter(id.eq(msg.id))
             .get_result::<Job>(conn)
+            .map(|job| handle_log_offset (job, msg.log_offset))
             .map_err(|e| {
                 From::from(e)
             })
@@ -83,7 +93,8 @@ impl Handler<LookupJob> for DbExecutor {
 
 #[derive(Deserialize, Debug)]
 pub struct LookupCommitJob {
-    pub build_id: i32
+    pub build_id: i32,
+    pub log_offset: Option<usize>,
 }
 
 impl Message for LookupCommitJob {
@@ -102,6 +113,7 @@ impl Handler<LookupCommitJob> for DbExecutor {
             .select(schema::jobs::all_columns)
             .filter(schema::builds::dsl::id.eq(msg.build_id))
             .get_result::<Job>(conn)
+            .map(|job| handle_log_offset (job, msg.log_offset))
             .map_err(|e| {
                 From::from(e)
             })
@@ -110,7 +122,8 @@ impl Handler<LookupCommitJob> for DbExecutor {
 
 #[derive(Deserialize, Debug)]
 pub struct LookupPublishJob {
-    pub build_id: i32
+    pub build_id: i32,
+    pub log_offset: Option<usize>,
 }
 
 impl Message for LookupPublishJob {
@@ -129,6 +142,7 @@ impl Handler<LookupPublishJob> for DbExecutor {
             .select(schema::jobs::all_columns)
             .filter(schema::builds::dsl::id.eq(msg.build_id))
             .get_result::<Job>(conn)
+            .map(|job| handle_log_offset (job, msg.log_offset))
             .map_err(|e| {
                 From::from(e)
             })

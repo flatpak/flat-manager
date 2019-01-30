@@ -109,7 +109,14 @@ pub struct JobPathParams {
     id: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JobArgs {
+    #[serde(rename = "log-offset")]
+    log_offset: Option<usize>,
+}
+
 pub fn get_job(
+    args: Json<JobArgs>,
     params: Path<JobPathParams>,
     state: State<AppState>,
     req: HttpRequest<AppState>,
@@ -119,7 +126,10 @@ pub fn get_job(
     }
     state
         .db
-        .send(LookupJob { id: params.id })
+        .send(LookupJob {
+            id: params.id,
+            log_offset: args.log_offset,
+        })
         .from_err()
         .and_then(|res| match res {
             Ok(job) => Ok(HttpResponse::Ok().json(job)),
@@ -482,6 +492,7 @@ pub fn upload(
 
 
 pub fn get_commit_job(
+    args: Json<JobArgs>,
     params: Path<BuildPathParams>,
     state: State<AppState>,
     req: HttpRequest<AppState>,
@@ -491,7 +502,10 @@ pub fn get_commit_job(
     }
     state
         .db
-        .send(LookupCommitJob { build_id: params.id })
+        .send(LookupCommitJob {
+            build_id: params.id,
+            log_offset: args.log_offset,
+        })
         .from_err()
         .and_then(|res| match res {
             Ok(job) => Ok(HttpResponse::Ok().json(job)),
@@ -539,6 +553,7 @@ pub fn commit(
 
 
 pub fn get_publish_job(
+    args: Json<JobArgs>,
     params: Path<BuildPathParams>,
     state: State<AppState>,
     req: HttpRequest<AppState>,
@@ -548,7 +563,10 @@ pub fn get_publish_job(
     }
     state
         .db
-        .send(LookupPublishJob { build_id: params.id })
+        .send(LookupPublishJob {
+            build_id: params.id,
+            log_offset: args.log_offset,
+        })
         .from_err()
         .and_then(|res| match res {
             Ok(job) => Ok(HttpResponse::Ok().json(job)),

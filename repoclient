@@ -210,7 +210,9 @@ def wait_for_job(session, job_url, token):
     iterations_since_change=0
     while True:
         try:
-            resp = session.get(job_url, headers={'Authorization': 'Bearer ' + token})
+            resp = session.get(job_url,
+                               headers={'Authorization': 'Bearer ' + token},
+                               json={'log-offset': printed_len})
             if resp.status_code != 200:
                 raise ApiError(resp, resp.json())
             job = resp.json()
@@ -219,11 +221,11 @@ def wait_for_job(session, job_url, token):
                 print("/ Job was started");
             old_job_status = job_status
             log = job['log']
-            if len(log) > printed_len:
+            if len(log) > 0:
                 iterations_since_change=0
-                for line in log[printed_len:].splitlines(True):
+                for line in log.splitlines(True):
                     print("| %s" % line, end="")
-                printed_len = len(log)
+                printed_len = printed_len + len(log)
             else:
                 iterations_since_change=iterations_since_change+1
             if job_status > 1:
