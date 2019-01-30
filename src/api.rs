@@ -56,7 +56,7 @@ mode=archive-z2
     Ok(())
 }
 
-fn db_request<M: DbRequest> (state: &State<AppState>,
+fn db_request<M: DbRequest> (state: &AppState,
                              msg: M) ->
     Box<Future<Item = <M as DbRequest>::DbType, Error = ApiError>>
     where
@@ -349,20 +349,26 @@ pub fn create_build_ref (
         return From::from(e);
     }
 
-    db_request (&state,
-                NewBuildRef {
-                    build_id: params.id,
-                    ref_name: args.ref_name.clone(),
-                    commit: args.commit.clone(),
-                })
-        .and_then(move |buildref|
-                  match req.url_for("show_build_ref", &[params.id.to_string(), buildref.id.to_string()]) {
-                      Ok(url) => Ok(HttpResponse::Ok()
-                                    .header(http::header::LOCATION, url.to_string())
-                                    .json(buildref)),
-                      Err(e) => Ok(e.error_response())
-                  }
-        )
+    let req2 = req.clone();
+    let build_id = params.id;
+    db_request (&state, LookupBuild { id: params.id })
+        .and_then (move |build| req2.has_token_repo(&build.repo))
+        .and_then (move |_ok| {
+            db_request (&state,
+                        NewBuildRef {
+                            build_id: build_id,
+                            ref_name: args.ref_name.clone(),
+                            commit: args.commit.clone(),
+                        })
+        })
+        .and_then(move |buildref| {
+            match req.url_for("show_build_ref", &[params.id.to_string(), buildref.id.to_string()]) {
+                Ok(url) => Ok(HttpResponse::Ok()
+                              .header(http::header::LOCATION, url.to_string())
+                              .json(buildref)),
+                Err(e) => Ok(e.error_response())
+            }
+        })
         .from_err()
         .responder()
 }
@@ -478,21 +484,28 @@ fn handle_multipart_item(
 pub fn upload(
     params: Path<BuildPathParams>,
     req: HttpRequest<AppState>,
+    state: State<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return From::from(e);
     }
-    let state = req.state();
     let uploadstate = Arc::new(UploadState { repo_path: state.config.build_repo_base_path.join(params.id.to_string()).join("upload") });
-    Box::new(
-        req.multipart()
-            .map_err(|e| ApiError::InternalServerError(e.to_string()))
-            .map(move |item| { handle_multipart_item (item, &uploadstate) })
-            .flatten()
-            .collect()
-            .map(|sizes| HttpResponse::Ok().json(sizes))
-            .from_err()
-    )
+    let req2 = req.clone();
+    db_request (&state, LookupBuild { id: params.id })
+        .and_then (move |build| req2.has_token_repo(&build.repo))
+        .and_then (move |_ok| {
+            Box::new(
+                req.multipart()
+                    .map_err(|e| ApiError::InternalServerError(e.to_string()))
+                    .map(move |item| { handle_multipart_item (item, &uploadstate) })
+                    .flatten()
+                    .collect()
+                    .map(|sizes| HttpResponse::Ok().json(sizes))
+                    .from_err()
+            )
+        })
+        .from_err()
+        .responder()
 }
 
 pub fn get_commit_job(
@@ -529,11 +542,17 @@ pub fn commit(
         return From::from(e);
     }
     let job_queue = state.job_queue.clone();
-    db_request (&state,
-                StartCommitJob {
-                    id: params.id,
-                    endoflife: args.endoflife.clone(),
-                })
+    let req2 = req.clone();
+    let build_id = params.id;
+    db_request (&state, LookupBuild { id: build_id })
+        .and_then (move |build| req2.has_token_repo(&build.repo))
+        .and_then (move |_ok| {
+            db_request (&state,
+                        StartCommitJob {
+                            id: build_id,
+                            endoflife: args.endoflife.clone(),
+                        })
+        })
         .and_then(move |job| {
             job_queue.do_send(ProcessJobs());
             match req.url_for("show_commit_job", &[params.id.to_string()]) {
@@ -604,17 +623,22 @@ pub fn purge(
     }
 
     let build_repo_path = state.config.build_repo_base_path.join(params.id.to_string());
-    let build_id1 = params.id;
-    let build_id2 = params.id;
-    db_request (&state,
-                InitPurge {
-                    id: build_id1,
-                })
+    let build_id = params.id;
+    let req2 = req.clone();
+    let state2 = state.clone();
+    db_request (&state, LookupBuild { id: build_id })
+        .and_then (move |build| req2.has_token_repo(&build.repo))
+        .and_then (move |_ok| {
+            db_request (&state,
+                        InitPurge {
+                            id: build_id,
+                        })
+        })
         .and_then(move |_ok| {
             let res = fs::remove_dir_all(&build_repo_path);
-            db_request (&state,
+            db_request (&state2,
                         FinishPurge {
-                            id: build_id2,
+                            id: build_id,
                             error: match res {
                                 Ok(()) => None,
                                 Err(e) => Some(e.to_string()),
@@ -622,7 +646,7 @@ pub fn purge(
                         })
         })
         .and_then(move |build| {
-            match req.url_for("show_build", &[params.id.to_string()]) {
+            match req.url_for("show_build", &[build_id.to_string()]) {
                 Ok(url) => Ok(HttpResponse::Ok()
                               .header(http::header::LOCATION, url.to_string())
                               .json(build)),
