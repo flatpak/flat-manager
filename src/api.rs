@@ -1,3 +1,4 @@
+use actix::prelude::*;
 use actix_web::{dev, error, multipart, http};
 use actix_web::{AsyncResponder, FutureResponse, HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
 
@@ -23,6 +24,7 @@ use db::*;
 use models::{NewBuild,NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
+use models::DbExecutor;
 use jobs::ProcessJobs;
 
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
@@ -52,6 +54,24 @@ mode=archive-z2
                            },
                            parent_repo_absolute_path.display()).as_bytes())?;
     Ok(())
+}
+
+fn db_request<M: DbRequest> (state: &State<AppState>,
+                             msg: M) ->
+    Box<Future<Item = <M as DbRequest>::DbType, Error = ApiError>>
+    where
+    DbExecutor: actix::Handler<DbRequestWrapper<M>>
+{
+    Box::new(
+        state
+            .db
+            .send(DbRequestWrapper::<M> (msg))
+            .from_err()
+            .and_then(move |res| match res {
+                Ok(ok_res) =>  return future::ok(ok_res),
+                Err(db_err) => future::err(db_err)
+            })
+            .from_err())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -354,27 +374,21 @@ pub fn create_build_ref (
         return From::from(e);
     }
 
-    state
-        .db
-        .send(CreateBuildRef {
-            data: NewBuildRef {
-                build_id: params.id,
-                ref_name: args.ref_name.clone(),
-                commit: args.commit.clone(),
-            }
-        })
+    db_request (&state,
+                NewBuildRef {
+                    build_id: params.id,
+                    ref_name: args.ref_name.clone(),
+                    commit: args.commit.clone(),
+                })
+        .and_then(move |buildref|
+                  match req.url_for("show_build_ref", &[params.id.to_string(), buildref.id.to_string()]) {
+                      Ok(url) => Ok(HttpResponse::Ok()
+                                    .header(http::header::LOCATION, url.to_string())
+                                    .json(buildref)),
+                      Err(e) => Ok(e.error_response())
+                  }
+        )
         .from_err()
-        .and_then(move |res| match res {
-            Ok(buildref) =>  {
-                match req.url_for("show_build_ref", &[params.id.to_string(), buildref.id.to_string()]) {
-                    Ok(url) => Ok(HttpResponse::Ok()
-                                  .header(http::header::LOCATION, url.to_string())
-                                  .json(buildref)),
-                    Err(e) => Ok(e.error_response())
-                }
-            },
-            Err(e) => Ok(e.error_response())
-        })
         .responder()
 }
 

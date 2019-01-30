@@ -8,6 +8,15 @@ use models::*;
 use errors::ApiError;
 use schema;
 
+pub trait DbRequest : std::marker::Send + std::marker::Sized + 'static {
+    type DbType: 'static + std::marker::Send;
+}
+pub struct DbRequestWrapper<T>(pub T);
+
+impl <T: DbRequest> Message for DbRequestWrapper<T> {
+    type Result = Result<T::DbType, ApiError>;
+}
+
 #[derive(Deserialize, Debug)]
 pub struct CreateBuild {
     pub data : NewBuild,
@@ -32,24 +41,22 @@ impl Handler<CreateBuild> for DbExecutor {
     }
 }
 
-
-#[derive(Deserialize, Debug)]
-pub struct CreateBuildRef {
-    pub data : NewBuildRef,
+impl DbRequest for NewBuildRef {
+    type DbType = BuildRef;
 }
 
-impl Message for CreateBuildRef {
+impl Message for NewBuildRef {
     type Result = Result<BuildRef, ApiError>;
 }
 
-impl Handler<CreateBuildRef> for DbExecutor {
-    type Result = Result<BuildRef, ApiError>;
+impl Handler<DbRequestWrapper<NewBuildRef>> for DbExecutor {
+    type Result = Result<<NewBuildRef as DbRequest>::DbType, ApiError>;
 
-    fn handle(&mut self, msg: CreateBuildRef, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: DbRequestWrapper<NewBuildRef>, _: &mut Self::Context) -> Self::Result {
         use self::schema::build_refs::dsl::*;
         let conn = &self.0.get().unwrap();
         diesel::insert_into(build_refs)
-            .values(&msg.data)
+            .values(&msg.0)
             .get_result::<BuildRef>(conn)
             .map_err(|e| {
                 From::from(e)
