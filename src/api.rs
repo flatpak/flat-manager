@@ -313,6 +313,27 @@ pub fn missing_objects(
         .json(MissingObjectsResponse { missing: missing })
 }
 
+fn validate_ref (ref_name: &String, req: &HttpRequest<AppState>) -> Result<(),ApiError>
+{
+    let ref_parts: Vec<&str> = ref_name.split('/').collect();
+
+    match ref_parts[0] {
+        "screenshots" => {
+            if ref_parts.len() != 2 {
+                return Err(ApiError::BadRequest(format!("Invalid ref_name {}", ref_name)))
+            }
+            Ok(())
+        },
+        "app" | "runtime" => {
+            if ref_parts.len() != 4 {
+                return Err(ApiError::BadRequest(format!("Invalid ref_name {}", ref_name)))
+            }
+            req.has_token_prefix(ref_parts[1])
+        },
+        _  => Err(ApiError::BadRequest(format!("Invalid ref_name {}", ref_name))),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateBuildRefArgs {
     #[serde(rename = "ref")] ref_name: String,
@@ -329,26 +350,9 @@ pub fn create_build_ref (
         return From::from(e);
     }
 
-    let ref_parts: Vec<&str> = args.ref_name.split('/').collect();
-
-    match ref_parts[0] {
-        "screenshots" => {
-            if ref_parts.len() != 2 {
-                return From::from(ApiError::BadRequest(format!("Invalid ref_name {}", args.ref_name)))
-            }
-        },
-        "app" | "runtime" => {
-            if ref_parts.len() != 4 {
-                return From::from(ApiError::BadRequest(format!("Invalid ref_name {}", args.ref_name)))
-            }
-            if let Err(e) = req.has_token_prefix(ref_parts[1]) {
-                return From::from(e);
-            }
-        },
-        _  => {
-            return From::from(ApiError::BadRequest(format!("Invalid ref_name {}", args.ref_name)))
-        }
-    };
+    if let Err(e) = validate_ref(&args.ref_name, &req) {
+        return From::from(e);
+    }
 
     state
         .db
