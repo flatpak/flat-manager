@@ -297,7 +297,7 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
 #[derive(Deserialize, Debug)]
 pub struct StartPublishJob {
     pub id: i32,
-    pub subsets: Option<Vec<String>>
+    pub subsets: Vec<String>
 }
 
 impl DbRequest for StartPublishJob {

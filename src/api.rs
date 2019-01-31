@@ -601,20 +601,40 @@ pub fn publish(
         return From::from(e);
     }
 
+    let subsets = args.subsets.as_ref().cloned().unwrap_or(Vec::new());
+    let subsets2 = subsets.clone();
+
     let job_queue = state.job_queue.clone();
-    db_request (&state,
-                StartPublishJob {
-                    id: params.id,
-                    subsets: args.subsets.clone(),
-                })
-        .and_then(move |job| {
-            job_queue.do_send(ProcessJobs());
-            match req.url_for("show_publish_job", &[params.id.to_string()]) {
-                Ok(url) => Ok(HttpResponse::Ok()
-                              .header(http::header::LOCATION, url.to_string())
-                              .json(job)),
-                Err(e) => Ok(e.error_response())
+    let build_id = params.id;
+    let req2 = req.clone();
+    let config = state.config.clone();
+
+    db_request (&state, LookupBuild { id: build_id })
+        .and_then (move |build| {
+            req2.has_token_repo(&build.repo)?;
+            let repoconfig = config.get_repoconfig(&build.repo)?;
+            for subset in subsets.iter() {
+                if !repoconfig.subsets.contains_key (subset) {
+                    return Err(ApiError::InternalServerError(format!("Subset {} unknown", subset)))
+                }
             }
+            Ok(())
+        })
+        .and_then (move |_ok| {
+            db_request (&state,
+                        StartPublishJob {
+                            id: build_id,
+                            subsets: subsets2,
+                        })
+                .and_then(move |job| {
+                    job_queue.do_send(ProcessJobs());
+                    match req.url_for("show_publish_job", &[params.id.to_string()]) {
+                        Ok(url) => Ok(HttpResponse::Ok()
+                                      .header(http::header::LOCATION, url.to_string())
+                                      .json(job)),
+                        Err(e) => Ok(e.error_response())
+                    }
+                })
         })
         .from_err()
         .responder()
