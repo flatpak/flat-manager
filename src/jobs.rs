@@ -378,6 +378,7 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job_id: i32, 
 
 fn do_publish (job_id: i32,
                build_id: i32,
+               subsets: &Vec<String>,
                build: &models::Build,
                build_refs: &Vec<models::BuildRef>,
                config: &Arc<Config>,
@@ -393,9 +394,19 @@ fn do_publish (job_id: i32,
     let mut cmd = Command::new("flatpak");
     cmd
         .arg("build-commit-from")
+        .arg("--force")             // Always generate a new commit even if nothing changed
         .arg("--no-update-summary"); // We update it separately
 
     add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
+
+    for subset in subsets.iter() {
+        match repoconfig.subsets.get(subset) {
+            Some(subsetconfig) => {
+                cmd.arg(format!("--extra-collection-id={}", subsetconfig.collection_id));
+            },
+            None => error!("Publish job has unknown subset argument {}", subset),
+        }
+    }
 
     cmd
         .arg(&src_repo_arg)
@@ -506,7 +517,7 @@ fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32
     }
 
     // Do the actual work
-    let res = do_publish(job_id, job.build, &build_data, &build_refs, &executor.config, repoconfig, conn);
+    let res = do_publish(job_id, job.build, &job.subsets, &build_data, &build_refs, &executor.config, repoconfig, conn);
 
     // Update the publish repo state in db
 
