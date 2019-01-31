@@ -266,9 +266,9 @@ def commit_build(session, build_url, wait, token):
         job = wait_for_job (session, job_url, token);
     return job
 
-def publish_build(session, build_url, wait, token):
+def publish_build(session, build_url, wait, token, subsets):
     print("Publishing build %s" % (build_url))
-    resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= {} )
+    resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { "subsets": subsets} )
     if resp.status_code != 200:
         print ("resp.json(): ", resp.json())
         raise ApiError(resp, resp.json())
@@ -371,14 +371,14 @@ def push_command(args, session):
         commit_build(session, args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
-        publish_build(session, args.build_url, args.wait, args.token)
+        publish_build(session, args.build_url, args.wait, args.token, args.subset)
 
 def commit_command(args, session):
     commit_build(session, args.build_url, args.wait, args.token)
     return 0
 
 def publish_command(args, session):
-    publish_build(session, args.build_url, args.wait, args.token)
+    publish_build(session, args.build_url, args.wait, args.token, args.subset)
     return 0
 
 def purge_command(args, session):
@@ -418,6 +418,7 @@ if __name__ == '__main__':
                              help='commit build after pushing')
     push_parser.add_argument('--publish', action='store_true',
                              help='publish build after commiting')
+    push_parser.add_argument('--subset', action='append', help='publish to this subset')
     push_parser.add_argument('--wait', action='store_true',
                              help='wait for commit/publish to finish')
     push_parser.add_argument('--minimal-token', action='store_true',
@@ -433,6 +434,7 @@ if __name__ == '__main__':
     publish_parser = subparsers.add_parser('publish', help='Publish build')
     publish_parser.add_argument('--wait', action='store_true',
                              help='wait for publish to finish')
+    publish_parser.add_argument('--subset', action='append', help='add to this subset')
     publish_parser.add_argument('build_url', help='remote build url')
     publish_parser.set_defaults(func=publish_command)
 
