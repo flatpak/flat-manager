@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tempfile::NamedTempFile;
 use chrono::{Utc};
 use jwt;
+use serde::Serialize;
 
 use app::{AppState,Claims};
 use errors::ApiError;
@@ -74,8 +75,8 @@ fn db_request<M: DbRequest> (state: &AppState,
             .from_err())
 }
 
-fn respond_with_url<T>(data: &T, req: &HttpRequest<AppState>, name: &str, elements: &[String]) -> Result<actix_web::HttpResponse, ApiError> where
-    T: serde::Serialize,
+fn respond_with_url<T>(data: &T, req: &HttpRequest<AppState>, name: &str, elements: &[String]) -> Result<HttpResponse, ApiError> where
+    T: Serialize,
 {
     match req.url_for(name, elements.clone()) {
         Ok(url) => Ok(HttpResponse::Ok()

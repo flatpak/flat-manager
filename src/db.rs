@@ -8,8 +8,8 @@ use models::*;
 use errors::ApiError;
 use schema;
 
-pub trait DbRequest : std::marker::Send + std::marker::Sized + 'static {
-    type DbType: 'static + std::marker::Send;
+pub trait DbRequest : Send + Sized + 'static {
+    type DbType: 'static + Send;
 }
 pub struct DbRequestWrapper<T>(pub T);
 
