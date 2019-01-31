@@ -22,11 +22,11 @@
             "gpg-key": null,
             "subsets": {
                 "all": {
-                    "collection-id": "org.test.Stable",
+                    "collection-id": "org.test.Beta",
                     "base-url": null
                 },
                 "free": {
-                    "collection-id": "org.test.Stable.test",
+                    "collection-id": "org.test.Beta.test",
                     "base-url": null
                 }
             }
