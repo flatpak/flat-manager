@@ -57,7 +57,7 @@ pub enum ApiError {
     InvalidToken,
 
     #[fail(display = "NotEnoughPermissions")]
-    NotEnoughPermissions,
+    NotEnoughPermissions(String),
 }
 
 impl From<DieselError> for ApiError {
@@ -110,9 +110,9 @@ impl ApiError {
                 "status": 401,
                 "message": "Invalid token",
             }),
-            ApiError::NotEnoughPermissions => json!({
+            ApiError::NotEnoughPermissions(ref message) => json!({
                 "status": 401,
-                "message": "Not enough permissions",
+                "message": format!("Not enough permissions: {})", message),
             }),
         }
         .to_string()
@@ -124,7 +124,7 @@ impl ApiError {
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::BadRequest(ref _message) => StatusCode::BAD_REQUEST,
             ApiError::InvalidToken => StatusCode::UNAUTHORIZED,
-            ApiError::NotEnoughPermissions => StatusCode::UNAUTHORIZED,
+            ApiError::NotEnoughPermissions(ref _message) => StatusCode::UNAUTHORIZED,
         }
     }
 }
@@ -133,6 +133,9 @@ impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         if let ApiError::InternalServerError(internal_message) = self {
             error!("Responding with internal error: {}", internal_message);
+        }
+        if let ApiError::NotEnoughPermissions(internal_message) = self {
+            error!("Responding with NotEnoughPermissions error: {}", internal_message);
         }
         HttpResponse::build(self.status_code()).json(self.to_json())
     }

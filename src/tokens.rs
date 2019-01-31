@@ -8,8 +8,8 @@ use errors::ApiError;
 
 pub trait ClaimsValidator {
     fn get_claims(&self) -> Option<Claims>;
-    fn validate_claims<Func>(&self, func: Func) -> bool
-        where Func: Fn(&Claims) -> bool;
+    fn validate_claims<Func>(&self, func: Func) -> Result<(), ApiError>
+        where Func: Fn(&Claims) -> Result<(), ApiError>;
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError>;
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError>;
@@ -61,31 +61,29 @@ impl<S> ClaimsValidator for HttpRequest<S> {
         self.extensions().get::<Claims>().cloned()
     }
 
-    fn validate_claims<Func>(&self, func: Func) -> bool
-        where Func: Fn(&Claims) -> bool {
+    fn validate_claims<Func>(&self, func: Func) -> Result<(), ApiError>
+        where Func: Fn(&Claims) -> Result<(), ApiError> {
         if let Some(claims) = self.extensions().get::<Claims>() {
             func(claims)
         } else {
-            false
+            Err(ApiError::NotEnoughPermissions("No token specified".to_string()))
         }
     }
 
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError> {
-        if self.validate_claims(
+        self.validate_claims(
             |claims| {
                 // Matches using a path-prefix style comparison:
                 //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"
                 //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
-                if sub_has_prefix(required_sub, &claims.sub) {
-                    claims.scope.contains(&required_scope.to_string())
-                } else {
-                    false
+                if !sub_has_prefix(required_sub, &claims.sub) {
+                    return Err(ApiError::NotEnoughPermissions("Not matching sub in token".to_string()))
                 }
-            }) {
-            Ok(())
-        } else {
-            Err(ApiError::NotEnoughPermissions)
-        }
+                if !claims.scope.contains(&required_scope.to_string()) {
+                    return Err(ApiError::NotEnoughPermissions("Not matching scope in token".to_string()))
+                }
+                Ok(())
+            })
     }
 
     /* A token prefix is something like org.my.App, and should allow
@@ -94,22 +92,22 @@ impl<S> ClaimsValidator for HttpRequest<S> {
      * org.my.AppSuffix.
      */
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
-        if self.validate_claims(|claims| id_matches_one_prefix(id, &claims.prefixes)) {
+        self.validate_claims(|claims| {
+            if !id_matches_one_prefix(id, &claims.prefixes) {
+                return Err(ApiError::NotEnoughPermissions("Not matching prefix in token".to_string()));
+            }
             Ok(())
-        } else {
-            Err(ApiError::NotEnoughPermissions)
-        }
+        })
     }
 
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError> {
-        if self.validate_claims(
+        self.validate_claims(
             |claims| {
-                claims.repos.contains(&repo.to_string())
-            }) {
-            Ok(())
-        } else {
-            Err(ApiError::NotEnoughPermissions)
-        }
+                if !claims.repos.contains(&repo.to_string()) {
+                    return Err(ApiError::NotEnoughPermissions("Not matching repo in token".to_string()))
+                }
+                Ok(())
+            })
     }
 }
 

@@ -141,7 +141,7 @@ pub fn token_subset(
                 }
             }
     };
-    ApiError::NotEnoughPermissions.error_response()
+    ApiError::NotEnoughPermissions("No token presented".to_string()).error_response()
 }
 
 #[derive(Deserialize)]
