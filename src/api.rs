@@ -74,6 +74,17 @@ fn db_request<M: DbRequest> (state: &AppState,
             .from_err())
 }
 
+fn respond_with_url<T>(data: &T, req: &HttpRequest<AppState>, name: &str, elements: &[String]) -> Result<actix_web::HttpResponse, ApiError> where
+    T: serde::Serialize,
+{
+    match req.url_for(name, elements.clone()) {
+        Ok(url) => Ok(HttpResponse::Ok()
+                      .header(http::header::LOCATION, url.to_string())
+                      .json(data)),
+        Err(e) => Err(ApiError::InternalServerError(format!("Can't get url for {} {:?}: {}", name, elements, e.to_string()))),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenSubsetArgs {
     sub: String,
@@ -198,12 +209,7 @@ pub fn create_build(
             init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
             init_ostree_repo (&upload_path, &repoconfig.path, build.id, &None)?;
 
-            match req.url_for("show_build", &[build.id.to_string()]) {
-                Ok(url) => Ok(HttpResponse::Ok()
-                              .header(http::header::LOCATION, url.to_string())
-                              .json(build)),
-                Err(e) => Ok(e.error_response())
-            }
+            respond_with_url(&build, &req, "show_build", &[build.id.to_string()])
         })
         .from_err()
         .responder()
@@ -361,14 +367,8 @@ pub fn create_build_ref (
                             commit: args.commit.clone(),
                         })
         })
-        .and_then(move |buildref| {
-            match req.url_for("show_build_ref", &[params.id.to_string(), buildref.id.to_string()]) {
-                Ok(url) => Ok(HttpResponse::Ok()
-                              .header(http::header::LOCATION, url.to_string())
-                              .json(buildref)),
-                Err(e) => Ok(e.error_response())
-            }
-        })
+        .and_then(move |buildref| respond_with_url(&buildref, &req, "show_build_ref",
+                                                   &[params.id.to_string(), buildref.id.to_string()]))
         .from_err()
         .responder()
 }
@@ -555,12 +555,7 @@ pub fn commit(
         })
         .and_then(move |job| {
             job_queue.do_send(ProcessJobs());
-            match req.url_for("show_commit_job", &[params.id.to_string()]) {
-                Ok(url) => Ok(HttpResponse::Ok()
-                              .header(http::header::LOCATION, url.to_string())
-                              .json(job)),
-                Err(e) => Ok(e.error_response())
-            }
+            respond_with_url(&job, &req, "show_commit_job", &[params.id.to_string()])
         })
         .from_err()
         .responder()
@@ -628,12 +623,7 @@ pub fn publish(
                         })
                 .and_then(move |job| {
                     job_queue.do_send(ProcessJobs());
-                    match req.url_for("show_publish_job", &[params.id.to_string()]) {
-                        Ok(url) => Ok(HttpResponse::Ok()
-                                      .header(http::header::LOCATION, url.to_string())
-                                      .json(job)),
-                        Err(e) => Ok(e.error_response())
-                    }
+                    respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
                 })
         })
         .from_err()
@@ -673,12 +663,7 @@ pub fn purge(
                         })
         })
         .and_then(move |build| {
-            match req.url_for("show_build", &[build_id.to_string()]) {
-                Ok(url) => Ok(HttpResponse::Ok()
-                              .header(http::header::LOCATION, url.to_string())
-                              .json(build)),
-                Err(e) => Ok(e.error_response())
-            }
+            respond_with_url(&build, &req, "show_build", &[build_id.to_string()])
         })
         .from_err()
         .responder()
