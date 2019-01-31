@@ -103,7 +103,7 @@ impl<S> ClaimsValidator for HttpRequest<S> {
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError> {
         self.validate_claims(
             |claims| {
-                if !claims.repos.contains(&repo.to_string()) {
+                if !repo_matches_one_claimed(&repo.to_string(), &claims.repos) {
                     return Err(ApiError::NotEnoughPermissions("Not matching repo in token".to_string()))
                 }
                 Ok(())
