@@ -1,7 +1,7 @@
-repo-manager
+flat-manager
 ============
 
-repo-manager serves and maintains a flatpak repostitory. You point it
+flat-manager serves and maintains a flatpak repostitory. You point it
 at an ostree repository and it will allow flatpak clients to install
 apps from the repo over http, and additionally it has a http API that
 lets you upload new builds and otherwise manage the repository.
@@ -27,7 +27,7 @@ The build the server by running:
 Building client
 ==================
 
-repo-manager contains a python3 based client that can be used
+flat-manager contains a python3 based client that can be used
 to talk to the server. To run this you need python 3 as
 well as the aiohttp packages, installed via pip or the
 distribution packages. On fedora this can be installed by:
@@ -48,7 +48,7 @@ that can be used as a basis:
 Database
 --------
 
-repo-manager uses a postgresql database to store information, and
+flat-manager uses a postgresql database to store information, and
 requires you to specity the address to it in the DATABASE_URL
 environment variable. The default .env points this at:
 
@@ -71,7 +71,7 @@ And create the 'repo' database owned by your user:
 Repos
 -----
 
-repo-manager maintains a main repository in a path specified by
+flat-manager maintains a main repository in a path specified by
 $REPO_PATH, and a set of dynamically generated repos beneath
 $BUILD_REPO_BASE_PATH.  The default values for these are 'repo' and
 'build-repo', which for testing can be initialized by doing:
@@ -116,7 +116,7 @@ Running
 
 To start the server run:
 
-    cargo run --bin repo-manager
+    cargo run --bin flat-manager
 
 Which will listen to port 8080 by default.
 

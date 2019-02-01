@@ -51,7 +51,7 @@ fn main() {
 
     {
         let mut ap = ArgumentParser::new();
-        ap.set_description("Generate token for repo-manager.");
+        ap.set_description("Generate token for flat-manager.");
         ap.refer(&mut verbose)
             .add_option(&["-v", "--verbose"], StoreTrue,
                         "Be verbose");
