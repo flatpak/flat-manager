@@ -374,28 +374,46 @@ pub fn create_build_ref (
         .responder()
 }
 
-fn objectname_is_valid(name: &str) -> bool {
-    let v: Vec<&str> = name.splitn(2, ".").collect();
-
-    v.len() == 2 &&
-        v[0].len() == 64  &&
-        !v[0].contains(|c: char| !(c.is_digit(16) && !c.is_uppercase())) &&
-        (v[1] == "dirmeta" ||
-         v[1] == "dirtree" ||
-         v[1] == "filez" ||
-         v[1] == "commit")
+fn is_all_lower_hexdigits(s: &str) -> bool {
+    !s.contains(|c: char| !(c.is_digit(16) && !c.is_uppercase()))
 }
 
-fn get_object_name(field: &multipart::Field<dev::Payload>) -> error::Result<String, ApiError> {
+fn filename_parse_object(filename: &str) -> Option<path::PathBuf> {
+    let v: Vec<&str> = filename.split(".").collect();
+
+    if v.len() != 2 {
+        return None
+    }
+
+    if v[0].len() != 64 || !is_all_lower_hexdigits(v[0]) {
+        return None
+    }
+
+    if v[1] != "dirmeta" &&
+        v[1] != "dirtree" &&
+        v[1] != "filez" &&
+        v[1] != "commit" {
+            return None
+        }
+
+    Some(path::Path::new("objects").join(&filename[..2]).join(&filename[2..]))
+}
+
+fn get_upload_subpath(field: &multipart::Field<dev::Payload>) -> error::Result<path::PathBuf, ApiError> {
     let cd = field.content_disposition().ok_or(
         ApiError::BadRequest("No content disposition for multipart item".to_string()))?;
     let filename = cd.get_filename().ok_or(
         ApiError::BadRequest("No filename for multipart item".to_string()))?;
-    if !objectname_is_valid(filename) {
-        Err(ApiError::BadRequest("Invalid object name".to_string()))
-    } else {
-        Ok(filename.to_string())
+    // We verify the format below, but just to make sure we never allow anything like a path
+    if filename.contains('/') {
+        return Err(ApiError::BadRequest("Invalid upload filename".to_string()));
     }
+
+    if let Some(path) = filename_parse_object(filename) {
+        return Ok(path)
+    }
+
+    Err(ApiError::BadRequest("Invalid upload filename".to_string()))
 }
 
 struct UploadState {
@@ -403,32 +421,33 @@ struct UploadState {
 }
 
 fn start_save(
-    object: String,
+    subpath: &path::PathBuf,
     state: &Arc<UploadState>,
 ) -> Result<(NamedTempFile,path::PathBuf)> {
-    let objects_dir = state.repo_path.join("objects");
-    let object_dir = objects_dir.join(&object[..2]);
-    let object_file = object_dir.join(&object[2..]);
 
-    fs::create_dir_all(object_dir)?;
+    let absolute_path = state.repo_path.join(subpath);
+
+    if let Some(parent) = absolute_path.parent() {
+        fs::create_dir_all(&parent)?;
+    }
 
     let tmp_dir = state.repo_path.join("tmp");
     fs::create_dir_all(&tmp_dir)?;
 
     let named_file = NamedTempFile::new_in(&tmp_dir)?;
-    Ok((named_file, object_file))
+    Ok((named_file, absolute_path))
 }
 
 fn save_file(
     field: multipart::Field<dev::Payload>,
     state: &Arc<UploadState>
 ) -> Box<Future<Item = i64, Error = ApiError>> {
-    let object = match get_object_name (&field) {
-        Ok(name) => name,
+    let repo_subpath = match get_upload_subpath (&field) {
+        Ok(subpath) => subpath,
         Err(e) => return Box::new(future::err(e)),
     };
 
-    let (named_file, object_file) = match start_save (object, state) {
+    let (named_file, object_file) = match start_save (&repo_subpath, state) {
         Ok((named_file, object_file)) => (named_file, object_file),
         Err(e) => return Box::new(future::err(ApiError::InternalServerError(e.to_string()))),
     };
