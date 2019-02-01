@@ -150,8 +150,8 @@ pub struct JobPathParams {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct JobArgs {
-    #[serde(rename = "log-offset")]
     log_offset: Option<usize>,
 }
 
@@ -204,7 +204,7 @@ pub fn create_build(
                     repo: args.repo.clone(),
                 })
         .and_then(move |build| {
-            let build_repo_path = state.config.build_repo_base_path.join(build.id.to_string());
+            let build_repo_path = state.config.build_repo_base.join(build.id.to_string());
             let upload_path = build_repo_path.join("upload");
 
             init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
@@ -286,11 +286,11 @@ pub struct MissingObjectsResponse {
 fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 {
     let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
-    let build_path = state.config.build_repo_base_path.join(build_id.to_string()).join("upload").join(&subpath);
+    let build_path = state.config.build_repo_base.join(build_id.to_string()).join("upload").join(&subpath);
     if build_path.exists() {
         true
     } else {
-        let parent_path = state.config.build_repo_base_path.join(build_id.to_string()).join("parent").join(&subpath);
+        let parent_path = state.config.build_repo_base.join(build_id.to_string()).join("parent").join(&subpath);
         parent_path.exists()
     }
 }
@@ -490,7 +490,7 @@ pub fn upload(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return From::from(e);
     }
-    let uploadstate = Arc::new(UploadState { repo_path: state.config.build_repo_base_path.join(params.id.to_string()).join("upload") });
+    let uploadstate = Arc::new(UploadState { repo_path: state.config.build_repo_base.join(params.id.to_string()).join("upload") });
     let req2 = req.clone();
     db_request (&state, LookupBuild { id: params.id })
         .and_then (move |build| req2.has_token_repo(&build.repo))
@@ -640,7 +640,7 @@ pub fn purge(
         return From::from(e);
     }
 
-    let build_repo_path = state.config.build_repo_base_path.join(params.id.to_string());
+    let build_repo_path = state.config.build_repo_base.join(params.id.to_string());
     let build_id = params.id;
     let req2 = req.clone();
     let state2 = state.clone();

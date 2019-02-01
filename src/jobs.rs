@@ -212,7 +212,7 @@ fn do_commit_build_refs (job_id: i32,
                          config: &Arc<Config>,
                          repoconfig: &RepoConfig,
                          conn: &PgConnection)  -> JobResult<serde_json::Value> {
-    let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
+    let build_repo_path = config.build_repo_base.join(build_id.to_string());
     let upload_path = build_repo_path.join("upload");
 
     let mut src_repo_arg = OsString::from("--src-repo=");
@@ -384,7 +384,7 @@ fn do_publish (job_id: i32,
                config: &Arc<Config>,
                repoconfig: &RepoConfig,
                conn: &PgConnection)  -> JobResult<serde_json::Value> {
-    let build_repo_path = config.build_repo_base_path.join(build_id.to_string());
+    let build_repo_path = config.build_repo_base.join(build_id.to_string());
 
     let mut src_repo_arg = OsString::from("--src-repo=");
     src_repo_arg.push(&build_repo_path);

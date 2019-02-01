@@ -45,23 +45,20 @@ pub struct Claims {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "kebab-case")]
 pub struct SubsetConfig {
-    #[serde(rename = "collection-id")]
     pub collection_id: String,
-    #[serde(rename = "base-url")]
     pub base_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "kebab-case")]
 pub struct RepoConfig {
     pub path: PathBuf,
-    #[serde(rename = "collection-id")]
     pub collection_id: Option<String>,
-    #[serde(rename = "gpg-key")]
     pub gpg_key: Option<String>,
     #[serde(skip)]
     pub gpg_key_content: Option<String>,
-    #[serde(rename = "base-url")]
     pub base_url: Option<String>,
     pub subsets: HashMap<String, SubsetConfig>,
 }
@@ -75,23 +72,20 @@ fn default_port() -> i32 {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "kebab-case")]
 pub struct Config {
-    #[serde(rename = "database-url")]
     pub database_url: String,
-    #[serde(rename = "host", default = "default_host")]
+    #[serde(default = "default_host")]
     pub host: String,
     #[serde(default = "default_port")]
     pub port: i32,
-    #[serde(rename = "base-url", default)]
+    #[serde(default)]
     pub base_url: String,
-    #[serde(rename = "gpg-homedir")]
     pub gpg_homedir: Option<String>,
     #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
     pub secret: Vec<u8>,
     pub repos: HashMap<String, RepoConfig>,
-    #[serde(rename = "build-repo-base")]
-    pub build_repo_base_path: PathBuf,
-    #[serde(rename = "build-gpg-key")]
+    pub build_repo_base: PathBuf,
     pub build_gpg_key: Option<String>,
     #[serde(skip)]
     pub build_gpg_key_content: Option<String>,
@@ -159,9 +153,9 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
     // The id won't have slashes, but it could have ".." or some other unsafe thing
     let safe_id = PathBuf::from_param(&id)?;
-    let path = Path::new(&state.config.build_repo_base_path).join(&safe_id).join(&relpath);
+    let path = Path::new(&state.config.build_repo_base).join(&safe_id).join(&relpath);
     NamedFile::open(path).or_else(|_e| {
-        let fallback_path = Path::new(&state.config.build_repo_base_path).join(&safe_id).join("parent").join(&relpath);
+        let fallback_path = Path::new(&state.config.build_repo_base).join(&safe_id).join("parent").join(&relpath);
         Ok(NamedFile::open(fallback_path)?)
     })
 }
