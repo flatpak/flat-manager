@@ -16,6 +16,8 @@
 
 import requests
 import gzip
+import base64
+import binascii
 import json
 import logging
 import os
@@ -163,6 +165,14 @@ def upload_files(build_url, token, files):
     file_dict = {}
     for f in files:
         f.add_to_dict(file_dict)
+    session = requests.Session()
+    resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+
+def upload_deltafile(build_url, token, f):
+    file_dict = {}
+    f.add_to_dict(file_dict)
     session = requests.Session()
     resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
@@ -323,6 +333,12 @@ def create_command(args):
     print(resp.headers['location'])
     return 0
 
+def delta_name_part_encode(commit):
+    return base64.b64encode(binascii.unhexlify(commit), b"+_")[:-1].decode("utf-8")
+
+def delta_name_encode (delta):
+    return "-".join(map(delta_name_part_encode, delta.split("-")))
+
 def push_command(args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
@@ -371,6 +387,24 @@ def push_command(args):
     # Then all the metadata
     print("Uploading metadata objects")
     upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
+
+    _, deltas = local_repo.list_static_delta_names ()
+    print("deltas: " + str(deltas))
+    if len(deltas) > 0:
+        print("Uploading deltas")
+
+        for ref, commit in refs.items():
+            # Skip screenshots here
+            if ref.startswith("app/") or ref.startswith("runtime/"):
+                for delta in deltas:
+                    if delta == commit or delta.endswith("-" + commit):
+                        print(" %s: %s" % (ref, delta))
+                        delta_name = delta_name_encode (delta)
+                        delta_dir = args.repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
+                        parts = os.listdir(delta_dir)
+                        for part in parts:
+                            f = NamedFilePart(delta_dir + "/" + part, delta_name + "." + part + ".delta")
+                            upload_deltafile(args.build_url, token, f)
 
     # Then the refs
     for ref, commit in refs.items():
