@@ -45,14 +45,14 @@ pub struct Claims {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SubsetConfig {
     pub collection_id: String,
     pub base_url: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RepoConfig {
     pub path: PathBuf,
     pub collection_id: Option<String>,
@@ -72,7 +72,7 @@ fn default_port() -> i32 {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     pub database_url: String,
     #[serde(default = "default_host")]
