@@ -80,12 +80,13 @@ app to work. This is not required in production though.
 Repos
 -----
 
-flat-manager maintains a main repository in a path specified by
-$REPO_PATH, and a set of dynamically generated repos beneath
-$BUILD_REPO_BASE_PATH.  The default values for these are 'repo' and
-'build-repo', which for testing can be initialized by doing:
+flat-manager maintains a set of repositories specified in the config,
+as well as a set of dynamically generated repos beneath the configured
+`build-repo-base` path. For testing with the example config these can
+be initialized by doing:
 
     ostree --repo=repo init --mode=archive-z2
+    ostree --repo=beta-repo init --mode=archive-z2
     mkdir build-repo
 
 On a deployed system these should be stored elsewhere, but make sure
@@ -96,13 +97,13 @@ Tokens
 ------
 
 All requests to the API requires a token. Token are signed with a secret
-that has to be stored on the server. The default .env contans:
+that has to be stored on the server. The default config contans:
 
-    # base64 of "secret", don't use in production!
-    SECRET=c2VjcmV0
+    "secret": "c2VjcmV0"
 
-Which obviously should not be used in production, but works for local
-testing. For testing you can generate one based on some random data:
+This is base64 of "secret", so don't use this in production, but it
+works for local testing. Otherwise you can generate one based on
+some random data:
 
     dd bs=256 count=1 if=/dev/random of=/dev/stdout | base64 -w 0
 
@@ -113,7 +114,7 @@ your token for sharing with others (for example sending the above
 upload-only token to a builder), but you can also generate a
 token with the gentoken command:
 
-    $ echo -n "secret" | base64 | cargo run --bin gentoken test
+    $ echo -n "secret" | base64 | cargo run --bin gentoken -- --base64 --secret-file - --name testtoken
 
 The above matches the default secret, so can be used for testing.
 
