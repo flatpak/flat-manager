@@ -399,6 +399,43 @@ fn filename_parse_object(filename: &str) -> Option<path::PathBuf> {
     Some(path::Path::new("objects").join(&filename[..2]).join(&filename[2..]))
 }
 
+fn is_all_digits(s: &str) -> bool {
+    !s.contains(|c: char| !c.is_digit(10))
+}
+
+/* Delta part filenames with no slashes, ending with .{part}.delta.
+ * Examples:
+ * oS6QiSBxQF5nJZBVS6MJ6tCk_KN63I72Y7QipgUTh5w-sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.superblock.delta
+ * oS6QiSBxQF5nJZBVS6MJ6tCk_KN63I72Y7QipgUTh5w-sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.0.delta
+ * sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.superblock.delta
+ * sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.0.delta
+ */
+fn filename_parse_delta(name: &str) -> Option<path::PathBuf> {
+    let v: Vec<&str> = name.split(".").collect();
+
+    if v.len() != 3 {
+        return None
+    }
+
+    if v[2] != "delta" {
+        return None
+    }
+
+    if v[1] != "superblock" && !is_all_digits(v[1]) {
+        return None
+    }
+
+    if !(v[0].len() == 43 ||
+         (v[0].len() == 87 && v[0].chars().nth(43) == Some('-'))) {
+        return None
+    }
+
+    Some(path::Path::new("deltas")
+         .join(&v[0][..2])
+         .join(&v[0][2..])
+         .join(&v[1]))
+}
+
 fn get_upload_subpath(field: &multipart::Field<dev::Payload>) -> error::Result<path::PathBuf, ApiError> {
     let cd = field.content_disposition().ok_or(
         ApiError::BadRequest("No content disposition for multipart item".to_string()))?;
@@ -410,6 +447,10 @@ fn get_upload_subpath(field: &multipart::Field<dev::Payload>) -> error::Result<p
     }
 
     if let Some(path) = filename_parse_object(filename) {
+        return Ok(path)
+    }
+
+    if let Some(path) = filename_parse_delta(filename) {
         return Ok(path)
     }
 
