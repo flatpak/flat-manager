@@ -37,22 +37,27 @@ distribution packages. On fedora this can be installed by:
 Configuration
 =============
 
-All configuration is done via environment variables, but it will
-also look for a '.env' file in the current directory or one
-of its parents. The source repository contains example.env
-that can be used as a basis:
+flat-manager reads the "config.json" file on startup in the
+current directory, although the REPO_CONFIG environment variable
+can be set to a different file. If you have a .env file in the
+current directory or one of its parents this is read and used
+to initialize environment variables too.
+
+The source repository contains an example.env and an
+example-config.json that can be used as a basis:
 
     cp example.env .env
-    # edit .env
+    cp example-config.json config.json
+    # edit config.json
 
 Database
 --------
 
 flat-manager uses a postgresql database to store information, and
-requires you to specity the address to it in the DATABASE_URL
-environment variable. The default .env points this at:
+requires you to specity the address to it in the config file.
+The default example-config.json points this at:
 
-    DATABASE_URL=postgres://%2Fvar%2Frun%2Fpostgresql/repo
+    "database-url": "postgres://%2Fvar%2Frun%2Fpostgresql/repo",
 
 This is a database called 'repo' accessed via the default (at
 least on fedora) unix domain socket. To install and start
@@ -67,6 +72,10 @@ And create the 'repo' database owned by your user:
 
     sudo -u postgres createuser $(whoami)
     sudo -u postgres createdb --owner=$(whoami) repo
+
+Note that if you're doing development work it is important to also
+have DATABASE_URL=... set in the .env file for the diesel commandline
+app to work. This is not required in production though.
 
 Repos
 -----
