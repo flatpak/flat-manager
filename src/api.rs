@@ -373,6 +373,57 @@ pub fn create_build_ref (
         .responder()
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AddExtraIdsArgs {
+    ids: Vec<String>,
+}
+
+fn validate_id (id: &String) -> Result<(),ApiError>
+{
+    if !id.split('.').all(|element| element.len() > 0 && element.chars().all(|ch| ch.is_alphanumeric())) {
+        Err(ApiError::BadRequest(format!("Invalid extra id {}", id)))
+    } else {
+        Ok(())
+    }
+}
+
+pub fn add_extra_ids (
+    args: Json<AddExtraIdsArgs>,
+    params: Path<BuildPathParams>,
+    state: State<AppState>,
+    req: HttpRequest<AppState>,
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
+        return From::from(e);
+    }
+
+    for ref id in args.ids.iter() {
+        if let Err(e) = validate_id(id) {
+            return From::from(e);
+        }
+    }
+
+    let req2 = req.clone();
+    let build_id = params.id;
+    db_request (&state, LookupBuild { id: params.id })
+        .and_then (move |build| {
+            /* Validate token */
+            req2.has_token_repo(&build.repo)
+        })
+        .and_then (move |_ok| {
+            db_request (&state,
+                        AddExtraIds {
+                            build_id: build_id,
+                            ids: args.ids.clone(),
+                        })
+        })
+        .and_then(move |build| respond_with_url(&build, &req, "show_build",
+                                                &[build_id.to_string()]))
+        .from_err()
+        .responder()
+}
+
+
 fn is_all_lower_hexdigits(s: &str) -> bool {
     !s.contains(|c: char| !(c.is_digit(16) && !c.is_uppercase()))
 }
@@ -643,11 +694,10 @@ pub fn get_publish_job(
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublishArgs {
-    subsets: Option<Vec<String>>
 }
 
 pub fn publish(
-    args: Json<PublishArgs>,
+    _args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
     state: State<AppState>,
     req: HttpRequest<AppState>,
@@ -656,30 +706,16 @@ pub fn publish(
         return From::from(e);
     }
 
-    let subsets = args.subsets.as_ref().cloned().unwrap_or(Vec::new());
-    let subsets2 = subsets.clone();
-
     let job_queue = state.job_queue.clone();
     let build_id = params.id;
     let req2 = req.clone();
-    let config = state.config.clone();
 
     db_request (&state, LookupBuild { id: build_id })
-        .and_then (move |build| {
-            req2.has_token_repo(&build.repo)?;
-            let repoconfig = config.get_repoconfig(&build.repo)?;
-            for subset in subsets.iter() {
-                if !repoconfig.subsets.contains_key (subset) {
-                    return Err(ApiError::InternalServerError(format!("Subset {} unknown", subset)))
-                }
-            }
-            Ok(())
-        })
+        .and_then (move |build| req2.has_token_repo(&build.repo) )
         .and_then (move |_ok| {
             db_request (&state,
                         StartPublishJob {
                             id: build_id,
-                            subsets: subsets2,
                         })
                 .and_then(move |job| {
                     job_queue.do_send(ProcessJobs());

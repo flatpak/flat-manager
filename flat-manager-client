@@ -210,6 +210,15 @@ def create_ref(build_url, token, ref, commit):
     data = resp.json()
     return data;
 
+def add_extra_ids(build_url, token, extra_ids):
+    print("Adding extra ids %s" % (extra_ids))
+    session = requests.Session()
+    resp = session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
+    if resp.status_code != 200:
+        raise ApiError(resp, resp.json())
+    data = resp.json()
+    return data;
+
 def get_build(build_url, token):
     session = requests.Session()
     resp = session.get(build_url, headers={'Authorization': 'Bearer ' + token})
@@ -282,10 +291,10 @@ def commit_build(build_url, wait, token):
         job = wait_for_job (job_url, token);
     return job
 
-def publish_build(build_url, wait, token, subsets):
+def publish_build(build_url, wait, token):
     print("Publishing build %s" % (build_url))
     session = requests.Session()
-    resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { "subsets": subsets} )
+    resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
     if resp.status_code != 200:
         print ("resp.json(): ", resp.json())
         raise ApiError(resp, resp.json())
@@ -410,19 +419,23 @@ def push_command(args):
     for ref, commit in refs.items():
         create_ref(args.build_url, token, ref, commit)
 
+    # Then any extra ids
+    if args.extra_id:
+        add_extra_ids(args.build_url, token, args.extra_id)
+
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
         commit_build(args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
-        publish_build(args.build_url, args.wait, args.token, args.subset)
+        publish_build(args.build_url, args.wait, args.token)
 
 def commit_command(args):
     commit_build(args.build_url, args.wait, args.token)
     return 0
 
 def publish_command(args):
-    publish_build(args.build_url, args.wait, args.token, args.subset)
+    publish_build(args.build_url, args.wait, args.token)
     return 0
 
 def purge_command(args):
@@ -462,7 +475,7 @@ if __name__ == '__main__':
                              help='commit build after pushing')
     push_parser.add_argument('--publish', action='store_true',
                              help='publish build after commiting')
-    push_parser.add_argument('--subset', action='append', help='publish to this subset')
+    push_parser.add_argument('--extra-id', action='append', help='add extra collection-id')
     push_parser.add_argument('--wait', action='store_true',
                              help='wait for commit/publish to finish')
     push_parser.add_argument('--minimal-token', action='store_true',
@@ -478,7 +491,6 @@ if __name__ == '__main__':
     publish_parser = subparsers.add_parser('publish', help='Publish build')
     publish_parser.add_argument('--wait', action='store_true',
                              help='wait for publish to finish')
-    publish_parser.add_argument('--subset', action='append', help='add to this subset')
     publish_parser.add_argument('build_url', help='remote build url')
     publish_parser.set_defaults(func=publish_command)
 

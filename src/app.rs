@@ -195,6 +195,7 @@ pub fn create_app(
                 .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
                 .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
                 .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
+                .resource("/build/{id}/add_extra_ids", |r| r.method(Method::POST).with(api::add_extra_ids))
                 .resource("/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
                 .resource("/build/{id}/commit", |r| { r.name("show_commit_job");
                                                       r.method(Method::POST).with(api::commit);

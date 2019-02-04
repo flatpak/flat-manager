@@ -56,6 +56,43 @@ impl Handler<DbRequestWrapper<NewBuildRef>> for DbExecutor {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct AddExtraIds {
+    pub build_id: i32,
+    pub ids: Vec<String>,
+}
+
+impl DbRequest for AddExtraIds {
+    type DbType = Build;
+}
+
+impl Handler<DbRequestWrapper<AddExtraIds>> for DbExecutor {
+    type Result = Result<<AddExtraIds as DbRequest>::DbType, ApiError>;
+
+    fn handle(&mut self, msg: DbRequestWrapper<AddExtraIds>, _: &mut Self::Context) -> Self::Result {
+        let conn = &self.0.get().unwrap();
+        conn.transaction::<Build, DieselError, _>(|| {
+            let current_build = schema::builds::table
+                .filter(schema::builds::id.eq(msg.0.build_id))
+                .get_result::<Build>(conn)?;
+
+            let mut new_ids = current_build.extra_ids.clone();
+            for new_id in msg.0.ids.iter() {
+                if !new_ids.contains(new_id) {
+                    new_ids.push(new_id.to_string())
+                }
+            }
+            diesel::update(schema::builds::table)
+                .filter(schema::builds::id.eq(msg.0.build_id))
+                .set(schema::builds::extra_ids.eq(new_ids))
+                .get_result::<Build>(conn)
+        })
+            .map_err(|e| {
+                From::from(e)
+            })
+    }
+}
+
+#[derive(Deserialize, Debug)]
 pub struct LookupJob {
     pub id: i32,
     pub log_offset: Option<usize>,
@@ -296,8 +333,7 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
 
 #[derive(Deserialize, Debug)]
 pub struct StartPublishJob {
-    pub id: i32,
-    pub subsets: Vec<String>
+    pub id: i32
 }
 
 impl DbRequest for StartPublishJob {
@@ -330,7 +366,6 @@ impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
                     kind: JobKind::Publish.to_db(),
                     contents: json!(PublishJob {
                         build: msg.0.id,
-                        subsets: msg.0.subsets,
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?;

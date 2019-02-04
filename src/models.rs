@@ -217,5 +217,4 @@ pub struct CommitJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublishJob {
     pub build: i32,
-    pub subsets: Vec<String>
 }
