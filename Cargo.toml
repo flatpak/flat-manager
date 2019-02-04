@@ -9,7 +9,7 @@ authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
 env_logger = "0.5"
 
 actix = "0.7"
-actix-net = "0.1"
+actix-net = "0.2"
 actix-web = "0.7"
 
 futures = "0.1"
