@@ -18,6 +18,7 @@ table! {
         commit_job_id -> Nullable<Int4>,
         publish_job_id -> Nullable<Int4>,
         repo -> Text,
+        extra_ids -> Array<Text>,
     }
 }
 

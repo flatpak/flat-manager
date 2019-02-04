@@ -33,6 +33,7 @@ pub struct Build {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_job_id: Option<i32>,
     pub repo: String,
+    pub extra_ids: Vec<String>,
 }
 
 #[derive(Deserialize, Debug,PartialEq)]
