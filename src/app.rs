@@ -56,6 +56,7 @@ pub struct SubsetConfig {
 pub struct RepoConfig {
     #[serde(skip)]
     pub name: String,
+    pub suggested_repo_name: Option<String>,
     pub path: PathBuf,
     pub collection_id: Option<String>,
     pub gpg_key: Option<String>,
@@ -91,6 +92,15 @@ pub struct Config {
     pub build_gpg_key: Option<String>,
     #[serde(skip)]
     pub build_gpg_key_content: Option<String>,
+}
+
+impl RepoConfig {
+    pub fn get_base_url(&self, config: &Config) -> String {
+        match &self.base_url {
+            Some(base_url) => base_url.clone(),
+            None => format!("{}/repo/{}", config.base_url, self.name)
+        }
+    }
 }
 
 impl Config {

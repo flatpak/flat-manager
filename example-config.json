@@ -3,6 +3,7 @@
         "stable": {
             "path": "repo",
             "collection-id": "org.test.Stable",
+            "suggested-repo-name": "testrepo",
             "gpg-key": null,
             "base-url": null,
             "subsets": {
@@ -19,6 +20,7 @@
         "beta": {
             "path": "beta-repo",
             "collection-id": "org.test.Beta",
+            "suggested-repo-name": "testrepo-beta",
             "gpg-key": null,
             "subsets": {
                 "all": {

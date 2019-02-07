@@ -42,38 +42,49 @@ fn generate_flatpakref(ref_name: &String,
     let parts: Vec<&str> = ref_name.split('/').collect();
 
     let filename = format!("{}.flatpakref", parts[1]);
+    let app_id = &parts[1];
+    let branch = &parts[3];
 
     let (url, maybe_gpg_content) = match maybe_build_id {
-        Some(build_id) => (format!("{}/build-repo/{}", config.base_url, build_id), &config.build_gpg_key_content),
+        Some(build_id) => (
+            format!("{}/build-repo/{}", config.base_url, build_id),
+            &config.build_gpg_key_content
+        ),
         None => (
-            match &repoconfig.base_url {
-                Some(base_url) => base_url.clone(),
-                None => format!("{}/repo/{}", config.base_url, repoconfig.name)
-            },
+            repoconfig.get_base_url (&config),
             &repoconfig.gpg_key_content
         ),
     };
 
-    let gpg_line = match maybe_gpg_content {
-        Some(gpg_content) => format!("GPGKey={}\n", gpg_content),
-        None => "".to_string(),
+    let title = if let Some(build_id) = maybe_build_id {
+        format!("{} build nr {}", parts[1], build_id)
+    } else {
+        let reponame = match &repoconfig.suggested_repo_name {
+            Some(suggested_name) => &suggested_name,
+            None => &repoconfig.name,
+        };
+        format!("{} from {}", app_id, reponame)
     };
 
-    let contents = format!(
-r#"[Flatpak Ref]
+    let mut contents = format!(r#"[Flatpak Ref]
 Name={}
 Branch={}
-Title={} from flathub
+Title={}
+IsRuntime=false
 Url={}
 RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
-SuggestRemoteName=flathub
-IsRuntime=false
-{}"#,
-                           parts[1],
-                           parts[3],
-                           parts[1],
-                           url,
-                           gpg_line);
+"#, app_id, branch, title, url);
+
+    if maybe_build_id == None {
+        if let Some(suggested_name) = &repoconfig.suggested_repo_name {
+            contents.push_str(&format!("SuggestRemoteName={}\n", suggested_name));
+        }
+    }
+
+    if let Some(gpg_content) = maybe_gpg_content {
+        contents.push_str(&format!("GPGKey={}\n", gpg_content))
+    }
+
     (filename, contents)
 }
 
