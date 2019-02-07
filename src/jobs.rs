@@ -37,7 +37,6 @@ impl Actor for JobExecutor {
 
 fn generate_flatpakref(ref_name: &String,
                        maybe_build_id: Option<i32>,
-                       build: &models::Build,
                        config: &Arc<Config>,
                        repoconfig: &RepoConfig) -> (String, String) {
     let parts: Vec<&str> = ref_name.split('/').collect();
@@ -49,7 +48,7 @@ fn generate_flatpakref(ref_name: &String,
         None => (
             match &repoconfig.base_url {
                 Some(base_url) => base_url.clone(),
-                None => format!("{}/repo/{}", config.base_url, build.repo)
+                None => format!("{}/repo/{}", config.base_url, repoconfig.name)
             },
             &repoconfig.gpg_key_content
         ),
@@ -206,7 +205,6 @@ fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<
 
 fn do_commit_build_refs (job_id: i32,
                          build_id: i32,
-                         build: &models::Build,
                          build_refs: &Vec<models::BuildRef>,
                          endoflife: &Option<String>,
                          config: &Arc<Config>,
@@ -255,7 +253,7 @@ fn do_commit_build_refs (job_id: i32,
         commits.insert(build_ref.ref_name.to_string(), commit);
 
         if build_ref.ref_name.starts_with("app/") {
-            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(build_id), &build, config, repoconfig);
+            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(build_id), config, repoconfig);
             let mut file = File::create(build_repo_path.join(filename))?;
             file.write_all(contents.as_bytes())?;
         }
@@ -347,7 +345,7 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job_id: i32, 
 
     // Do the actual work
 
-    let res = do_commit_build_refs(job_id, job.build, &build_data, &build_refs, &job.endoflife, &executor.config, repoconfig, conn);
+    let res = do_commit_build_refs(job_id, job.build, &build_refs, &job.endoflife, &executor.config, repoconfig, conn);
 
     // Update the build repo state in db
 
@@ -427,7 +425,7 @@ fn do_publish (job_id: i32,
         }
 
         if build_ref.ref_name.starts_with("app/") {
-            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, &build, config, repoconfig);
+            let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
             info!("generating {}", filename);
             let mut file = File::create(appstream_dir.join(filename))?;
             file.write_all(contents.as_bytes())?;

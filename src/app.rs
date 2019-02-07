@@ -54,6 +54,8 @@ pub struct SubsetConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RepoConfig {
+    #[serde(skip)]
+    pub name: String,
     pub path: PathBuf,
     pub collection_id: Option<String>,
     pub gpg_key: Option<String>,
@@ -126,7 +128,8 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     let mut config_data: Config = serde_json::from_str(&config_contents).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
     config_data.build_gpg_key_content = load_gpg_key (&config_data.gpg_homedir, &config_data.build_gpg_key)?;
-    for (_reponame, repoconfig) in &mut config_data.repos {
+    for (reponame, repoconfig) in &mut config_data.repos {
+        repoconfig.name = reponame.clone();
         repoconfig.gpg_key_content = load_gpg_key (&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     }
 
