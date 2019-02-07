@@ -72,7 +72,6 @@ Branch={}
 Title={}
 IsRuntime=false
 Url={}
-RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
 "#, app_id, branch, title, url);
 
     if maybe_build_id == None {
@@ -83,6 +82,10 @@ RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
 
     if let Some(gpg_content) = maybe_gpg_content {
         contents.push_str(&format!("GPGKey={}\n", gpg_content))
+    }
+
+    if let Some(runtime_repo_url) = &repoconfig.runtime_repo_url {
+        contents.push_str(&format!("RuntimeRepo={}\n", runtime_repo_url));
     }
 
     (filename, contents)

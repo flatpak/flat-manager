@@ -63,6 +63,7 @@ pub struct RepoConfig {
     #[serde(skip)]
     pub gpg_key_content: Option<String>,
     pub base_url: Option<String>,
+    pub runtime_repo_url: Option<String>,
     pub subsets: HashMap<String, SubsetConfig>,
 }
 

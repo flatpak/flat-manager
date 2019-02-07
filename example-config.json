@@ -4,6 +4,7 @@
             "path": "repo",
             "collection-id": "org.test.Stable",
             "suggested-repo-name": "testrepo",
+            "runtime-repo-url": "https://dl.flathub.org/repo/flathub.flatpakrepo",
             "gpg-key": null,
             "base-url": null,
             "subsets": {
@@ -21,6 +22,7 @@
             "path": "beta-repo",
             "collection-id": "org.test.Beta",
             "suggested-repo-name": "testrepo-beta",
+            "runtime-repo-url": "https://dl.flathub.org/repo/flathub.flatpakrepo",
             "gpg-key": null,
             "subsets": {
                 "all": {
