@@ -268,8 +268,8 @@ fn do_commit_build_refs (job_id: i32,
 
         if build_ref.ref_name.starts_with("app/") {
             let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(build_id), config, repoconfig);
-            let mut file = File::create(build_repo_path.join(filename))?;
-            file.write_all(contents.as_bytes())?;
+            let path = build_repo_path.join(&filename);
+            File::create(&path)?.write_all(contents.as_bytes())?;
         }
     }
 
@@ -440,9 +440,12 @@ fn do_publish (job_id: i32,
 
         if build_ref.ref_name.starts_with("app/") {
             let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
-            info!("generating {}", filename);
-            let mut file = File::create(appstream_dir.join(filename))?;
-            file.write_all(contents.as_bytes())?;
+            let path = appstream_dir.join(&filename);
+            info!("generating {}", &filename);
+            let old_contents = fs::read_to_string(&path).unwrap_or_default();
+            if contents != old_contents {
+                File::create(&path)?.write_all(contents.as_bytes())?;
+            }
         }
     }
 
