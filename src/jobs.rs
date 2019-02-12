@@ -486,7 +486,18 @@ fn do_publish (job_id: i32,
         return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
     }
 
-    // TODO: PURGE summary and summary.sig files here
+    if let Some(post_publish_script) = &repoconfig.post_publish_script {
+        let mut full_path = std::env::current_dir()?;
+        full_path.push(&repoconfig.path);
+        let mut cmd = Command::new(post_publish_script);
+        cmd
+            .arg(&repoconfig.name)
+            .arg(&full_path);
+        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
+        if !success {
+            return Err(JobError::new(&format!("Failed to run post-update-script: {}", stderr.trim())));
+        }
+    }
 
     let appstream_arches = list_ostree_refs (&repoconfig.path, "appstream")?;
     for arch in appstream_arches {

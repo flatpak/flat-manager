@@ -65,6 +65,7 @@ pub struct RepoConfig {
     pub base_url: Option<String>,
     pub runtime_repo_url: Option<String>,
     pub subsets: HashMap<String, SubsetConfig>,
+    pub post_publish_script: Option<String>,
 }
 
 fn default_host() -> String {
