@@ -144,6 +144,6 @@ we can just do it in a subdirectory:
 Then we can upload this to the repo by doing (assuming the default secret):
 
     export REPO_TOKEN=$(echo -n "secret" | base64 | cargo run --bin gentoken -- --base64 --secret-file - --name test)
-    ./flat-manager-client push --commit $(./repoclient create http://127.0.0.1:8080 stable) test-build/local-repo
+    ./flat-manager-client push --commit $(./flat-manager-client create http://127.0.0.1:8080 stable) test-build/local-repo
 
 This will create a new "build" upload the build to it and then "commit" the build.
