@@ -22,9 +22,10 @@ use std::collections::HashMap;
 
 use app::{RepoConfig, Config};
 use errors::{JobError, JobResult};
-use models::{Job, JobKind, CommitJob, PublishJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
+use models::{NewJob, Job, JobDependency, JobKind, CommitJob, PublishJob, UpdateRepoJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
 use models;
 use schema::*;
+use schema;
 
 pub struct JobExecutor {
     pub config: Arc<Config>,
@@ -89,6 +90,78 @@ Url={}
     }
 
     (filename, contents)
+}
+
+fn queue_update_job (conn: &PgConnection,
+                     repo: &str,
+                     starting_job_id: i32) -> JobResult<Job>
+{
+    /* This depends on there only being one writer to the job status,
+     * so if this ever changes this needs to be a transaction with
+     * higher isolation level. */
+
+    let mut old_update_started_job = None;
+    let mut old_update_new_job = None;
+
+    /* First look for an existing active (i.e. unstarted or running) update job matching the repo */
+    let existing_update_jobs =
+        jobs::table
+        .order(jobs::id.desc())
+        .filter(jobs::kind.eq(JobKind::UpdateRepo.to_db()))
+        .filter(jobs::status.le(JobStatus::Started as i16))
+        .get_results::<Job>(conn)?;
+
+    for existing_update_job in existing_update_jobs {
+        if let Ok(data) = serde_json::from_str::<UpdateRepoJob>(&existing_update_job.contents) {
+            if data.repo == repo {
+                if existing_update_job.status == JobStatus::New as i16 {
+                    old_update_new_job = Some(existing_update_job);
+                } else {
+                    old_update_started_job = Some(existing_update_job);
+                }
+                break
+            }
+        }
+    }
+
+    /* We found the last queued active update job for this repo.
+     * If it was not started we piggy-back on it, if it was started
+     * we make the new job depend on it to ensure we only run one
+     * update job per repo in parallel */
+
+    let update_job = match old_update_new_job {
+        Some(job) => job,
+        None => {
+            /* Create a new job */
+            diesel::insert_into(schema::jobs::table)
+                .values(NewJob {
+                    kind: JobKind::UpdateRepo.to_db(),
+                    contents: json!(UpdateRepoJob {
+                        repo: repo.to_string(),
+                    }).to_string(),
+                })
+                .get_result::<Job>(conn)?
+        },
+    };
+
+    /* Make new job depend previous started update for this repo (if any) */
+    if let Some(previous_started_job) = old_update_started_job {
+        diesel::insert_into(schema::job_dependencies::table)
+            .values(JobDependency {
+                job_id: update_job.id,
+                depends_on: previous_started_job.id,
+            })
+            .execute(conn)?;
+    }
+
+    diesel::insert_into(schema::job_dependencies::table)
+        .values(JobDependency {
+            job_id: update_job.id,
+            depends_on: starting_job_id,
+        })
+        .execute(conn)?;
+
+    Ok(update_job)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -388,6 +461,7 @@ fn handle_commit_job (executor: &JobExecutor, conn: &PgConnection, job_id: i32, 
     res
 }
 
+
 fn do_publish (job_id: i32,
                build_id: i32,
                build: &models::Build,
@@ -467,53 +541,11 @@ fn do_publish (job_id: i32,
         }
     }
 
-    // Update repo
-
-    info!("running flatpak build-update-repo");
-
-    let mut cmd = Command::new("flatpak");
-    cmd
-        .arg("build-update-repo")
-        .arg("--generate-static-deltas");
-
-    add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
-
-    cmd
-        .arg(&repoconfig.path);
-
-    let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
-    if !success {
-        return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
-    }
-
-    if let Some(post_publish_script) = &repoconfig.post_publish_script {
-        let mut full_path = std::env::current_dir()?;
-        full_path.push(&repoconfig.path);
-        let mut cmd = Command::new(post_publish_script);
-        cmd
-            .arg(&repoconfig.name)
-            .arg(&full_path);
-        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to run post-update-script: {}", stderr.trim())));
-        }
-    }
-
-    let appstream_arches = list_ostree_refs (&repoconfig.path, "appstream")?;
-    for arch in appstream_arches {
-        let mut cmd = Command::new("ostree");
-        cmd
-            .arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
-            .arg("checkout")
-            .arg("--user-mode")
-            .arg("--union")
-            .arg(&format!("appstream/{}", arch))
-            .arg(appstream_dir.join(arch));
-        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
-        }
-    };
+    /* Create update repo job */
+    let update_job = queue_update_job (conn, &repoconfig.name, job_id)?;
+    append_job_log(job_id, conn, &format!("Queued repository update job {}\nFollow logs at: {}/status/{}\n",
+                                          update_job.id, config.base_url, update_job.id));
+    info!("Queued repository update job {}", update_job.id);
 
     Ok(json!({ "refs": commits}))
 }
@@ -569,6 +601,61 @@ fn handle_publish_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32
     res
 }
 
+fn handle_update_repo_job (executor: &JobExecutor, conn: &PgConnection,  job_id: i32, job: UpdateRepoJob) -> JobResult<serde_json::Value> {
+    // Get repo config
+    let config = &executor.config;
+    let repoconfig = executor.config.get_repoconfig(&job.repo)
+        .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &job.repo))))?;
+
+    info!("running flatpak build-update-repo");
+
+    let mut cmd = Command::new("flatpak");
+    cmd
+        .arg("build-update-repo")
+        .arg("--generate-static-deltas");
+
+    add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
+
+    cmd
+        .arg(&repoconfig.path);
+
+    let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
+    if !success {
+        return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
+    }
+
+    if let Some(post_publish_script) = &repoconfig.post_publish_script {
+        let mut full_path = std::env::current_dir()?;
+        full_path.push(&repoconfig.path);
+        let mut cmd = Command::new(post_publish_script);
+        cmd
+            .arg(&repoconfig.name)
+            .arg(&full_path);
+        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
+        if !success {
+            return Err(JobError::new(&format!("Failed to run post-update-script: {}", stderr.trim())));
+        }
+    }
+
+    let appstream_dir = repoconfig.path.join("appstream");
+    let appstream_arches = list_ostree_refs (&repoconfig.path, "appstream")?;
+    for arch in appstream_arches {
+        let mut cmd = Command::new("ostree");
+        cmd
+            .arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
+            .arg("checkout")
+            .arg("--user-mode")
+            .arg("--union")
+            .arg(&format!("appstream/{}", arch))
+            .arg(appstream_dir.join(arch));
+        let (success, _log, stderr) = run_command(cmd, job_id, conn)?;
+        if !success {
+            return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
+        }
+    };
+
+    Ok(json!({ }))
+}
 
 fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
     let handler_res = match JobKind::from_db(job.kind) {
@@ -584,6 +671,14 @@ fn handle_job (executor: &JobExecutor, conn: &PgConnection, job: &Job) {
             if let Ok(publish_job) = serde_json::from_str::<PublishJob>(&job.contents) {
                 info!("Handling Publish Job {}: {:?}", job.id, publish_job);
                 handle_publish_job (executor, conn, job.id, &publish_job)
+            } else {
+                Err(JobError::new("Can't parse publish job"))
+            }
+        },
+        Some(JobKind::UpdateRepo) => {
+            if let Ok(update_repo_job) = serde_json::from_str::<UpdateRepoJob>(&job.contents) {
+                info!("Handling UpdateRepo Job {}: {:?}", job.id, update_repo_job);
+                handle_update_repo_job (executor, conn, job.id, update_repo_job)
             } else {
                 Err(JobError::new("Can't parse publish job"))
             }

@@ -162,6 +162,7 @@ impl JobStatus {
 pub enum JobKind {
     Commit,
     Publish,
+    UpdateRepo,
 }
 
 impl JobKind {
@@ -169,6 +170,7 @@ impl JobKind {
         match self {
             JobKind::Commit => 0,
             JobKind::Publish => 1,
+            JobKind::UpdateRepo => 2,
         }
     }
 
@@ -176,6 +178,7 @@ impl JobKind {
         match val {
             0 => Some(JobKind::Commit),
             1 => Some(JobKind::Publish),
+            2 => Some(JobKind::UpdateRepo),
             _ => None,
         }
     }
@@ -199,7 +202,7 @@ pub struct Job {
     pub log: String,
 }
 
-#[derive(Debug, Queryable, Identifiable, Associations)]
+#[derive(Insertable, Debug, Queryable, Identifiable, Associations)]
 #[table_name = "job_dependencies"]
 #[primary_key(job_id, depends_on)]
 #[belongs_to(Job, foreign_key = "job_id")]
@@ -229,4 +232,9 @@ pub struct CommitJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublishJob {
     pub build: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateRepoJob {
+    pub repo: String,
 }
