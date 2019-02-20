@@ -21,11 +21,12 @@ use serde::Serialize;
 use app::{AppState,Claims};
 use errors::ApiError;
 use db::*;
-use models::{NewBuild,NewBuildRef};
+use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
 use actix_web::ResponseError;
 use tokens::{self, ClaimsValidator};
 use models::DbExecutor;
 use jobs::ProcessJobs;
+use askama::Template;
 
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
@@ -760,6 +761,69 @@ pub fn purge(
         })
         .and_then(move |build| {
             respond_with_url(&build, &req, "show_build", &[build_id.to_string()])
+        })
+        .from_err()
+        .responder()
+}
+
+#[derive(Template)]
+#[template(path = "job.html")]
+struct JobStatusData {
+    id: i32,
+    kind: String,
+    status: String,
+    contents: String,
+    results: String,
+    log: String,
+    finished: bool,
+}
+
+fn job_status_data(job: Job) -> JobStatusData {
+    JobStatusData {
+        id: job.id,
+        kind: JobKind::from_db(job.kind).map_or ("Unknown".to_string(), |k| format! ("{:?}", k)),
+        status: JobStatus::from_db(job.status).map_or ("Unknown".to_string(), |s| format! ("{:?}", s)),
+        contents: job.contents,
+        results: job.results.unwrap_or("".to_string()),
+        log: job.log,
+        finished: job.status >= JobStatus::Ended as i16,
+    }
+}
+
+pub fn job_status(
+    params: Path<JobPathParams>,
+    state: State<AppState>
+) -> FutureResponse<HttpResponse> {
+
+    db_request (&state,
+                LookupJob {
+                    id: params.id,
+                    log_offset: None,
+                })
+        .and_then(move |job| {
+            let s = job_status_data(job).render().unwrap();
+            Ok(HttpResponse::Ok().content_type("text/html").body(s))
+        })
+        .from_err()
+        .responder()
+}
+
+#[derive(Template)]
+#[template(path = "status.html")]
+struct Status {
+    jobs: Vec<JobStatusData>,
+}
+
+pub fn status(
+    state: State<AppState>
+) -> FutureResponse<HttpResponse> {
+
+    db_request (&state, ListJobs { })
+        .and_then(move |jobs| {
+            let s = Status {
+                jobs: jobs.into_iter().map(job_status_data).collect()
+            }.render().unwrap();
+            Ok(HttpResponse::Ok().content_type("text/html").body(s))
         })
         .from_err()
         .responder()

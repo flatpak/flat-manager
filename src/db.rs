@@ -278,6 +278,30 @@ impl Handler<DbRequestWrapper<ListBuilds>> for DbExecutor {
     }
 }
 
+#[derive(Deserialize, Debug)]
+pub struct ListJobs {
+}
+
+impl DbRequest for ListJobs {
+    type DbType = Vec<Job>;
+}
+
+impl Handler<DbRequestWrapper<ListJobs>> for DbExecutor {
+    type Result = Result<<ListJobs as DbRequest>::DbType, ApiError>;
+
+    fn handle(&mut self, _msg: DbRequestWrapper<ListJobs>, _: &mut Self::Context) -> Self::Result {
+        use schema::jobs::dsl::*;
+        let conn = &self.0.get().unwrap();
+        jobs
+            .order(id)
+            .filter(status.le (JobStatus::Started as i16))
+            .get_results::<Job>(conn)
+            .map_err(|e| {
+                From::from(e)
+            })
+    }
+}
+
 
 #[derive(Deserialize, Debug)]
 pub struct StartCommitJob {

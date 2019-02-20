@@ -146,6 +146,18 @@ pub enum JobStatus {
     Broken,
 }
 
+impl JobStatus {
+    pub fn from_db(val: i16) -> Option<Self> {
+        match val {
+            0 => Some(JobStatus::New),
+            1 => Some(JobStatus::Started),
+            2 => Some(JobStatus::Ended),
+            3 => Some(JobStatus::Broken),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug,PartialEq)]
 pub enum JobKind {
     Commit,

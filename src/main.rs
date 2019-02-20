@@ -3,6 +3,7 @@
 extern crate actix;
 extern crate actix_net;
 extern crate actix_web;
+extern crate askama;
 extern crate base64;
 extern crate chrono;
 #[macro_use] extern crate diesel;

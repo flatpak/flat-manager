@@ -224,4 +224,6 @@ pub fn create_app(
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
         })
         .handler("/repo/{repo}/", |req: &HttpRequest<AppState>| handle_repo(req))
+        .resource("/status", |r| r.method(Method::GET).with(api::status))
+        .resource("/status/{id}", |r| r.method(Method::GET).with(api::job_status))
 }
