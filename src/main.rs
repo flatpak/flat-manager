@@ -5,6 +5,7 @@ extern crate actix_net;
 extern crate actix_web;
 extern crate askama;
 extern crate base64;
+extern crate byteorder;
 extern crate chrono;
 #[macro_use] extern crate diesel;
 #[macro_use] extern crate diesel_migrations;
@@ -21,6 +22,8 @@ extern crate jsonwebtoken as jwt;
 #[macro_use]
 extern crate log;
 extern crate libc;
+extern crate walkdir;
+extern crate hex;
 
 use actix::prelude::*;
 use actix::{Actor, actors::signal};
@@ -40,6 +43,7 @@ mod models;
 mod schema;
 mod tokens;
 mod jobs;
+mod ostree;
 
 use models::DbExecutor;
 use jobs::{JobQueue, StopJobQueue, start_job_executor, cleanup_started_jobs};

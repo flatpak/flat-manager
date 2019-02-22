@@ -4,6 +4,7 @@ use diesel::result::{Error as DieselError};
 use futures::future;
 use std::io;
 use actix_web::http::StatusCode;
+use ostree::OstreeError;
 
 #[derive(Fail, Debug)]
 pub enum JobError {
@@ -27,6 +28,16 @@ impl From<DieselError> for JobError {
         match e {
             _ => {
                 JobError::DBError(e.to_string())
+            }
+        }
+    }
+}
+
+impl From<OstreeError> for JobError {
+    fn from(e: OstreeError) -> Self {
+        match e {
+            _ => {
+                JobError::InternalError(e.to_string())
             }
         }
     }
