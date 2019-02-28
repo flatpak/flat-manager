@@ -6,7 +6,7 @@ use std::io;
 use actix_web::http::StatusCode;
 use ostree::OstreeError;
 
-#[derive(Fail, Debug)]
+#[derive(Fail, Debug, Clone)]
 pub enum JobError {
     #[fail(display = "InternalError: {}", _0)]
     InternalError(String),
