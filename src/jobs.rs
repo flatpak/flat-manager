@@ -14,10 +14,12 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc};
 use std::sync::mpsc::{channel, Sender};
 use std::thread;
+use std::path::PathBuf;
 use std::time;
 use std::os::unix::process::CommandExt;
 use libc;
-use std::collections::HashMap;
+use std::collections::{HashMap,HashSet};
+use std::iter::FromIterator;
 
 use ostree;
 use app::{RepoConfig, Config};
@@ -697,7 +699,177 @@ impl UpdateRepoJobInstance {
             InvalidJobInstance::new(job, JobError::new("Can't parse publish job"))
         }
     }
+
+    fn calculate_deltas(&self, repoconfig: &RepoConfig) -> (HashSet<ostree::Delta>, HashSet<ostree::Delta>) {
+        let repo_path = repoconfig.get_abs_repo_path();
+
+        let mut wanted_deltas = HashSet::new();
+        let refs = ostree::list_refs (&repo_path, "");
+
+        for ref_name in refs {
+            let depth = repoconfig.get_delta_depth_for_ref(&ref_name);
+
+            if depth > 0 {
+                let ref_deltas = ostree::calc_deltas_for_ref(&repo_path, &ref_name, depth);
+                for ref_delta in ref_deltas {
+                    wanted_deltas.insert(ref_delta);
+                }
+            }
+        }
+        let old_deltas = HashSet::from_iter(ostree::list_deltas (&repo_path).iter().cloned());
+
+        let missing_deltas = wanted_deltas.difference(&old_deltas).cloned().collect();
+        let unwanted_deltas = old_deltas.difference(&wanted_deltas).cloned().collect();
+
+        (missing_deltas, unwanted_deltas)
+    }
+
+    fn generate_delta(delta: ostree::Delta,
+                      repo_path: PathBuf) {
+        let mut cmd = Command::new("flatpak");
+        cmd
+            .before_exec (|| {
+                // Setsid in the child to avoid SIGINT on server killing
+                // child and breaking the graceful shutdown
+                unsafe { libc::setsid() };
+                Ok(())
+            });
+
+        cmd
+            .arg("build-update-repo")
+            .arg("--generate-static-delta-to")
+            .arg(delta.to.clone());
+
+        if let Some(ref from) = delta.from {
+            cmd
+                .arg("--generate-static-delta-from")
+                .arg(from.clone());
+        };
+
+        cmd
+            .arg(&repo_path);
+
+        if let Err(e) = cmd.output() {
+            error!("Unexpected error generating delta {:?}", e);
+        };
+    }
+
+    fn generate_deltas(&self,
+                       deltas: &HashSet<ostree::Delta>,
+                       repoconfig: &RepoConfig,
+                       conn: &PgConnection) -> JobResult<()> {
+        append_job_log_and_info(self.job_id, conn, "Generating deltas");
+        let repo_path = repoconfig.get_abs_repo_path();
+        for delta in deltas {
+            append_job_log_and_info(self.job_id, conn,
+                                    &format!(" {}-{}", delta.from.as_ref().unwrap_or(&"nothing".to_string()), delta.to));
+            Self::generate_delta(delta.clone(), repo_path.clone());
+        };
+        append_job_log_and_info(self.job_id, conn, "All deltas generated");
+
+        Ok(())
+    }
+
+    fn retire_deltas(&self,
+                     deltas: &HashSet<ostree::Delta>,
+                     repoconfig: &RepoConfig,
+                     conn: &PgConnection) -> JobResult<()> {
+        append_job_log_and_info(self.job_id, conn, "Cleaning out old deltas");
+        let repo_path = repoconfig.get_abs_repo_path();
+        for delta in deltas {
+            let dir = delta.delta_path(&repo_path)?;
+            fs::remove_dir_all(&dir)?;
+        }
+
+        Ok(())
+    }
+
+    fn update_appstream (&self,
+                         config: &Config,
+                         repoconfig: &RepoConfig,
+                         conn: &PgConnection) -> JobResult<()> {
+        append_job_log_and_info(self.job_id, conn, "Regenerating appstream branches");
+        let repo_path = repoconfig.get_abs_repo_path();
+
+        let mut cmd = Command::new("flatpak");
+        cmd
+            .arg("build-update-repo")
+            .arg("--no-update-summary");
+        add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
+        cmd
+            .arg(&repo_path);
+
+        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
+        if !success {
+            return Err(JobError::new(&format!("Failed to regenerate appstream: {}", stderr.trim())));
+        };
+        Ok(())
+    }
+
+    fn update_summary (&self,
+                       config: &Config,
+                       repoconfig: &RepoConfig,
+                       conn: &PgConnection) -> JobResult<()> {
+        append_job_log_and_info(self.job_id, conn, "Updating summary");
+        let repo_path = repoconfig.get_abs_repo_path();
+
+        let mut cmd = Command::new("flatpak");
+        cmd
+            .arg("build-update-repo")
+            .arg("--no-update-appstream");
+        add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
+        cmd
+            .arg(&repo_path);
+
+        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
+        if !success {
+            return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
+        };
+        Ok(())
+    }
+
+    fn run_post_publish (&self,
+                         repoconfig: &RepoConfig,
+                         conn: &PgConnection) -> JobResult<()> {
+        if let Some(post_publish_script) = &repoconfig.post_publish_script {
+            let repo_path = repoconfig.get_abs_repo_path();
+            let mut cmd = Command::new(post_publish_script);
+            cmd
+                .arg(&repoconfig.name)
+                .arg(&repo_path);
+            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
+            if !success {
+                return Err(JobError::new(&format!("Failed to run post-update-script: {}", stderr.trim())));
+            }
+        };
+        Ok(())
+    }
+
+    fn extract_appstream (&self,
+                          repoconfig: &RepoConfig,
+                          conn: &PgConnection) -> JobResult<()> {
+        let repo_path = repoconfig.get_abs_repo_path();
+        let appstream_dir = repo_path.join("appstream");
+        let appstream_refs = ostree::list_refs (&repoconfig.path, "appstream");
+        for appstream_ref in appstream_refs {
+            let arch = appstream_ref.split("/").nth(1).unwrap();
+            let mut cmd = Command::new("ostree");
+            cmd
+                .arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
+                .arg("checkout")
+                .arg("--user-mode")
+                .arg("--union")
+                .arg(&appstream_ref)
+                .arg(appstream_dir.join(arch));
+            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
+            if !success {
+                return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
+            }
+        };
+        Ok(())
+    }
 }
+
 
 impl JobInstance for UpdateRepoJobInstance {
     fn get_job_id (&self) -> i32 {
@@ -721,52 +893,17 @@ impl JobInstance for UpdateRepoJobInstance {
         let repoconfig = config.get_repoconfig(&self.repo)
             .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &self.repo))))?;
 
-        info!("running flatpak build-update-repo");
+        self.update_appstream(config, repoconfig, conn)?;
 
-        let mut cmd = Command::new("flatpak");
-        cmd
-            .arg("build-update-repo")
-            .arg("--generate-static-deltas");
+        let (missing_deltas, unwanted_deltas) = self.calculate_deltas(repoconfig);
+        self.generate_deltas(&missing_deltas, repoconfig, conn)?;
+        self.retire_deltas(&unwanted_deltas, repoconfig, conn)?;
 
-        add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
+        self.update_summary(config, repoconfig, conn)?;
 
-        cmd
-            .arg(&repoconfig.path);
+        self.run_post_publish(repoconfig, conn)?;
 
-        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
-        }
-
-        if let Some(post_publish_script) = &repoconfig.post_publish_script {
-            let mut full_path = std::env::current_dir()?;
-            full_path.push(&repoconfig.path);
-            let mut cmd = Command::new(post_publish_script);
-            cmd
-                .arg(&repoconfig.name)
-                .arg(&full_path);
-            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-            if !success {
-                return Err(JobError::new(&format!("Failed to run post-update-script: {}", stderr.trim())));
-            }
-        }
-
-        let appstream_dir = repoconfig.path.join("appstream");
-        let appstream_arches = ostree::list_refs (&repoconfig.path, "appstream");
-        for arch in appstream_arches {
-            let mut cmd = Command::new("ostree");
-            cmd
-                .arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
-                .arg("checkout")
-                .arg("--user-mode")
-                .arg("--union")
-                .arg(&format!("appstream/{}", arch))
-                .arg(appstream_dir.join(arch));
-            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-            if !success {
-                return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
-            }
-        };
+        self.extract_appstream(repoconfig, conn)?;
 
         Ok(json!({ }))
     }
