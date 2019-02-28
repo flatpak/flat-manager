@@ -229,6 +229,11 @@ fn append_job_log(job_id: i32, conn: &PgConnection, output: &str) {
         }
 }
 
+fn append_job_log_and_info(job_id: i32, conn: &PgConnection, output: &str) {
+    info!("{}", output);
+    append_job_log(job_id, conn, &format!("{}\n", output));
+}
+
 fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<(bool, String, String)>
 {
     info!("/ Running: {:?}", cmd);
@@ -413,7 +418,7 @@ impl CommitJobInstance {
             }
         }
 
-        info!("running build-update-repo");
+        append_job_log_and_info(self.job_id, conn, "running build-update-repo");
 
         let mut cmd = Command::new("flatpak");
         cmd
@@ -427,7 +432,7 @@ impl CommitJobInstance {
             return Err(JobError::new(&format!("Failed to updaterepo: {}", stderr.trim())))
         }
 
-        info!("Removing upload directory");
+        append_job_log_and_info(self.job_id, conn, "Removing upload directory");
 
         fs::remove_dir_all(&upload_path)?;
 
@@ -568,7 +573,7 @@ impl PublishJobInstance {
             if build_ref.ref_name.starts_with("app/") {
                 let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
                 let path = appstream_dir.join(&filename);
-                info!("generating {}", &filename);
+                append_job_log_and_info (self.job_id, conn, &format!("generating {}", &filename));
                 let old_contents = fs::read_to_string(&path).unwrap_or_default();
                 if contents != old_contents {
                     File::create(&path)?.write_all(contents.as_bytes())?;
@@ -578,7 +583,7 @@ impl PublishJobInstance {
 
         for build_ref in build_refs.iter() {
             if build_ref.ref_name.starts_with("screenshots/") {
-                info!("extracting screenshots for {}", build_ref.ref_name);
+                append_job_log_and_info (self.job_id, conn, &format!("extracting screenshots for {}", build_ref.ref_name));
                 let mut cmd = Command::new("ostree");
                 cmd
                     .arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
@@ -596,9 +601,12 @@ impl PublishJobInstance {
 
         /* Create update repo job */
         let update_job = queue_update_job (conn, &repoconfig.name, self.job_id)?;
-        append_job_log(self.job_id, conn, &format!("Queued repository update job {}\nFollow logs at: {}/status/{}\n",
-                                              update_job.id, config.base_url, update_job.id));
-        info!("Queued repository update job {}", update_job.id);
+        append_job_log_and_info(self.job_id, conn,
+                                &format!("Queued repository update job {}",
+                                         update_job.id));
+        append_job_log_and_info(self.job_id, conn,
+                                &format!("Follow logs at: {}/status/{}",
+                                         config.base_url, update_job.id));
 
         Ok(json!({ "refs": commits}))
     }
