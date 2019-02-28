@@ -94,6 +94,8 @@ pub struct Config {
     pub build_gpg_key: Option<String>,
     #[serde(skip)]
     pub build_gpg_key_content: Option<String>,
+    #[serde(default)]
+    pub delay_update_secs: u64,
 }
 
 impl RepoConfig {

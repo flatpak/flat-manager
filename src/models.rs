@@ -237,4 +237,6 @@ pub struct PublishJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateRepoJob {
     pub repo: String,
+    #[serde(default)]
+    pub start_time: u64,
 }

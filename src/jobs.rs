@@ -141,6 +141,7 @@ fn queue_update_job (conn: &PgConnection,
                     kind: JobKind::UpdateRepo.to_db(),
                     contents: json!(UpdateRepoJob {
                         repo: repo.to_string(),
+                        start_time: time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs(),
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?
@@ -342,6 +343,9 @@ fn new_job_instance(job: Job) -> Box<JobInstance> {
 
 pub trait JobInstance {
     fn get_job_id (&self) -> i32;
+    fn should_start_job (&self, _config: &Config) -> bool {
+        true
+    }
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value>;
 }
 
@@ -702,6 +706,7 @@ impl JobInstance for PublishJobInstance {
 struct UpdateRepoJobInstance {
     pub job_id: i32,
     pub repo: String,
+    pub start_time: u64,
 }
 
 impl UpdateRepoJobInstance {
@@ -710,6 +715,7 @@ impl UpdateRepoJobInstance {
             Box::new(UpdateRepoJobInstance {
                 job_id: job.id,
                 repo: update_repo_job.repo,
+                start_time: update_repo_job.start_time,
             })
         } else {
             InvalidJobInstance::new(job, JobError::new("Can't parse publish job"))
@@ -720,6 +726,12 @@ impl UpdateRepoJobInstance {
 impl JobInstance for UpdateRepoJobInstance {
     fn get_job_id (&self) -> i32 {
         self.job_id
+    }
+
+    fn should_start_job (&self, config: &Config) -> bool {
+        /* We always wait a bit before starting an update to allow
+         * more jobs to merge */
+        time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs() - self.start_time > config.delay_update_secs
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
@@ -804,11 +816,13 @@ fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
             .collect();
 
         for new_instance in new_instances {
-            diesel::update(jobs::table)
-                .filter(jobs::id.eq(new_instance.get_job_id()))
-                .set((jobs::status.eq(JobStatus::Started as i16),))
-                .execute(conn)?;
-            return Ok(new_instance)
+            if new_instance.should_start_job(&executor.config) {
+                diesel::update(jobs::table)
+                    .filter(jobs::id.eq(new_instance.get_job_id()))
+                    .set((jobs::status.eq(JobStatus::Started as i16),))
+                    .execute(conn)?;
+                return Ok(new_instance)
+            }
         }
 
         Err(diesel::NotFound)
