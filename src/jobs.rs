@@ -10,7 +10,6 @@ use std::str;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path;
 use std::process::{Command, Stdio};
 use std::sync::{Arc};
 use std::sync::mpsc::{channel, Sender};
@@ -20,6 +19,7 @@ use std::os::unix::process::CommandExt;
 use libc;
 use std::collections::HashMap;
 
+use ostree;
 use app::{RepoConfig, Config};
 use errors::{JobError, JobResult};
 use models::{NewJob, Job, JobDependency, JobKind, CommitJob, PublishJob, UpdateRepoJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
@@ -291,46 +291,6 @@ fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<
         String::from_utf8_lossy(&stderr).to_string()))
 }
 
-fn parse_ostree_ref (repo_path: &path::PathBuf, ref_name: &String) ->JobResult<String> {
-    let mut repo_arg = OsString::from("--repo=");
-    repo_arg.push(&repo_path);
-
-    match Command::new("ostree")
-        .arg("rev-parse")
-        .arg(repo_arg)
-        .arg(ref_name)
-        .output() {
-            Ok(output) => {
-                if output.status.success() {
-                    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-                } else {
-                    Err(JobError::new(&format!("Can't find commit for ref {} build refs: {}", ref_name, String::from_utf8_lossy(&output.stderr).trim())))
-                }
-
-            },
-            Err(e) => Err(JobError::new(&format!("Can't find commit for ref {} build refs: {}", ref_name, e.to_string())))
-        }
-}
-
-fn list_ostree_refs (repo_path: &path::PathBuf, prefix: &str) ->JobResult<Vec<String>> {
-    let mut repo_arg = OsString::from("--repo=");
-    repo_arg.push(&repo_path);
-
-    match Command::new("ostree")
-        .arg("refs")
-        .arg(repo_arg)
-        .arg(prefix)
-        .output() {
-            Ok(output) => {
-                if output.status.success() {
-                    Ok(String::from_utf8_lossy(&output.stdout).split_whitespace().map(|s| s.to_string()).collect())
-                } else {
-                    Err(JobError::new(&format!("Can't list refs: {}", String::from_utf8_lossy(&output.stderr).trim())))
-                }
-            },
-            Err(e) => Err(JobError::new(&format!("Can't list refs: {}", e.to_string())))
-        }
-}
 
 fn new_job_instance(job: Job) -> Box<JobInstance> {
     match JobKind::from_db(job.kind) {
@@ -443,7 +403,7 @@ impl CommitJobInstance {
                 return Err(JobError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
             }
 
-            let commit = parse_ostree_ref(&build_repo_path, &build_ref.ref_name)?;
+            let commit = ostree::parse_ref(&build_repo_path, &build_ref.ref_name)?;
             commits.insert(build_ref.ref_name.to_string(), commit);
 
             if build_ref.ref_name.starts_with("app/") {
@@ -601,7 +561,7 @@ impl PublishJobInstance {
         let mut commits = HashMap::new();
         for build_ref in build_refs.iter() {
             if build_ref.ref_name.starts_with("app/") || build_ref.ref_name.starts_with("runtime/") {
-                let commit = parse_ostree_ref(&repoconfig.path, &build_ref.ref_name)?;
+                let commit = ostree::parse_ref(&repoconfig.path, &build_ref.ref_name)?;
                 commits.insert(build_ref.ref_name.to_string(), commit);
             }
 
@@ -784,7 +744,7 @@ impl JobInstance for UpdateRepoJobInstance {
         }
 
         let appstream_dir = repoconfig.path.join("appstream");
-        let appstream_arches = list_ostree_refs (&repoconfig.path, "appstream")?;
+        let appstream_arches = ostree::list_refs (&repoconfig.path, "appstream");
         for arch in appstream_arches {
             let mut cmd = Command::new("ostree");
             cmd
