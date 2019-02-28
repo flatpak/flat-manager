@@ -24,6 +24,7 @@ extern crate log;
 extern crate libc;
 extern crate walkdir;
 extern crate hex;
+extern crate filetime;
 
 use actix::prelude::*;
 use actix::{Actor, actors::signal};

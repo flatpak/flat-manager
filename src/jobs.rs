@@ -5,6 +5,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::result::{Error as DieselError};
 use diesel;
+use filetime;
 use serde_json;
 use std::str;
 use std::ffi::OsString;
@@ -20,6 +21,7 @@ use std::os::unix::process::CommandExt;
 use libc;
 use std::collections::{HashMap,HashSet};
 use std::iter::FromIterator;
+use walkdir::WalkDir;
 
 use ostree;
 use app::{RepoConfig, Config};
@@ -776,8 +778,59 @@ impl UpdateRepoJobInstance {
                      conn: &PgConnection) -> JobResult<()> {
         append_job_log_and_info(self.job_id, conn, "Cleaning out old deltas");
         let repo_path = repoconfig.get_abs_repo_path();
+        let deltas_dir = repo_path.join("deltas");
+        let tmp_deltas_dir = repo_path.join("tmp/deltas");
+        fs::create_dir_all(&tmp_deltas_dir)?;
+
+        let now = time::SystemTime::now();
+        let now_filetime = filetime::FileTime::from_system_time(now);
+
+        /* Instead of directly removing the deltas we move them to a different
+         * directory which is *also* used as a source for the delta dir when accessed
+         * via http. This way we avoid them disappearing while possibly in use, yet
+         * ensure they are not picked up for the new summary file */
+
         for delta in deltas {
-            let dir = delta.delta_path(&repo_path)?;
+            let src = delta.delta_path(&repo_path)?;
+            let dst = delta.tmp_delta_path(&repo_path)?;
+            let dst_parent = dst.parent().unwrap();
+            fs::create_dir_all(&dst_parent)?;
+
+            append_job_log_and_info(self.job_id, conn,
+                                    &format!("Queuing delta {:?} for deletion", src.strip_prefix(&deltas_dir).unwrap()));
+
+            if dst.exists() {
+                fs::remove_dir_all(&dst)?;
+            }
+            fs::rename(&src, &dst)?;
+
+            /* Update mtime so we can use it to trigger deletion */
+            filetime::set_file_times(&dst, now_filetime, now_filetime)?;
+        }
+
+        /* Delete all temporary deltas older than one hour */
+        let to_delete =
+            WalkDir::new(&tmp_deltas_dir)
+            .min_depth(2)
+            .max_depth(2)
+            .into_iter()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                if let Ok(metadata) = e.metadata() {
+                    if let Ok(mtime) = metadata.modified() {
+                        if let Ok(since) = now.duration_since(mtime) {
+                            return since.as_secs() > 60 * 60
+                        }
+                    }
+                };
+                false
+            })
+            .map(|e| e.path().to_path_buf())
+            .collect::<Vec<PathBuf>>();
+
+        for dir in to_delete {
+            append_job_log_and_info(self.job_id, conn,
+                                    &format!("Deleting old delta {:?}", dir.strip_prefix(&tmp_deltas_dir).unwrap()));
             fs::remove_dir_all(&dir)?;
         }
 

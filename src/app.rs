@@ -305,8 +305,19 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let repoconfig = state.config.get_repoconfig(&repo)?;
     // Strip out any "../.." or other unsafe things
     let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
-    let path = Path::new(&repoconfig.path).join(relpath);
-    Ok(NamedFile::open(path)?)
+    let path = Path::new(&repoconfig.path).join(&relpath);
+    match NamedFile::open(path) {
+        Ok(file) => Ok(file),
+        Err(e) => {
+            // Was this a delta, if so check the deltas queued for deletion
+            if relpath.starts_with("deltas") {
+                let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
+                Ok(NamedFile::open(tmp_path)?)
+            } else {
+                Err(e)?
+            }
+        },
+    }
 }
 
 pub fn create_app(
