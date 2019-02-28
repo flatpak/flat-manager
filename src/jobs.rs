@@ -346,6 +346,9 @@ pub trait JobInstance {
     fn should_start_job (&self, _config: &Config) -> bool {
         true
     }
+    fn order (&self) -> i32 {
+        0
+    }
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value>;
 }
 
@@ -646,6 +649,11 @@ impl JobInstance for PublishJobInstance {
         self.job_id
     }
 
+    fn order (&self) -> i32 {
+        1 /* Delay publish after commits (and other normal ops). because the
+            commits may generate more publishes. */
+    }
+
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
         info!("Handling Publish Job {}: {:?}", self.job_id, self);
 
@@ -734,6 +742,10 @@ impl JobInstance for UpdateRepoJobInstance {
         time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs() - self.start_time > config.delay_update_secs
     }
 
+    fn order (&self) -> i32 {
+        2 /* Delay updates after publish so they can be chunked. */
+    }
+
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
         info!("Handling UpdateRepo Job {}: {:?}", self.job_id, self);
         // Get repo config
@@ -814,6 +826,8 @@ fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
             .into_iter()
             .map(move |job| new_job_instance(job))
             .collect();
+
+        new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
 
         for new_instance in new_instances {
             if new_instance.should_start_job(&executor.config) {
