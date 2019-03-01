@@ -22,11 +22,14 @@ use libc;
 use std::collections::{HashMap,HashSet};
 use std::iter::FromIterator;
 use walkdir::WalkDir;
+use futures::prelude::*;
+use futures::future;
 
 use ostree;
 use app::{RepoConfig, Config};
 use errors::{JobError, JobResult};
 use models::{NewJob, Job, JobDependency, JobKind, CommitJob, PublishJob, UpdateRepoJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
+use deltas::{DeltaGenerator, DeltaRequest};
 use models;
 use schema::*;
 use schema;
@@ -174,6 +177,7 @@ fn queue_update_job (conn: &PgConnection,
 
 pub struct JobExecutor {
     pub config: Arc<Config>,
+    pub delta_generator: Addr<DeltaGenerator>,
     pub pool: Pool<ConnectionManager<PgConnection>>,
 }
 
@@ -301,11 +305,11 @@ fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<
 }
 
 
-fn new_job_instance(job: Job) -> Box<JobInstance> {
+fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<JobInstance> {
     match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => CommitJobInstance::new(job),
         Some(JobKind::Publish) => PublishJobInstance::new(job),
-        Some(JobKind::UpdateRepo) => UpdateRepoJobInstance::new(job),
+        Some(JobKind::UpdateRepo) => UpdateRepoJobInstance::new(job, executor.delta_generator.clone()),
         _ => InvalidJobInstance::new(job, JobError::new("Unknown job type")),
     }
 }
@@ -684,15 +688,17 @@ impl JobInstance for PublishJobInstance {
 
 #[derive(Debug)]
 struct UpdateRepoJobInstance {
+    pub delta_generator: Addr<DeltaGenerator>,
     pub job_id: i32,
     pub repo: String,
     pub start_time: u64,
 }
 
 impl UpdateRepoJobInstance {
-    fn new(job: Job) -> Box<JobInstance> {
+    fn new(job: Job, delta_generator: Addr<DeltaGenerator>) -> Box<JobInstance> {
         if let Ok(update_repo_job) = serde_json::from_str::<UpdateRepoJob>(&job.contents) {
             Box::new(UpdateRepoJobInstance {
+                delta_generator: delta_generator,
                 job_id: job.id,
                 repo: update_repo_job.repo,
                 start_time: update_repo_job.start_time,
@@ -726,47 +732,49 @@ impl UpdateRepoJobInstance {
         (missing_deltas, unwanted_deltas)
     }
 
-    fn generate_delta(delta: ostree::Delta,
-                      repo_path: PathBuf) {
-        let mut cmd = Command::new("flatpak");
-        cmd
-            .before_exec (|| {
-                // Setsid in the child to avoid SIGINT on server killing
-                // child and breaking the graceful shutdown
-                unsafe { libc::setsid() };
-                Ok(())
-            });
-
-        cmd
-            .arg("build-update-repo")
-            .arg("--generate-static-delta-to")
-            .arg(delta.to.clone());
-
-        if let Some(ref from) = delta.from {
-            cmd
-                .arg("--generate-static-delta-from")
-                .arg(from.clone());
-        };
-
-        cmd
-            .arg(&repo_path);
-
-        if let Err(e) = cmd.output() {
-            error!("Unexpected error generating delta {:?}", e);
-        };
-    }
-
     fn generate_deltas(&self,
                        deltas: &HashSet<ostree::Delta>,
                        repoconfig: &RepoConfig,
                        conn: &PgConnection) -> JobResult<()> {
         append_job_log_and_info(self.job_id, conn, "Generating deltas");
-        let repo_path = repoconfig.get_abs_repo_path();
-        for delta in deltas {
-            append_job_log_and_info(self.job_id, conn,
-                                    &format!(" {}-{}", delta.from.as_ref().unwrap_or(&"nothing".to_string()), delta.to));
-            Self::generate_delta(delta.clone(), repo_path.clone());
-        };
+        let join =
+            future::join_all(
+                deltas
+                    .iter()
+                    .map(|delta| {
+                        let generate_delta = delta.clone();
+                        self.delta_generator.send(DeltaRequest {
+                            repo: repoconfig.name.clone(),
+                            delta: generate_delta.clone(),
+                        })
+                            .and_then(move |response| {
+                                match response {
+                                    Ok(_) => {
+                                        append_job_log_and_info(self.job_id, conn,
+                                                                &format!(" {}", generate_delta.to_string()));
+                                        Ok(())
+                                    },
+                                    Err(e) => {
+                                        append_job_log_and_info(self.job_id, conn,
+                                                                &format!(" failed to generate {}: {}",
+                                                                         generate_delta.to_string(),
+                                                                         e));
+                                        Ok(())
+                                    },
+                                }
+                            })
+                            .or_else(move |e| {
+                                append_job_log_and_info(self.job_id, conn,
+                                                        &format!("Failed to request delta: {}", e));
+                                Err(e)
+                            })
+                    })
+            );
+
+        if let Err(e) = join.wait() {
+            error!("failed to request delta generation: {}", e);
+        }
+
         append_job_log_and_info(self.job_id, conn, "All deltas generated");
 
         Ok(())
@@ -982,7 +990,7 @@ fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
             )
             .get_results::<models::Job>(conn)?
             .into_iter()
-            .map(move |job| new_job_instance(job))
+            .map(|job| new_job_instance(executor, job))
             .collect();
 
         new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
@@ -1171,10 +1179,12 @@ impl Handler<StopJobQueue> for JobQueue {
 
 
 pub fn start_job_executor(config: Arc<Config>,
+                          delta_generator: Addr<DeltaGenerator>,
                           pool: Pool<ConnectionManager<PgConnection>>) -> Addr<JobQueue> {
     let config_copy = config.clone();
     let jobs_addr = SyncArbiter::start(1, move || JobExecutor {
         config: config_copy.clone(),
+        delta_generator: delta_generator.clone(),
         pool: pool.clone()
     });
     JobQueue {

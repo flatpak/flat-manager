@@ -50,6 +50,7 @@ mod deltas;
 
 use models::DbExecutor;
 use jobs::{JobQueue, StopJobQueue, start_job_executor, cleanup_started_jobs};
+use deltas::{start_delta_generator};
 
 struct HandleSignals {
     server: Addr<actix_net::server::Server>,
@@ -136,8 +137,10 @@ fn main() {
     let db_addr = SyncArbiter::start(3, move || DbExecutor(pool_copy.clone()));
 
 
+    let delta_generator = start_delta_generator(config.clone());
+
     let pool_copy2 = pool.clone();
-    let jobs_addr = start_job_executor(config.clone(), pool_copy2.clone());
+    let jobs_addr = start_job_executor(config.clone(), delta_generator, pool_copy2.clone());
 
     let jobs_addr_copy = jobs_addr.clone();
     let http_server = server::new(move || {
