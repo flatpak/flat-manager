@@ -354,6 +354,12 @@ impl Delta {
         path.push(name[2..].to_string());
         Ok(path)
     }
+
+    pub fn to_string(&self) -> String {
+        format!("{}-{}",
+                self.from.as_ref().unwrap_or(&"nothing".to_string()),
+                self.to)
+    }
 }
 
 #[cfg(test)]
