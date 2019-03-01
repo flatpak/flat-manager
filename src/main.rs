@@ -25,6 +25,7 @@ extern crate libc;
 extern crate walkdir;
 extern crate hex;
 extern crate filetime;
+extern crate num_cpus;
 
 use actix::prelude::*;
 use actix::{Actor, actors::signal};

@@ -13,6 +13,7 @@ use serde;
 use serde_json;
 use serde::Deserialize;
 use base64;
+use num_cpus;
 
 use errors::ApiError;
 use api;
@@ -166,6 +167,10 @@ fn default_port() -> i32 {
     8080
 }
 
+fn default_numcpu() -> u32 {
+    num_cpus::get() as u32
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
@@ -186,6 +191,8 @@ pub struct Config {
     pub build_gpg_key_content: Option<String>,
     #[serde(default)]
     pub delay_update_secs: u64,
+    #[serde(default = "default_numcpu")]
+    pub local_delta_threads: u32,
 }
 
 impl RepoConfig {
