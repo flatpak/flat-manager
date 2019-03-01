@@ -126,7 +126,7 @@ fn main() {
         prefixes: prefixes,
         repos: repos,
         name: name.clone(),
-        exp: Utc::now().timestamp() + Duration::days(365).num_seconds(),
+        exp: Utc::now().timestamp() + duration,
     };
 
     if verbose {
