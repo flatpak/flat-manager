@@ -46,6 +46,7 @@ mod schema;
 mod tokens;
 mod jobs;
 mod ostree;
+mod deltas;
 
 use models::DbExecutor;
 use jobs::{JobQueue, StopJobQueue, start_job_executor, cleanup_started_jobs};
