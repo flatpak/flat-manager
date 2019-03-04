@@ -5,6 +5,10 @@ authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
 # Needs nightly, so disable for now:
 # default-run = "repo-manager"
 
+[lib]
+name = "flatmanager"
+path = "src/lib.rs"
+
 [dependencies]
 env_logger = "0.5"
 
