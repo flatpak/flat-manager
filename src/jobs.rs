@@ -104,7 +104,7 @@ fn add_gpg_args(cmd: &mut Command, maybe_gpg_key: &Option<String>, maybe_gpg_hom
 
 fn queue_update_job (conn: &PgConnection,
                      repo: &str,
-                     starting_job_id: i32) -> JobResult<Job>
+                     starting_job_id: Option<i32>) -> JobResult<Job>
 {
     /* This depends on there only being one writer to the job status,
      * so if this ever changes this needs to be a transaction with
@@ -165,12 +165,14 @@ fn queue_update_job (conn: &PgConnection,
             .execute(conn)?;
     }
 
-    diesel::insert_into(schema::job_dependencies::table)
-        .values(JobDependency {
-            job_id: update_job.id,
-            depends_on: starting_job_id,
-        })
-        .execute(conn)?;
+    if let Some(depends_on) = starting_job_id {
+        diesel::insert_into(schema::job_dependencies::table)
+            .values(JobDependency {
+                job_id: update_job.id,
+                depends_on: depends_on,
+            })
+            .execute(conn)?;
+    }
 
     Ok(update_job)
 }
@@ -608,7 +610,7 @@ impl PublishJobInstance {
         }
 
         /* Create update repo job */
-        let update_job = queue_update_job (conn, &repoconfig.name, self.job_id)?;
+        let update_job = queue_update_job (conn, &repoconfig.name, Some(self.job_id))?;
         append_job_log_and_info(self.job_id, conn,
                                 &format!("Queued repository update job {}",
                                          update_job.id));
@@ -948,7 +950,7 @@ impl JobInstance for UpdateRepoJobInstance {
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("Handling UpdateRepo Job {}: {:?}", self.job_id, self);
+        info!("Handling UpdateRepo Job {}: repo={}", self.job_id, self.repo);
         // Get repo config
         let config = &executor.config;
         let repoconfig = config.get_repoconfig(&self.repo)
@@ -1226,13 +1228,26 @@ pub fn cleanup_started_jobs(pool: &Pool<ConnectionManager<PgConnection>>) -> Res
     };
     {
         use schema::jobs::dsl::*;
-        let n_updated =
+        let updated =
             diesel::update(jobs)
             .filter(status.eq(JobStatus::Started as i16))
             .set((status.eq(JobStatus::Broken as i16),))
-            .execute(conn)?;
-        if n_updated != 0 {
-            error!("Marked {} jobs as broken due to being started already at startup", n_updated);
+            .get_results::<Job>(conn)?;
+        if !updated.is_empty() {
+            error!("Marked {} jobs as broken due to being started already at startup", updated.len());
+            /* For any repo that had an update-repo marked broken, queue a new job */
+            for job in updated.iter() {
+                let mut queue_update_for_repos = HashSet::new();
+                if job.kind == JobKind::UpdateRepo.to_db() {
+                    if let Ok(data) = serde_json::from_str::<UpdateRepoJob>(&job.contents) {
+                        queue_update_for_repos.insert(data.repo);
+                    }
+                }
+                for reponame in queue_update_for_repos {
+                    info!("Queueing new update job for repo {:?}", reponame);
+                    let _update_job = queue_update_job (conn, &reponame, None);
+                }
+            }
         }
     };
     Ok(())
