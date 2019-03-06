@@ -36,6 +36,7 @@ mod tokens;
 mod jobs;
 mod ostree;
 mod deltas;
+mod delayed;
 
 use actix::prelude::*;
 use actix::{Actor, actors::signal};
