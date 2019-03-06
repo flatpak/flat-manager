@@ -288,7 +288,7 @@ pub fn list_refs (repo_path: &path::PathBuf, prefix: &str) -> Vec<String> {
         .collect();
 }
 
-#[derive(Debug,PartialEq,Eq,Hash,Clone)]
+#[derive(Serialize, Deserialize,Debug,PartialEq,Eq,Hash,Clone)]
 pub struct Delta {
     pub from: Option<String>,
     pub to: String,
