@@ -22,11 +22,12 @@ use app::{AppState,Claims};
 use errors::ApiError;
 use db::*;
 use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
-use actix_web::ResponseError;
+use actix_web::{ResponseError, ws};
 use tokens::{self, ClaimsValidator};
 use models::DbExecutor;
 use jobs::ProcessJobs;
 use askama::Template;
+use deltas::RemoteWorker;
 
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
@@ -827,4 +828,15 @@ pub fn status(
         })
         .from_err()
         .responder()
+}
+
+pub fn ws_delta(req: &HttpRequest<AppState>) -> Result<HttpResponse, actix_web::Error> {
+    let state = req.state();
+    if let Err(e) = req.has_token_claims("delta", "generate") {
+        return Ok(e.error_response())
+    }
+    ws::start(
+        req,
+        RemoteWorker::new(&state.config, &state.delta_generator),
+    )
 }

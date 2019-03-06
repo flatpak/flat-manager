@@ -17,6 +17,7 @@ use num_cpus;
 
 use errors::ApiError;
 use api;
+use deltas::DeltaGenerator;
 use tokens::{TokenParser};
 use jobs::{JobQueue};
 use actix_web::dev::FromParam;
@@ -287,6 +288,7 @@ pub struct AppState {
     pub db: Addr<DbExecutor>,
     pub config: Arc<Config>,
     pub job_queue: Addr<JobQueue>,
+    pub delta_generator: Addr<DeltaGenerator>,
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
@@ -331,11 +333,13 @@ pub fn create_app(
     db: Addr<DbExecutor>,
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
+    delta_generator: &Addr<DeltaGenerator>,
 ) -> App<AppState> {
     let state = AppState {
         db: db.clone(),
         job_queue: job_queue.clone(),
         config: config.clone(),
+        delta_generator: delta_generator.clone(),
     };
 
     App::with_state(state)
@@ -360,6 +364,7 @@ pub fn create_app(
                                                       r.method(Method::POST).with(api::publish);
                                                        r.method(Method::GET).with(api::get_publish_job) })
                 .resource("/build/{id}/purge", |r| { r.method(Method::POST).with(api::purge) })
+                .resource("/ws/delta", |r| r.route().f(api::ws_delta))
         })
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))

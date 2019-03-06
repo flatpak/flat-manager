@@ -52,6 +52,7 @@ use deltas::{DeltaGenerator};
 use jobs::{JobQueue, StopJobQueue};
 use models::DbExecutor;
 
+pub use deltas::{RemoteClientMessage,RemoteServerMessage};
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
     let config_data = app::load_config(&path).expect(&format!("Failed to read config file {:?}", &path));
@@ -93,12 +94,14 @@ fn start_job_queue(config: &Arc<Config>,
 
 fn start_service(config: &Arc<Config>,
                  db_executor: &Addr<DbExecutor>,
-                 job_queue: &Addr<JobQueue>) -> Addr<actix_net::server::Server> {
+                 job_queue: &Addr<JobQueue>,
+                 delta_generator: &Addr<DeltaGenerator>) -> Addr<actix_net::server::Server> {
     let db_executor_copy = db_executor.clone();
     let job_queue_copy = job_queue.clone();
     let config_copy = config.clone();
+    let delta_generator_copy = delta_generator.clone();
     let http_server = server::new(move || {
-        app::create_app(db_executor_copy.clone(), &config_copy, job_queue_copy.clone())
+        app::create_app(db_executor_copy.clone(), &config_copy, job_queue_copy.clone(), &delta_generator_copy)
     });
 
     let bind_to = format!("{}:{}", config.host, config.port);
@@ -186,7 +189,7 @@ pub fn start(config: &Arc<Config>) -> actix::Addr<actix_net::server::Server>{
     let db_executor = start_db_executor(&pool);
     let job_queue = start_job_queue(config, &pool, &delta_generator);
 
-    let server = start_service(config, &db_executor, &job_queue);
+    let server = start_service(config, &db_executor, &job_queue, &delta_generator);
 
     handle_signals(&server, &job_queue);
 
