@@ -48,7 +48,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use app::Config;
-use deltas::{DeltaGenerator};
+use deltas::{DeltaGenerator,StopDeltaGenerator};
 use jobs::{JobQueue, StopJobQueue};
 use models::DbExecutor;
 
@@ -120,6 +120,7 @@ fn start_service(config: &Arc<Config>,
 struct HandleSignals {
     server: Addr<actix_net::server::Server>,
     job_queue: Addr<JobQueue>,
+    delta_generator: Addr<DeltaGenerator>,
 }
 
 impl Actor for HandleSignals {
@@ -153,6 +154,12 @@ impl Handler<signal::Signal> for HandleSignals {
                     .into_actor(self)
                     .then(|_result, actor, _ctx| {
                         info!("Stopping job processing");
+                        actor.delta_generator
+                            .send(StopDeltaGenerator())
+                            .into_actor(actor)
+                    })
+                    .then(|_result, actor, _ctx| {
+                        info!("Stopping job processing");
                         actor.job_queue
                             .send(StopJobQueue())
                             .into_actor(actor)
@@ -170,10 +177,12 @@ impl Handler<signal::Signal> for HandleSignals {
 }
 
 fn handle_signals(server: &Addr<actix_net::server::Server>,
-                  job_queue: &Addr<JobQueue>) {
+                  job_queue: &Addr<JobQueue>,
+                  delta_generator: &Addr<DeltaGenerator>) {
     let signal_handler = HandleSignals{
         server: server.clone(),
         job_queue: job_queue.clone(),
+        delta_generator: delta_generator.clone(),
     }.start();
 
     let signals = System::current().registry().get::<signal::ProcessSignals>();
@@ -191,7 +200,7 @@ pub fn start(config: &Arc<Config>) -> actix::Addr<actix_net::server::Server>{
 
     let server = start_service(config, &db_executor, &job_queue, &delta_generator);
 
-    handle_signals(&server, &job_queue);
+    handle_signals(&server, &job_queue, &delta_generator);
 
     server
 }

@@ -171,6 +171,22 @@ impl Handler<DeltaRequest> for DeltaGenerator {
 }
 
 #[derive(Debug)]
+pub struct StopDeltaGenerator();
+
+impl Message for StopDeltaGenerator {
+    type Result = ();
+}
+
+impl Handler<StopDeltaGenerator> for DeltaGenerator {
+    type Result = ();
+
+    fn handle(&mut self, _msg: StopDeltaGenerator, ctx: &mut Self::Context) {
+        ctx.stop();
+    }
+}
+
+
+#[derive(Debug)]
 pub struct RegisterRemoteWorker {
     name: String,
     addr: Addr<RemoteWorker>,
