@@ -1,5 +1,5 @@
-use actix_web::{HttpRequest, Result};
-use actix_web::middleware::{Middleware, Started};
+use actix_web::{HttpRequest, HttpResponse, Result};
+use actix_web::middleware::{Middleware, Started, Finished};
 use actix_web::http::header::{HeaderValue, AUTHORIZATION};
 use jwt::{decode, Validation};
 
@@ -157,10 +157,19 @@ impl<S: 'static> Middleware<S> for TokenParser {
         let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
 
-        info!("{} Presented token: {:?}", req.connection_info().remote().unwrap_or("-"), &claims);
-
         req.extensions_mut().insert(claims);
 
         Ok(Started::Done)
     }
+
+    fn finish(&self, req: &HttpRequest<S>, resp: &HttpResponse) -> Finished {
+        if resp.status() == 401 {
+            if let Some(ref claims) = req.get_claims() {
+                info!("Presented: {:?}", claims);
+            }
+        }
+
+        Finished::Done
+    }
+
 }

@@ -25,6 +25,7 @@ extern crate walkdir;
 extern crate hex;
 extern crate filetime;
 extern crate num_cpus;
+extern crate time;
 
 mod api;
 mod app;
@@ -37,6 +38,7 @@ mod jobs;
 mod ostree;
 mod deltas;
 mod delayed;
+mod logger;
 
 use actix::prelude::*;
 use actix::{Actor, actors::signal};

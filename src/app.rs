@@ -1,6 +1,5 @@
 use actix::prelude::*;
-use actix_web::{self, middleware};
-use actix_web::{App, http::Method, HttpRequest, fs::NamedFile};
+use actix_web::{self, App, http::Method, HttpRequest, fs::NamedFile};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -21,6 +20,7 @@ use deltas::DeltaGenerator;
 use tokens::{TokenParser};
 use jobs::{JobQueue};
 use actix_web::dev::FromParam;
+use logger::Logger;
 
 fn as_base64<S>(key: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer
@@ -343,7 +343,7 @@ pub fn create_app(
     };
 
     App::with_state(state)
-        .middleware(middleware::Logger::default())
+        .middleware(Logger::default())
         .scope("/api/v1", |scope| {
             scope
                 .middleware(TokenParser::new(&config.secret))
