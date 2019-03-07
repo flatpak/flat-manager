@@ -331,9 +331,10 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
             diesel::insert_into(schema::jobs::table)
                 .values(NewJob {
                     kind: JobKind::Commit.to_db(),
+                    start_after: None,
                     contents: json!(CommitJob {
                         build: msg.0.id,
-                        endoflife: msg.0.endoflife
+                        endoflife: msg.0.endoflife,
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?;
@@ -388,6 +389,7 @@ impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
                 diesel::insert_into(schema::jobs::table)
                 .values(NewJob {
                     kind: JobKind::Publish.to_db(),
+                    start_after: None,
                     contents: json!(PublishJob {
                         build: msg.0.id,
                     }).to_string(),

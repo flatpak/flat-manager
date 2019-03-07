@@ -1,7 +1,7 @@
 use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool};
-use std::mem;
+use std::{mem,time};
 
 use chrono;
 use schema::{ builds, build_refs, jobs, job_dependencies };
@@ -189,6 +189,7 @@ impl JobKind {
 pub struct NewJob {
     pub kind: i16,
     pub contents: String,
+    pub start_after: Option<time::SystemTime>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
@@ -200,6 +201,7 @@ pub struct Job {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<String>,
     pub log: String,
+    pub start_after: Option<time::SystemTime>,
 }
 
 #[derive(Insertable, Debug, Queryable, Identifiable, Associations)]
@@ -237,6 +239,4 @@ pub struct PublishJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateRepoJob {
     pub repo: String,
-    #[serde(default)]
-    pub start_time: u64,
 }

@@ -102,9 +102,10 @@ fn add_gpg_args(cmd: &mut Command, maybe_gpg_key: &Option<String>, maybe_gpg_hom
     };
 }
 
-fn queue_update_job (conn: &PgConnection,
+fn queue_update_job (delay_secs: u64,
+                     conn: &PgConnection,
                      repo: &str,
-                     starting_job_id: Option<i32>) -> JobResult<Job>
+                     starting_job_id: Option<i32>) -> JobResult<(bool,Job)>
 {
     /* This depends on there only being one writer to the job status,
      * so if this ever changes this needs to be a transaction with
@@ -139,19 +140,21 @@ fn queue_update_job (conn: &PgConnection,
      * we make the new job depend on it to ensure we only run one
      * update job per repo in parallel */
 
-    let update_job = match old_update_new_job {
-        Some(job) => job,
+    let (is_new, update_job) = match old_update_new_job {
+        Some(job) => (false, job),
         None => {
             /* Create a new job */
-            diesel::insert_into(schema::jobs::table)
+            let new_job =
+                diesel::insert_into(schema::jobs::table)
                 .values(NewJob {
                     kind: JobKind::UpdateRepo.to_db(),
+                    start_after: Some(time::SystemTime::now() + time::Duration::new(delay_secs, 0)),
                     contents: json!(UpdateRepoJob {
-                        repo: repo.to_string(),
-                        start_time: time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs(),
+                        repo: repo.to_string()
                     }).to_string(),
                 })
-                .get_result::<Job>(conn)?
+                .get_result::<Job>(conn)?;
+            (true, new_job)
         },
     };
 
@@ -174,7 +177,7 @@ fn queue_update_job (conn: &PgConnection,
             .execute(conn)?;
     }
 
-    Ok(update_job)
+    Ok((is_new, update_job))
 }
 
 pub struct JobExecutor {
@@ -318,9 +321,6 @@ fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<JobInstance> {
 
 pub trait JobInstance {
     fn get_job_id (&self) -> i32;
-    fn should_start_job (&self, _config: &Config) -> bool {
-        true
-    }
     fn order (&self) -> i32 {
         0
     }
@@ -610,10 +610,19 @@ impl PublishJobInstance {
         }
 
         /* Create update repo job */
-        let update_job = queue_update_job (conn, &repoconfig.name, Some(self.job_id))?;
-        append_job_log_and_info(self.job_id, conn,
-                                &format!("Queued repository update job {}",
-                                         update_job.id));
+        let delay = config.delay_update_secs;
+        let (is_new, update_job) = queue_update_job (delay, conn, &repoconfig.name, Some(self.job_id))?;
+        if is_new {
+            append_job_log_and_info(self.job_id, conn,
+                                    &format!("Queued repository update job {}{}",
+                                             update_job.id, match delay {
+                                                 0 => "".to_string(),
+                                                 _ => format!(" in {} secs", delay),
+                                             }));
+        } else {
+            append_job_log_and_info(self.job_id, conn,
+                                    &format!("Piggy-backed on existing update job {}", update_job.id));
+        }
         append_job_log_and_info(self.job_id, conn,
                                 &format!("Follow logs at: {}/status/{}",
                                          config.base_url, update_job.id));
@@ -693,7 +702,6 @@ struct UpdateRepoJobInstance {
     pub delta_generator: Addr<DeltaGenerator>,
     pub job_id: i32,
     pub repo: String,
-    pub start_time: u64,
 }
 
 impl UpdateRepoJobInstance {
@@ -703,7 +711,6 @@ impl UpdateRepoJobInstance {
                 delta_generator: delta_generator,
                 job_id: job.id,
                 repo: update_repo_job.repo,
-                start_time: update_repo_job.start_time,
             })
         } else {
             InvalidJobInstance::new(job, JobError::new("Can't parse publish job"))
@@ -939,12 +946,6 @@ impl JobInstance for UpdateRepoJobInstance {
         self.job_id
     }
 
-    fn should_start_job (&self, config: &Config) -> bool {
-        /* We always wait a bit before starting an update to allow
-         * more jobs to merge */
-        time::SystemTime::now().duration_since(time::UNIX_EPOCH).unwrap().as_secs() - self.start_time > config.delay_update_secs
-    }
-
     fn order (&self) -> i32 {
         2 /* Delay updates after publish so they can be chunked. */
     }
@@ -975,12 +976,14 @@ impl JobInstance for UpdateRepoJobInstance {
 fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
     use diesel::dsl::exists;
     use diesel::dsl::not;
+    use diesel::dsl::now;
 
     /* Find next job (if any) and mark it started */
     let new_instance = conn.transaction::<Box<JobInstance>, _, _>(|| {
         let mut new_instances : Vec<Box<JobInstance>> = jobs::table
             .order(jobs::id)
             .filter(jobs::status.eq(JobStatus::New as i16)
+                    .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
                     .and(
                         not(exists(
                             job_dependencies_with_status::table.filter(
@@ -995,16 +998,16 @@ fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
             .map(|job| new_job_instance(executor, job))
             .collect();
 
+        /* Sort by prio */
         new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
 
+        /* Handle the first, if any */
         for new_instance in new_instances {
-            if new_instance.should_start_job(&executor.config) {
-                diesel::update(jobs::table)
-                    .filter(jobs::id.eq(new_instance.get_job_id()))
-                    .set((jobs::status.eq(JobStatus::Started as i16),))
-                    .execute(conn)?;
-                return Ok(new_instance)
-            }
+            diesel::update(jobs::table)
+                .filter(jobs::id.eq(new_instance.get_job_id()))
+                .set((jobs::status.eq(JobStatus::Started as i16),))
+                .execute(conn)?;
+            return Ok(new_instance)
         }
 
         Err(diesel::NotFound)
@@ -1245,7 +1248,7 @@ pub fn cleanup_started_jobs(pool: &Pool<ConnectionManager<PgConnection>>) -> Res
                 }
                 for reponame in queue_update_for_repos {
                     info!("Queueing new update job for repo {:?}", reponame);
-                    let _update_job = queue_update_job (conn, &reponame, None);
+                    let _update_job = queue_update_job (0, conn, &reponame, None);
                 }
             }
         }
