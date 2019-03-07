@@ -141,7 +141,7 @@ impl DeltaClient {
             RemoteServerMessage::RequestDelta { id, url, repo, delta } => {
                 // TODO: download, etc
                 info!("PROCESSING REQUEST...");
-                ctx.run_later(Duration::new(10, 0), move |client, ctx| {
+                ctx.run_later(Duration::new(30, 0), move |client, ctx| {
                     info!("DONE...");
                     client.finished(id, Some("This needs to be implemented".to_string()));
                 });

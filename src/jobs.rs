@@ -8,6 +8,7 @@ use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel;
 use filetime;
 use serde_json;
+use std::cell::RefCell;
 use std::str;
 use std::ffi::OsString;
 use std::fs::{self, File};
@@ -34,6 +35,35 @@ use deltas::{DeltaGenerator, DeltaRequest};
 use models;
 use schema::*;
 use schema;
+
+/**************************************************************************
+ * Job handling - theory of operations.
+ *
+ * The job queue is stored in the database, and we regularly (on a
+ * timer and triggered via in-process ProcessJobs messages) check for new
+ * jobs and execute them.
+ *
+ * All jobs have a status which is:
+ *   New - queued but not started
+ *   Started - set when we start working on a job
+ *   Ended - set when the job is done
+ *   Broken - set when we get some internal error working on a job,
+ *            or if an old job was marked "Started" already on startup.
+ *
+ * All jobs are run on single-threaded blocking actors, but we have
+ * multiple of those. One per configured repo, and one for the builds.
+ * This way we avoid any races with multiple things modifying a single
+ * repo, but still allow concurrent build commits with a repo update.
+ *
+ * There is also an async JobQueue actor which manages the sync ones,
+ * handling the queue of jobs and other messages such as StopJobs to
+ * shut down things.
+ *
+ * Since job status is changed on multiple thread all the
+ * modification/access to that is serialized in the db using serialized
+ * transactions.
+ *
+ ************************************************************************/
 
 fn generate_flatpakref(ref_name: &String,
                        maybe_build_id: Option<i32>,
@@ -197,6 +227,7 @@ fn queue_update_job (delay_secs: u64,
 }
 
 pub struct JobExecutor {
+    pub repo: Option<String>,
     pub config: Arc<Config>,
     pub delta_generator: Addr<DeltaGenerator>,
     pub pool: Pool<ConnectionManager<PgConnection>>,
@@ -996,29 +1027,43 @@ fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box
 
     /* Find next job (if any) and mark it started */
 
+    let for_repo = executor.repo.clone();
     let transaction_result =
         conn
         .build_transaction()
         .serializable()
         .deferrable()
         .run(|| {
-            let mut new_instances : Vec<Box<JobInstance>> = jobs::table
-                .order(jobs::id)
-                .filter(jobs::status.eq(JobStatus::New as i16)
-                        .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
-                        .and(
-                            not(exists(
-                                job_dependencies_with_status::table.filter(
-                                    job_dependencies_with_status::job_id.eq(jobs::id)
-                                        .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
-                                )
-                            ))
+            let ready_job_filter = jobs::status.eq(JobStatus::New as i16)
+                .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
+                .and(
+                    not(exists(
+                        job_dependencies_with_status::table.filter(
+                            job_dependencies_with_status::job_id.eq(jobs::id)
+                                .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
                         )
-                )
-                .get_results::<models::Job>(conn)?
-                .into_iter()
-                .map(|job| new_job_instance(executor, job))
-                .collect();
+                    )));
+
+            let mut new_instances : Vec<Box<JobInstance>> = match for_repo {
+                None => {
+                    jobs::table
+                        .order(jobs::id)
+                        .filter(ready_job_filter.and(jobs::repo.is_null()))
+                        .get_results::<models::Job>(conn)?
+                        .into_iter()
+                        .map(|job| new_job_instance(executor, job))
+                        .collect()
+                },
+                Some(repo) => {
+                    jobs::table
+                        .order(jobs::id)
+                        .filter(ready_job_filter.and(jobs::repo.eq(repo)))
+                        .get_results::<models::Job>(conn)?
+                        .into_iter()
+                        .map(|job| new_job_instance(executor, job))
+                        .collect()
+                },
+            };
 
             /* Sort by prio */
             new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
@@ -1114,30 +1159,47 @@ impl Handler<ProcessOneJob> for JobExecutor {
 // what order to handle them. In particular, we want to prioritize stop
 // operations and exit cleanly with outstanding jobs for next run
 
-pub struct JobQueue {
-    executor: Addr<JobExecutor>,
-    running: bool,
+struct ExecutorInfo {
+    addr: Addr<JobExecutor>,
     processing_job: bool,
-    jobs_queued: bool,
+    job_queued: bool,
+}
+
+pub struct JobQueue {
+    executors: HashMap<Option<String>,RefCell<ExecutorInfo>>,
+    running: bool,
 }
 
 impl JobQueue {
-    fn kick(&mut self, ctx: &mut Context<Self>) {
+    fn kick(&mut self, repo: &Option<String>, ctx: &mut Context<Self>) {
+        let mut info = match self.executors.get(repo) {
+            None => {
+                error!("Got process jobs for non existing executor");
+                return
+            },
+            Some(executor_info) => executor_info.borrow_mut(),
+        };
+
         if !self.running {
             return
         }
-        if self.processing_job {
-            self.jobs_queued = true;
+        if info.processing_job {
+            info.job_queued = true;
         } else {
-            self.processing_job = true;
-            self.jobs_queued = false;
+            info.processing_job = true;
+            info.job_queued = false;
 
+            let repo = repo.clone();
             ctx.spawn(
-                self.executor
+                info.addr
                     .send (ProcessOneJob())
                     .into_actor(self)
                     .then(|result, queue, ctx| {
-                        queue.processing_job = false;
+                        let job_queued = {
+                            let mut info = queue.executors.get(&repo).unwrap().borrow_mut();
+                            info.processing_job = false;
+                            info.job_queued
+                        };
 
                         if queue.running {
                             let processed_job = match result {
@@ -1150,8 +1212,8 @@ impl JobQueue {
                             };
 
                             // If we ran a job, or a job was queued, kick again
-                            if queue.jobs_queued || processed_job {
-                                queue.kick(ctx);
+                            if job_queued || processed_job {
+                                queue.kick(&repo, ctx);
                             } else  {
                                 // We send a ProcessJobs message each time we added something to the
                                 // db, but case something external modifes the db we have a 10 sec
@@ -1159,7 +1221,7 @@ impl JobQueue {
                                 // postgre, but diesel/pq-sys does not currently support it.
 
                                 ctx.run_later(time::Duration::new(10, 0), move |queue, ctx| {
-                                    queue.kick(ctx);
+                                    queue.kick(&repo, ctx);
                                 });
                             }
 
@@ -1175,11 +1237,15 @@ impl Actor for JobQueue {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
-        self.kick(ctx); // Run any jobs in db
+        // Run any jobs in db
+        let repos = self.executors.keys().cloned().collect::<Vec<_>>();
+        for repo in repos {
+            self.kick(&repo, ctx);
+        }
     }
 }
 
-pub struct ProcessJobs();
+pub struct ProcessJobs(pub Option<String>);
 
 impl Message for ProcessJobs {
     type Result = Result<(), ()>;
@@ -1188,8 +1254,8 @@ impl Message for ProcessJobs {
 impl Handler<ProcessJobs> for JobQueue {
     type Result = Result<(), ()>;
 
-    fn handle(&mut self, _msg: ProcessJobs, ctx: &mut Self::Context) -> Self::Result {
-        self.kick(ctx);
+    fn handle(&mut self, msg: ProcessJobs, ctx: &mut Self::Context) -> Self::Result {
+        self.kick(&msg.0, ctx);
         Ok(())
     }
 }
@@ -1205,34 +1271,61 @@ impl Handler<StopJobQueue> for JobQueue {
 
     fn handle(&mut self, _msg: StopJobQueue, _ctx: &mut Self::Context) -> Self::Result {
         self.running = false;
+
+        let executors : Vec<Addr<JobExecutor>> = self.executors.values().map(|info| info.borrow().addr.clone()).collect();
         ActorResponse::async(
-            self.executor
-                .send (StopJobs())
-                .into_actor(self)
-                .then(|_result, _queue, _ctx| {
-                    actix::fut::ok(())
-                }))
+            futures::stream::iter_ok(executors).into_actor(self)
+                .map(|executor: Addr<JobExecutor>, job_queue, _ctx| {
+                    executor
+                        .send (StopJobs())
+                        .into_actor(job_queue)
+                        .then(|_result, _job_queue, _ctx| {
+                            actix::fut::ok::<_,(),_>(())
+                        })
+                })
+                .finish()
+        )
     }
+}
+
+fn start_executor(repo: &Option<String>,
+                  config: &Arc<Config>,
+                  delta_generator: &Addr<DeltaGenerator>,
+                  pool: &Pool<ConnectionManager<PgConnection>>) -> RefCell<ExecutorInfo>
+{
+    let config_copy = config.clone();
+    let delta_generator_copy = delta_generator.clone();
+    let pool_copy = pool.clone();
+    let repo_clone = repo.clone();
+    RefCell::new(ExecutorInfo {
+        addr: SyncArbiter::start(1, move || JobExecutor {
+            repo: repo_clone.clone(),
+            config: config_copy.clone(),
+            delta_generator: delta_generator_copy.clone(),
+            pool: pool_copy.clone()
+        }),
+        processing_job: false,
+        job_queued: false,
+    })
 }
 
 
 pub fn start_job_executor(config: Arc<Config>,
                           delta_generator: Addr<DeltaGenerator>,
                           pool: Pool<ConnectionManager<PgConnection>>) -> Addr<JobQueue> {
-    let config_copy = config.clone();
-    let jobs_addr = SyncArbiter::start(1, move || JobExecutor {
-        config: config_copy.clone(),
-        delta_generator: delta_generator.clone(),
-        pool: pool.clone()
-    });
+    let mut executors = HashMap::new();
+    executors.insert(None,
+                     start_executor(&None, &config, &delta_generator, &pool));
+
+    for repo in config.repos.keys().cloned() {
+        executors.insert(Some(repo.clone()),
+                         start_executor(&Some(repo.clone()), &config, &delta_generator, &pool));
+    }
     JobQueue {
-        executor: jobs_addr.clone(),
+        executors: executors,
         running: true,
-        processing_job: false,
-        jobs_queued: false,
     }.start()
 }
-
 
 pub fn cleanup_started_jobs(pool: &Pool<ConnectionManager<PgConnection>>) -> Result<(), diesel::result::Error> {
     let conn = &pool.get().unwrap();

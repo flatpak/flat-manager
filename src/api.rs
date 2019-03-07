@@ -667,7 +667,7 @@ pub fn commit(
                         })
         })
         .and_then(move |job| {
-            job_queue.do_send(ProcessJobs());
+            job_queue.do_send(ProcessJobs(None));
             respond_with_url(&job, &req, "show_commit_job", &[params.id.to_string()])
         })
         .from_err()
@@ -721,10 +721,10 @@ pub fn publish(
             db_request (&state,
                         StartPublishJob {
                             id: build_id,
-                            repo: build.repo,
+                            repo: build.repo.clone(),
                         })
                 .and_then(move |job| {
-                    job_queue.do_send(ProcessJobs());
+                    job_queue.do_send(ProcessJobs(Some(build.repo)));
                     respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
                 })
         })
