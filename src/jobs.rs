@@ -4,6 +4,7 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::result::{Error as DieselError};
+use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel;
 use filetime;
 use serde_json;
@@ -105,79 +106,93 @@ fn add_gpg_args(cmd: &mut Command, maybe_gpg_key: &Option<String>, maybe_gpg_hom
 fn queue_update_job (delay_secs: u64,
                      conn: &PgConnection,
                      repo: &str,
-                     starting_job_id: Option<i32>) -> JobResult<(bool,Job)>
+                     starting_job_id: Option<i32>) -> Result<(bool,Job), DieselError>
 {
-    /* This depends on there only being one writer to the job status,
-     * so if this ever changes this needs to be a transaction with
-     * higher isolation level. */
+    /* We wrap everything in a serializable transaction, because if something else
+     * starts the job while we're adding dependencies to it the dependencies will be
+     * ignored.
+     */
 
-    let mut old_update_started_job = None;
-    let mut old_update_new_job = None;
+    let transaction_result =
+        conn
+        .build_transaction()
+        .serializable()
+        .deferrable()
+        .run(|| {
+            let mut old_update_started_job = None;
+            let mut old_update_new_job = None;
 
-    /* First look for an existing active (i.e. unstarted or running) update job matching the repo */
-    let existing_update_jobs =
-        jobs::table
-        .order(jobs::id.desc())
-        .filter(jobs::kind.eq(JobKind::UpdateRepo.to_db()))
-        .filter(jobs::status.le(JobStatus::Started as i16))
-        .get_results::<Job>(conn)?;
+            /* First look for an existing active (i.e. unstarted or running) update job matching the repo */
+            let existing_update_jobs =
+                jobs::table
+                .order(jobs::id.desc())
+                .filter(jobs::kind.eq(JobKind::UpdateRepo.to_db()))
+                .filter(jobs::status.le(JobStatus::Started as i16))
+                .get_results::<Job>(conn)?;
 
-    for existing_update_job in existing_update_jobs {
-        if let Ok(data) = serde_json::from_str::<UpdateRepoJob>(&existing_update_job.contents) {
-            if data.repo == repo {
-                if existing_update_job.status == JobStatus::New as i16 {
-                    old_update_new_job = Some(existing_update_job);
-                } else {
-                    old_update_started_job = Some(existing_update_job);
+            for existing_update_job in existing_update_jobs {
+                if let Ok(data) = serde_json::from_str::<UpdateRepoJob>(&existing_update_job.contents) {
+                    if data.repo == repo {
+                        if existing_update_job.status == JobStatus::New as i16 {
+                            old_update_new_job = Some(existing_update_job);
+                        } else {
+                            old_update_started_job = Some(existing_update_job);
+                        }
+                        break
+                    }
                 }
-                break
             }
-        }
+
+            /* We found the last queued active update job for this repo.
+             * If it was not started we piggy-back on it, if it was started
+             * we make the new job depend on it to ensure we only run one
+             * update job per repo in parallel */
+
+            let (is_new, update_job) = match old_update_new_job {
+                Some(job) => (false, job),
+                None => {
+                    /* Create a new job */
+                    let new_job =
+                        diesel::insert_into(schema::jobs::table)
+                        .values(NewJob {
+                            kind: JobKind::UpdateRepo.to_db(),
+                            start_after: Some(time::SystemTime::now() + time::Duration::new(delay_secs, 0)),
+                            contents: json!(UpdateRepoJob {
+                                repo: repo.to_string()
+                            }).to_string(),
+                        })
+                        .get_result::<Job>(conn)?;
+                    (true, new_job)
+                },
+            };
+
+            /* Make new job depend previous started update for this repo (if any) */
+            if let Some(previous_started_job) = old_update_started_job {
+                diesel::insert_into(schema::job_dependencies::table)
+                    .values(JobDependency {
+                        job_id: update_job.id,
+                        depends_on: previous_started_job.id,
+                    })
+                    .execute(conn)?;
+            }
+
+            if let Some(depends_on) = starting_job_id {
+                diesel::insert_into(schema::job_dependencies::table)
+                    .values(JobDependency {
+                        job_id: update_job.id,
+                        depends_on: depends_on,
+                    })
+                    .execute(conn)?;
+            }
+
+            Ok((is_new, update_job))
+        });
+
+    /* Retry on serialization failure */
+    match transaction_result {
+        Err(DieselError::DatabaseError(SerializationFailure, _)) => queue_update_job (delay_secs, conn, repo, starting_job_id),
+        _ => transaction_result
     }
-
-    /* We found the last queued active update job for this repo.
-     * If it was not started we piggy-back on it, if it was started
-     * we make the new job depend on it to ensure we only run one
-     * update job per repo in parallel */
-
-    let (is_new, update_job) = match old_update_new_job {
-        Some(job) => (false, job),
-        None => {
-            /* Create a new job */
-            let new_job =
-                diesel::insert_into(schema::jobs::table)
-                .values(NewJob {
-                    kind: JobKind::UpdateRepo.to_db(),
-                    start_after: Some(time::SystemTime::now() + time::Duration::new(delay_secs, 0)),
-                    contents: json!(UpdateRepoJob {
-                        repo: repo.to_string()
-                    }).to_string(),
-                })
-                .get_result::<Job>(conn)?;
-            (true, new_job)
-        },
-    };
-
-    /* Make new job depend previous started update for this repo (if any) */
-    if let Some(previous_started_job) = old_update_started_job {
-        diesel::insert_into(schema::job_dependencies::table)
-            .values(JobDependency {
-                job_id: update_job.id,
-                depends_on: previous_started_job.id,
-            })
-            .execute(conn)?;
-    }
-
-    if let Some(depends_on) = starting_job_id {
-        diesel::insert_into(schema::job_dependencies::table)
-            .values(JobDependency {
-                job_id: update_job.id,
-                depends_on: depends_on,
-            })
-            .execute(conn)?;
-    }
-
-    Ok((is_new, update_job))
 }
 
 pub struct JobExecutor {
@@ -979,39 +994,51 @@ fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box
     use diesel::dsl::now;
 
     /* Find next job (if any) and mark it started */
-    conn.transaction::<Box<JobInstance>, _, _>(|| {
-        let mut new_instances : Vec<Box<JobInstance>> = jobs::table
-            .order(jobs::id)
-            .filter(jobs::status.eq(JobStatus::New as i16)
-                    .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
-                    .and(
-                        not(exists(
-                            job_dependencies_with_status::table.filter(
-                                job_dependencies_with_status::job_id.eq(jobs::id)
-                                    .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
-                            )
-                        ))
-                    )
-            )
-            .get_results::<models::Job>(conn)?
-            .into_iter()
-            .map(|job| new_job_instance(executor, job))
-            .collect();
 
-        /* Sort by prio */
-        new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
+    let transaction_result =
+        conn
+        .build_transaction()
+        .serializable()
+        .deferrable()
+        .run(|| {
+            let mut new_instances : Vec<Box<JobInstance>> = jobs::table
+                .order(jobs::id)
+                .filter(jobs::status.eq(JobStatus::New as i16)
+                        .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
+                        .and(
+                            not(exists(
+                                job_dependencies_with_status::table.filter(
+                                    job_dependencies_with_status::job_id.eq(jobs::id)
+                                        .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
+                                )
+                            ))
+                        )
+                )
+                .get_results::<models::Job>(conn)?
+                .into_iter()
+                .map(|job| new_job_instance(executor, job))
+                .collect();
 
-        /* Handle the first, if any */
-        for new_instance in new_instances {
-            diesel::update(jobs::table)
-                .filter(jobs::id.eq(new_instance.get_job_id()))
-                .set((jobs::status.eq(JobStatus::Started as i16),))
-                .execute(conn)?;
-            return Ok(new_instance)
-        }
+            /* Sort by prio */
+            new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
 
-        Err(diesel::NotFound)
-    })
+            /* Handle the first, if any */
+            for new_instance in new_instances {
+                diesel::update(jobs::table)
+                    .filter(jobs::id.eq(new_instance.get_job_id()))
+                    .set((jobs::status.eq(JobStatus::Started as i16),))
+                    .execute(conn)?;
+                return Ok(new_instance)
+            }
+
+            Err(diesel::NotFound)
+        });
+
+    /* Retry on serialization failure */
+    match transaction_result {
+        Err(DieselError::DatabaseError(SerializationFailure, _)) => pick_next_job (executor, conn),
+        _ => transaction_result
+    }
 }
 
 
