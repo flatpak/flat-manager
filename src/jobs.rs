@@ -156,6 +156,7 @@ fn queue_update_job (delay_secs: u64,
                         diesel::insert_into(schema::jobs::table)
                         .values(NewJob {
                             kind: JobKind::UpdateRepo.to_db(),
+                            repo: Some(repo.to_string()),
                             start_after: Some(time::SystemTime::now() + time::Duration::new(delay_secs, 0)),
                             contents: json!(UpdateRepoJob {
                                 repo: repo.to_string()

@@ -332,6 +332,7 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
                 .values(NewJob {
                     kind: JobKind::Commit.to_db(),
                     start_after: None,
+                    repo: None,
                     contents: json!(CommitJob {
                         build: msg.0.id,
                         endoflife: msg.0.endoflife,
@@ -358,7 +359,8 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
 
 #[derive(Deserialize, Debug)]
 pub struct StartPublishJob {
-    pub id: i32
+    pub id: i32,
+    pub repo: String,
 }
 
 impl DbRequest for StartPublishJob {
@@ -390,6 +392,7 @@ impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
                 .values(NewJob {
                     kind: JobKind::Publish.to_db(),
                     start_after: None,
+                    repo: Some(msg.0.repo),
                     contents: json!(PublishJob {
                         build: msg.0.id,
                     }).to_string(),

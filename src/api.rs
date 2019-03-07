@@ -713,11 +713,15 @@ pub fn publish(
     let req2 = req.clone();
 
     db_request (&state, LookupBuild { id: build_id })
-        .and_then (move |build| req2.has_token_repo(&build.repo) )
-        .and_then (move |_ok| {
+        .and_then (move |build| {
+            req2.has_token_repo(&build.repo)?;
+            Ok(build)
+        })
+        .and_then (move |build| {
             db_request (&state,
                         StartPublishJob {
                             id: build_id,
+                            repo: build.repo,
                         })
                 .and_then(move |job| {
                     job_queue.do_send(ProcessJobs());

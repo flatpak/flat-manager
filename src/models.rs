@@ -190,6 +190,7 @@ pub struct NewJob {
     pub kind: i16,
     pub contents: String,
     pub start_after: Option<time::SystemTime>,
+    pub repo: Option<String>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
@@ -202,6 +203,7 @@ pub struct Job {
     pub results: Option<String>,
     pub log: String,
     pub start_after: Option<time::SystemTime>,
+    pub repo: Option<String>,
 }
 
 #[derive(Insertable, Debug, Queryable, Identifiable, Associations)]
