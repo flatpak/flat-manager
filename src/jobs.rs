@@ -973,13 +973,13 @@ impl JobInstance for UpdateRepoJobInstance {
     }
 }
 
-fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
+fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box<JobInstance>, DieselError> {
     use diesel::dsl::exists;
     use diesel::dsl::not;
     use diesel::dsl::now;
 
     /* Find next job (if any) and mark it started */
-    let new_instance = conn.transaction::<Box<JobInstance>, _, _>(|| {
+    conn.transaction::<Box<JobInstance>, _, _>(|| {
         let mut new_instances : Vec<Box<JobInstance>> = jobs::table
             .order(jobs::id)
             .filter(jobs::status.eq(JobStatus::New as i16)
@@ -1011,7 +1011,12 @@ fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
         }
 
         Err(diesel::NotFound)
-    });
+    })
+}
+
+
+fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
+    let new_instance = pick_next_job(executor, conn);
 
     match new_instance {
         Ok(mut instance) => {
