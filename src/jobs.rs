@@ -12,11 +12,9 @@ use std::cell::RefCell;
 use std::str;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::{Arc};
-use std::sync::mpsc::{channel, Sender};
-use std::thread;
 use std::path::PathBuf;
 use std::time;
 use std::os::unix::process::CommandExt;
@@ -237,50 +235,7 @@ impl Actor for JobExecutor {
     type Context = SyncContext<Self>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum CommandOutputSource {
-    Stdout,
-    Stderr,
-}
-
-impl CommandOutputSource {
-    fn prefix(&self) -> &str {
-        match self {
-            CommandOutputSource::Stdout => "|",
-            CommandOutputSource::Stderr => ">",
-        }
-    }
-}
-
-#[derive(Debug)]
-enum CommandOutput {
-    Data(CommandOutputSource, Vec<u8>),
-    Closed(CommandOutputSource),
-}
-
-fn send_reads<T: Read>(sender: Sender<CommandOutput>, source: CommandOutputSource, mut reader: T) {
-    let mut buffer = [0; 4096];
-    loop {
-        match reader.read(&mut buffer) {
-            Ok(num_read) => {
-                if num_read == 0 {
-                    sender.send(CommandOutput::Closed(source)).unwrap();
-                    return;
-                } else {
-                    let data = buffer[0..num_read].to_vec();
-                    sender.send(CommandOutput::Data(source,data)).unwrap();
-                }
-            },
-            Err(e) => {
-                error!("Error reading from Command {:?} {}", source, e);
-                sender.send(CommandOutput::Closed(source)).unwrap();
-                break;
-            }
-        }
-    }
-}
-
-fn append_job_log(job_id: i32, conn: &PgConnection, output: &str) {
+fn job_log(job_id: i32, conn: &PgConnection, output: &str) {
     if let Err(e) = diesel::update(jobs::table)
         .filter(jobs::id.eq(job_id))
         .set((jobs::log.eq(jobs::log.concat(&output)),))
@@ -289,16 +244,19 @@ fn append_job_log(job_id: i32, conn: &PgConnection, output: &str) {
         }
 }
 
-fn append_job_log_and_info(job_id: i32, conn: &PgConnection, output: &str) {
-    info!("{}", output);
-    append_job_log(job_id, conn, &format!("{}\n", output));
+fn job_log_and_info(job_id: i32, conn: &PgConnection, output: &str) {
+    info!("#{}: {}", job_id, output);
+    job_log(job_id, conn, &format!("{}\n", output));
 }
 
-fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<(bool, String, String)>
+fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
+    error!("#{}: {}", job_id, output);
+    job_log(job_id, conn, &format!("{}\n", output));
+}
+
+fn do_command(mut cmd: Command) -> JobResult<()>
 {
-    info!("/ Running: {:?}", cmd);
-    append_job_log(job_id, conn, &format!("Running: {:?}\n", cmd));
-    let mut child = cmd
+    let output = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -308,54 +266,14 @@ fn run_command(mut cmd: Command, job_id: i32, conn: &PgConnection) -> JobResult<
             unsafe { libc::setsid() };
             Ok(())
         })
-        .spawn()
-        .or_else(|e| Err(JobError::new(&format!("Can't start command: {}", e))))?;
+        .output()
+        .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?;
 
-    let (sender1, receiver) = channel();
-    let sender2 = sender1.clone();
-
-    let stdout_reader = child.stdout.take().unwrap();
-    let stdout_thread = thread::spawn(move || send_reads(sender1, CommandOutputSource::Stdout, stdout_reader));
-
-    let stderr_reader = child.stderr.take().unwrap();
-    let stderr_thread = thread::spawn(move || send_reads(sender2, CommandOutputSource::Stderr, stderr_reader));
-
-    let mut remaining = 2;
-    let mut stderr = Vec::new();
-    let mut log = Vec::<u8>::new();
-    while remaining > 0 {
-        match receiver.recv() {
-            Ok(CommandOutput::Data(source, v)) => {
-                let output = String::from_utf8_lossy(&v);
-                append_job_log(job_id, conn, &output);
-                 for line in output.split_terminator("\n") {
-                    info!("{} {}", source.prefix(), line);
-                }
-                log.extend(&v);
-                if source == CommandOutputSource::Stderr {
-                    stderr.extend(&v);
-                }
-            },
-            Ok(CommandOutput::Closed(_)) => remaining -= 1,
-            Err(_e) => break,
-        }
+    if !output.status.success() {
+        return Err(JobError::new(&format!("Command {:?} exited unsuccesfully: {}", &cmd, String::from_utf8_lossy(&output.stderr))))
     }
-    stdout_thread.join().unwrap();
-    stderr_thread.join().unwrap();
-
-    let status = child.wait().or_else(|e| Err(JobError::new(&format!("Can't wait for command: {}", e))))?;
-
-    let code = status.code().unwrap_or(-1);
-    if code != 0 {
-        append_job_log(job_id, conn, &format!("status {:?}\n", code))
-    }
-    info!("\\ status {:?}", status.code().unwrap_or(-1));
-
-    Ok((status.success(),
-        String::from_utf8_lossy(&log).to_string(),
-        String::from_utf8_lossy(&stderr).to_string()))
+    Ok(())
 }
-
 
 fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<JobInstance> {
     match JobKind::from_db(job.kind) {
@@ -420,7 +338,6 @@ impl CommitJobInstance {
         }
     }
 
-
     fn do_commit_build_refs (&self,
                              build_refs: &Vec<models::BuildRef>,
                              config: &Config,
@@ -460,10 +377,8 @@ impl CommitJobInstance {
                 .arg(&build_repo_path)
                 .arg(&build_ref.ref_name);
 
-            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-            if !success {
-                return Err(JobError::new(&format!("Failed to build commit for ref {}: {}", &build_ref.ref_name, stderr.trim())))
-            }
+            job_log_and_info(self.job_id, conn, &format!("Commiting ref {} ({})", build_ref.ref_name, build_ref.commit));
+            do_command(cmd)?;
 
             let commit = ostree::parse_ref(&build_repo_path, &build_ref.ref_name)?;
             commits.insert(build_ref.ref_name.to_string(), commit);
@@ -475,7 +390,6 @@ impl CommitJobInstance {
             }
         }
 
-        append_job_log_and_info(self.job_id, conn, "running build-update-repo");
 
         let mut cmd = Command::new("flatpak");
         cmd
@@ -484,13 +398,10 @@ impl CommitJobInstance {
 
         add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
-        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to updaterepo: {}", stderr.trim())))
-        }
+        job_log_and_info(self.job_id, conn, "running build-update-repo");
+        do_command(cmd)?;
 
-        append_job_log_and_info(self.job_id, conn, "Removing upload directory");
-
+        job_log_and_info(self.job_id, conn, "Removing upload directory");
         fs::remove_dir_all(&upload_path)?;
 
         Ok(json!({ "refs": commits}))
@@ -503,7 +414,8 @@ impl JobInstance for CommitJobInstance {
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("Handling Commit Job {}: {:?}", self.job_id, self);
+        info!("#{}: Handling Job Commit: build: {}, end-of-life: {}",
+              &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()));
 
         let config = &executor.config;
 
@@ -609,10 +521,9 @@ impl PublishJobInstance {
             .arg(&src_repo_arg)
             .arg(&repoconfig.path);
 
-        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to publish repo: {}", stderr.trim())));
-        }
+        job_log_and_info(self.job_id, conn,
+                         &format!("Importing build to repo {}", repoconfig.name));
+        do_command(cmd)?;
 
         let appstream_dir = repoconfig.path.join("appstream");
         fs::create_dir_all(&appstream_dir)?;
@@ -630,7 +541,7 @@ impl PublishJobInstance {
             if build_ref.ref_name.starts_with("app/") {
                 let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
                 let path = appstream_dir.join(&filename);
-                append_job_log_and_info (self.job_id, conn, &format!("generating {}", &filename));
+                job_log_and_info (self.job_id, conn, &format!("generating {}", &filename));
                 let old_contents = fs::read_to_string(&path).unwrap_or_default();
                 if contents != old_contents {
                     File::create(&path)?.write_all(contents.as_bytes())?;
@@ -640,7 +551,7 @@ impl PublishJobInstance {
 
         for build_ref in build_refs.iter() {
             if build_ref.ref_name.starts_with("screenshots/") {
-                append_job_log_and_info (self.job_id, conn, &format!("extracting screenshots for {}", build_ref.ref_name));
+                job_log_and_info (self.job_id, conn, &format!("extracting {}", build_ref.ref_name));
                 let mut cmd = Command::new("ostree");
                 cmd
                     .arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
@@ -649,10 +560,7 @@ impl PublishJobInstance {
                     .arg("--union")
                     .arg(&build_ref.ref_name)
                     .arg(&screenshots_dir);
-                let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-                if !success {
-                    return Err(JobError::new(&format!("Failed to extract screenshots: {}", stderr.trim())));
-                }
+                do_command(cmd)?;
             }
         }
 
@@ -660,19 +568,19 @@ impl PublishJobInstance {
         let delay = config.delay_update_secs;
         let (is_new, update_job) = queue_update_job (delay, conn, &repoconfig.name, Some(self.job_id))?;
         if is_new {
-            append_job_log_and_info(self.job_id, conn,
+            job_log_and_info(self.job_id, conn,
                                     &format!("Queued repository update job {}{}",
                                              update_job.id, match delay {
                                                  0 => "".to_string(),
                                                  _ => format!(" in {} secs", delay),
                                              }));
         } else {
-            append_job_log_and_info(self.job_id, conn,
-                                    &format!("Piggy-backed on existing update job {}", update_job.id));
+            job_log_and_info(self.job_id, conn,
+                             &format!("Piggy-backed on existing update job {}", update_job.id));
         }
-        append_job_log_and_info(self.job_id, conn,
-                                &format!("Follow logs at: {}/status/{}",
-                                         config.base_url, update_job.id));
+        job_log_and_info(self.job_id, conn,
+                         &format!("Follow logs at: {}/status/{}",
+                                  config.base_url, update_job.id));
 
         Ok(json!({ "refs": commits}))
     }
@@ -689,7 +597,8 @@ impl JobInstance for PublishJobInstance {
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("Handling Publish Job {}: {:?}", self.job_id, self);
+        info!("#{}: Handling Job Publish: build: {}",
+              &self.job_id, &self.build_id);
 
         let config = &executor.config;
 
@@ -792,7 +701,7 @@ impl UpdateRepoJobInstance {
                        deltas: &HashSet<ostree::Delta>,
                        repoconfig: &RepoConfig,
                        conn: &PgConnection) -> JobResult<()> {
-        append_job_log_and_info(self.job_id, conn, "Generating deltas");
+        job_log_and_info(self.job_id, conn, "Generating deltas");
         let join =
             future::join_all(
                 deltas
@@ -806,22 +715,22 @@ impl UpdateRepoJobInstance {
                             .and_then(move |response| {
                                 match response {
                                     Ok(_) => {
-                                        append_job_log_and_info(self.job_id, conn,
-                                                                &format!(" {}", generate_delta.to_string()));
+                                        job_log_and_info(self.job_id, conn,
+                                                         &format!(" {}", generate_delta.to_string()));
                                         Ok(())
                                     },
                                     Err(e) => {
-                                        append_job_log_and_info(self.job_id, conn,
-                                                                &format!(" failed to generate {}: {}",
-                                                                         generate_delta.to_string(),
-                                                                         e));
+                                        job_log_and_info(self.job_id, conn,
+                                                         &format!(" failed to generate {}: {}",
+                                                                  generate_delta.to_string(),
+                                                                  e));
                                         Ok(())
                                     },
                                 }
                             })
                             .or_else(move |e| {
-                                append_job_log_and_info(self.job_id, conn,
-                                                        &format!("Failed to request delta: {}", e));
+                                job_log_and_info(self.job_id, conn,
+                                                 &format!("Failed to request delta: {}", e));
                                 Err(e)
                             })
                     })
@@ -831,7 +740,7 @@ impl UpdateRepoJobInstance {
             error!("failed to request delta generation: {}", e);
         }
 
-        append_job_log_and_info(self.job_id, conn, "All deltas generated");
+        job_log_and_info(self.job_id, conn, "All deltas generated");
 
         Ok(())
     }
@@ -840,7 +749,7 @@ impl UpdateRepoJobInstance {
                      deltas: &HashSet<ostree::Delta>,
                      repoconfig: &RepoConfig,
                      conn: &PgConnection) -> JobResult<()> {
-        append_job_log_and_info(self.job_id, conn, "Cleaning out old deltas");
+        job_log_and_info(self.job_id, conn, "Cleaning out old deltas");
         let repo_path = repoconfig.get_abs_repo_path();
         let deltas_dir = repo_path.join("deltas");
         let tmp_deltas_dir = repo_path.join("tmp/deltas");
@@ -860,7 +769,7 @@ impl UpdateRepoJobInstance {
             let dst_parent = dst.parent().unwrap();
             fs::create_dir_all(&dst_parent)?;
 
-            append_job_log_and_info(self.job_id, conn,
+            job_log_and_info(self.job_id, conn,
                                     &format!("Queuing delta {:?} for deletion", src.strip_prefix(&deltas_dir).unwrap()));
 
             if dst.exists() {
@@ -893,8 +802,8 @@ impl UpdateRepoJobInstance {
             .collect::<Vec<PathBuf>>();
 
         for dir in to_delete {
-            append_job_log_and_info(self.job_id, conn,
-                                    &format!("Deleting old delta {:?}", dir.strip_prefix(&tmp_deltas_dir).unwrap()));
+            job_log_and_info(self.job_id, conn,
+                             &format!("Deleting old delta {:?}", dir.strip_prefix(&tmp_deltas_dir).unwrap()));
             fs::remove_dir_all(&dir)?;
         }
 
@@ -905,7 +814,7 @@ impl UpdateRepoJobInstance {
                          config: &Config,
                          repoconfig: &RepoConfig,
                          conn: &PgConnection) -> JobResult<()> {
-        append_job_log_and_info(self.job_id, conn, "Regenerating appstream branches");
+        job_log_and_info(self.job_id, conn, "Regenerating appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut cmd = Command::new("flatpak");
@@ -916,10 +825,7 @@ impl UpdateRepoJobInstance {
         cmd
             .arg(&repo_path);
 
-        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to regenerate appstream: {}", stderr.trim())));
-        };
+        do_command(cmd)?;
         Ok(())
     }
 
@@ -927,7 +833,7 @@ impl UpdateRepoJobInstance {
                        config: &Config,
                        repoconfig: &RepoConfig,
                        conn: &PgConnection) -> JobResult<()> {
-        append_job_log_and_info(self.job_id, conn, "Updating summary");
+        job_log_and_info(self.job_id, conn, "Updating summary");
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut cmd = Command::new("flatpak");
@@ -938,10 +844,7 @@ impl UpdateRepoJobInstance {
         cmd
             .arg(&repo_path);
 
-        let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-        if !success {
-            return Err(JobError::new(&format!("Failed to update repo: {}", stderr.trim())));
-        };
+        do_command(cmd)?;
         Ok(())
     }
 
@@ -954,10 +857,8 @@ impl UpdateRepoJobInstance {
             cmd
                 .arg(&repoconfig.name)
                 .arg(&repo_path);
-            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-            if !success {
-                return Err(JobError::new(&format!("Failed to run post-update-script: {}", stderr.trim())));
-            }
+            job_log_and_info(self.job_id, conn, "Running post-publish script");
+            do_command(cmd)?;
         };
         Ok(())
     }
@@ -965,6 +866,7 @@ impl UpdateRepoJobInstance {
     fn extract_appstream (&self,
                           repoconfig: &RepoConfig,
                           conn: &PgConnection) -> JobResult<()> {
+        job_log_and_info(self.job_id, conn, "Extracting appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
         let appstream_dir = repo_path.join("appstream");
         let appstream_refs = ostree::list_refs (&repoconfig.path, "appstream");
@@ -978,10 +880,7 @@ impl UpdateRepoJobInstance {
                 .arg("--union")
                 .arg(&appstream_ref)
                 .arg(appstream_dir.join(arch));
-            let (success, _log, stderr) = run_command(cmd, self.job_id, conn)?;
-            if !success {
-                return Err(JobError::new(&format!("Failed to extract appstream: {}", stderr.trim())));
-            }
+            do_command(cmd)?;
         };
         Ok(())
     }
@@ -998,7 +897,9 @@ impl JobInstance for UpdateRepoJobInstance {
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("Handling UpdateRepo Job {}: repo={}", self.job_id, self.repo);
+        info!("#{}: Handling Job UpdateRepo: repo: {}",
+              &self.job_id, &self.repo);
+
         // Get repo config
         let config = &executor.config;
         let repoconfig = config.get_repoconfig(&self.repo)
@@ -1095,9 +996,13 @@ fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
         Ok(mut instance) => {
             let (new_status, new_results) =
                 match instance.handle_job(executor, conn) {
-                    Ok(json) =>  (JobStatus::Ended, json.to_string()),
+                    Ok(json) =>  {
+                        info!("#{}: Job succeeded", instance.get_job_id());
+                        (JobStatus::Ended, json.to_string())
+                    },
                     Err(e) => {
-                        error!("Job {} failed: {}", instance.get_job_id(), e.to_string());
+                        job_log_and_error(instance.get_job_id(), conn,
+                                          &format!("Job failed: {}", e.to_string()));
                         (JobStatus::Broken, json!(e.to_string()).to_string())
                     }
                 };
