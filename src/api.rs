@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::os::unix;
+use std::os::unix::fs::PermissionsExt;
 use std::path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -566,8 +567,19 @@ fn save_file(
                 // persist consumes the named file, so we need to
                 // completely move it out of the shared Rc+RefCell
                 let named_file = Rc::try_unwrap(shared_file2).unwrap().into_inner();
-                match named_file.persist(object_file) {
-                    Ok(_persisted_file) => future::result(Ok(res)),
+                match named_file.persist(&object_file) {
+                    Ok(persisted_file) => {
+                        if let Ok(metadata) = persisted_file.metadata() {
+                            let mut perms = metadata.permissions();
+                            perms.set_mode(0o644);
+                            if let Err(_e) = fs::set_permissions(&object_file, perms) {
+                                warn!("Can't change permissions on uploaded file");
+                            }
+                        } else {
+                            warn!("Can't get permissions on uploaded file");
+                        };
+                        future::result(Ok(res))
+                    },
                     Err(e) => future::err(ApiError::InternalServerError(e.to_string()))
                 }
             }),
