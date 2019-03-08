@@ -40,7 +40,7 @@ impl Manager {
     fn connect(&mut self, ctx: &mut Context<Self>) {
         println!("Connecting to server at {}...", self.url);
         ctx.spawn(
-            Client::new(&format!("{}/api/v1/ws/delta", self.url))
+            Client::new(&format!("{}/api/v1/delta/worker", self.url))
                 .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
                 .connect()
                 .into_actor(self)
