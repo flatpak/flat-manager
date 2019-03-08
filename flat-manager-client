@@ -24,8 +24,7 @@ import os
 import os
 import sys
 import traceback
-from urllib.parse import urlparse
-from urllib.parse import urljoin
+from urllib.parse import urlparse,urljoin,urlsplit,urlunsplit
 import errno
 import time
 
@@ -321,6 +320,14 @@ def publish_build(build_url, wait, token):
     if wait:
         print("Waiting for publish job")
         job = wait_for_job (job_url, token);
+        results = json.loads(job.get("results", "{}"))
+        update_job_url = results.get("update-repo-job", None)
+        if update_job_url:
+            print("Queued repo update job at " + update_job_url)
+            if args.wait_update:
+                print("Waiting for repo update job")
+                update_job = wait_for_job (update_job_url, token);
+
     return job;
 
 def purge_build(build_url, token):
@@ -446,7 +453,15 @@ def push_command(args):
         commit_build(args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
-        publish_build(args.build_url, args.wait, args.token)
+        publish_job = publish_build(args.build_url, args.wait, args.token)
+
+        results = json.loads(publish_job.get("results", "{}"))
+        update_job_url = results.get("update-repo-job", None)
+        if update_job_url:
+            print("Queued repo update job at " + update_job_url)
+            if args.wait_update:
+                print("Waiting for repo update job")
+                update_job = wait_for_job (update_job_url, token);
 
 def commit_command(args):
     commit_build(args.build_url, args.wait, args.token)
@@ -496,6 +511,8 @@ if __name__ == '__main__':
     push_parser.add_argument('--extra-id', action='append', help='add extra collection-id')
     push_parser.add_argument('--wait', action='store_true',
                              help='wait for commit/publish to finish')
+    push_parser.add_argument('--wait-update', action='store_true',
+                             help='wait for update-repo to finish')
     push_parser.add_argument('--minimal-token', action='store_true',
                              help='Create minimal token for the upload')
     push_parser.set_defaults(func=push_command)
@@ -509,6 +526,8 @@ if __name__ == '__main__':
     publish_parser = subparsers.add_parser('publish', help='Publish build')
     publish_parser.add_argument('--wait', action='store_true',
                              help='wait for publish to finish')
+    publish_parser.add_argument('--wait-update', action='store_true',
+                             help='wait for update-repo to finish')
     publish_parser.add_argument('build_url', help='remote build url')
     publish_parser.set_defaults(func=publish_command)
 
