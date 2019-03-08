@@ -39,12 +39,31 @@ from gi.repository import GLib, Gio, OSTree
 UPLOAD_CHUNK_LIMIT = 4 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
 
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+def try_get_json(response):
+    try:
+        return resp.json()
+    except:
+        return {}
+
+
 class ApiError(Exception):
-    def __init__(self, response, body):
+    def __init__(self, response):
         self.response = response
-        self.body = body
+        try:
+            self.body = json.loads(response.json());
+        except:
+            self.body = {"status": response.status_code, "error-type": "no-error", "message": "No json error details from server"}
+
     def __str__(self):
-        return "API call %s returned status %s: %s: %s" % (self.response.url, self.response.status_code, self.response.reason, self.body)
+        return json.dumps( {
+            "error": "API call failed",
+            "url": self.response.url,
+            "status_code": self.response.status_code,
+            "details": self.body
+        }, indent=4)
 
 # This is similar to the regular payload, but opens the file lazily
 class NamedFilePart:
@@ -153,7 +172,7 @@ def missing_objects(build_url, token, wanted):
         session = requests.Session()
         resp = session.get(build_url + "/missing_objects", data=data, headers=headers)
         if resp.status_code != 200:
-            raise ApiError(resp, resp.json())
+            raise ApiError(resp)
         data = resp.json()
         missing.extend(data["missing"])
     return missing
@@ -168,7 +187,7 @@ def upload_files(build_url, token, files):
     session = requests.Session()
     resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
 
 def upload_deltafile(build_url, token, f):
     file_dict = {}
@@ -176,7 +195,7 @@ def upload_deltafile(build_url, token, f):
     session = requests.Session()
     resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
 
 def upload_objects(repo_path, build_url, token, objects):
     req = []
@@ -206,7 +225,7 @@ def create_ref(build_url, token, ref, commit):
     session = requests.Session()
     resp = session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data;
 
@@ -215,7 +234,7 @@ def add_extra_ids(build_url, token, extra_ids):
     session = requests.Session()
     resp = session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data;
 
@@ -223,7 +242,7 @@ def get_build(build_url, token):
     session = requests.Session()
     resp = session.get(build_url, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data
 
@@ -238,7 +257,7 @@ def wait_for_job(job_url, token):
                                headers={'Authorization': 'Bearer ' + token},
                                json={'log-offset': printed_len})
             if resp.status_code != 200:
-                raise ApiError(resp, resp.json())
+                raise ApiError(resp)
             job = resp.json()
             job_status = job['status']
             if job_status > 0 and old_job_status == 0:
@@ -282,7 +301,7 @@ def commit_build(build_url, wait, token):
     session = requests.Session()
     resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
     print("job: %s" % job)
@@ -296,8 +315,7 @@ def publish_build(build_url, wait, token):
     session = requests.Session()
     resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
     if resp.status_code != 200:
-        print ("resp.json(): ", resp.json())
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
     if wait:
@@ -310,7 +328,7 @@ def purge_build(build_url, token):
     session = requests.Session()
     resp = session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     return resp.json()
 
 def create_token(manager_url, token, name, subject, scope, duration):
@@ -323,7 +341,7 @@ def create_token(manager_url, token, name, subject, scope, duration):
         "duration": duration,
     } )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data["token"]
 
@@ -337,7 +355,7 @@ def create_command(args):
         "repo": args.repo
     } )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     print(resp.headers['location'])
     return 0
@@ -539,7 +557,11 @@ if __name__ == '__main__':
         res = args.func(args)
     except SystemExit:
         raise # Pass on regular exit callse
+    except ApiError as e:
+        eprint(e)
     except:
-        print("\n\nUnexpected error in %s:" % (args.subparser_name))
-        traceback.print_exc()
+        eprint(json.dumps( {
+            "error": "Unexpected error in %s" % (args.subparser_name),
+            "details": traceback.format_exc().split("\n")
+        }, indent=4))
     exit(res)
