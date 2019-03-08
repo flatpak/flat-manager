@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="refresh" content="5" >
+  <title>Flat-manager status</title>
+</head>
+<body>
+  <h1>Active jobs</h1>
+  <table>
+  {% for job in jobs %}
+  <tr><td><a href="/status/{{ job.id }}">{{ job.id }}</a></td><td>{{ job.kind }}</td><td>{{ job.status }}</td></tr>
+  {% endfor %}
+  <table>
+</body>
+</html>

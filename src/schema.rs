@@ -37,6 +37,8 @@ table! {
         contents -> Text,
         results -> Nullable<Text>,
         log -> Text,
+        start_after -> Nullable<Timestamp>,
+        repo -> Nullable<Text>,
     }
 }
 

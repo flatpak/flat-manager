@@ -1,6 +1,5 @@
 use actix::prelude::*;
-use actix_web::{self, middleware};
-use actix_web::{App, http::Method, HttpRequest, fs::NamedFile};
+use actix_web::{self, App, http::Method, HttpRequest, fs::NamedFile};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -13,12 +12,15 @@ use serde;
 use serde_json;
 use serde::Deserialize;
 use base64;
+use num_cpus;
 
 use errors::ApiError;
 use api;
+use deltas::DeltaGenerator;
 use tokens::{TokenParser};
 use jobs::{JobQueue};
 use actix_web::dev::FromParam;
+use logger::Logger;
 
 fn as_base64<S>(key: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer
@@ -34,6 +36,71 @@ fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
         .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
 }
 
+
+fn match_glob(glob: &str, s: &str) -> bool
+{
+    if let Some(index) = glob.find("*") {
+        let (glob_start, glob_rest) = glob.split_at(index);
+        if !s.starts_with(glob_start) {
+            return false;
+        }
+        let (_, s_rest) = s.split_at(index);
+
+        let mut glob_chars = glob_rest.chars();
+        let mut s_chars = s_rest.chars();
+
+        /* Consume '*' */
+        glob_chars.next();
+        let glob_after_star = glob_chars.as_str();
+
+        /* Consume at least one, fail if none */
+        if s_chars.next() == None {
+            return false
+        }
+
+        loop {
+            if match_glob(glob_after_star, s_chars.as_str()) {
+                return true
+            }
+            if s_chars.next() == None {
+                break
+            }
+        }
+        return false
+    } else {
+        return glob == s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // Note this useful idiom: importing names from outer (for mod tests) scope.
+    use super::*;
+
+    #[test]
+    fn test_glob() {
+        assert!(match_glob("foo", "foo"));
+        assert!(!match_glob("foo", "fooo"));
+        assert!(!match_glob("fooo", "foo"));
+        assert!(!match_glob("foo", "br"));
+        assert!(!match_glob("foo", "bar"));
+        assert!(!match_glob("foo", "baar"));
+        assert!(match_glob("*", "foo"));
+        assert!(!match_glob("*foo", "foo"));
+        assert!(match_glob("fo*", "foo"));
+        assert!(match_glob("foo*", "foobar"));
+        assert!(!match_glob("foo*gazonk", "foogazonk"));
+        assert!(match_glob("foo*gazonk", "foobgazonk"));
+        assert!(match_glob("foo*gazonk", "foobagazonk"));
+        assert!(match_glob("foo*gazonk", "foobargazonk"));
+        assert!(!match_glob("foo*gazonk", "foobargazonkk"));
+        assert!(!match_glob("foo*gazonk*test", "foobargazonk"));
+        assert!(!match_glob("foo*gazonk*test", "foobargazonktest"));
+        assert!(match_glob("foo*gazonk*test", "foobargazonkWOOtest"));
+        assert!(!match_glob("foo*gazonk*test", "foobargazonkWOOtestXX"));
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String, // "build", "build/N"
@@ -46,9 +113,30 @@ pub struct Claims {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct DeltaConfig {
+    pub id: Vec<String>,
+    #[serde(default)]
+    pub arch: Vec<String>,
+    pub depth: u32,
+}
+
+impl DeltaConfig {
+    pub fn matches_ref(&self, id: &str, arch: &str) -> bool {
+        self.id.iter().any(|id_glob| match_glob(id_glob, id)) &&
+            (self.arch.is_empty() ||
+             self.arch.iter().any(|arch_glob| match_glob(arch_glob, arch)))
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SubsetConfig {
     pub collection_id: String,
     pub base_url: Option<String>,
+}
+
+fn default_depth() -> u32 {
+    5
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -66,6 +154,10 @@ pub struct RepoConfig {
     pub runtime_repo_url: Option<String>,
     pub subsets: HashMap<String, SubsetConfig>,
     pub post_publish_script: Option<String>,
+    #[serde(default)]
+    pub deltas: Vec<DeltaConfig>,
+    #[serde(default = "default_depth")]
+    pub appstream_delta_depth: u32,
 }
 
 fn default_host() -> String {
@@ -74,6 +166,10 @@ fn default_host() -> String {
 
 fn default_port() -> i32 {
     8080
+}
+
+fn default_numcpu() -> u32 {
+    num_cpus::get() as u32
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -94,13 +190,48 @@ pub struct Config {
     pub build_gpg_key: Option<String>,
     #[serde(skip)]
     pub build_gpg_key_content: Option<String>,
+    #[serde(default)]
+    pub delay_update_secs: u64,
+    #[serde(default = "default_numcpu")]
+    pub local_delta_threads: u32,
 }
 
 impl RepoConfig {
+    pub fn get_abs_repo_path(&self) -> PathBuf {
+        let mut repo_path = std::env::current_dir().unwrap_or_else(|_e| PathBuf::from("/"));
+
+        repo_path.push(&self.path);
+        repo_path
+    }
+
     pub fn get_base_url(&self, config: &Config) -> String {
         match &self.base_url {
             Some(base_url) => base_url.clone(),
             None => format!("{}/repo/{}", config.base_url, self.name)
+        }
+    }
+
+    pub fn get_delta_depth_for_ref(&self, ref_name: &str) -> u32 {
+        if ref_name == "ostree-metadata" {
+            0
+        } else if ref_name.starts_with("appstream/") {
+            1 /* The old appstream format doesn't delta well, so not need for depth */
+        } else if ref_name.starts_with("appstream2/") {
+            self.appstream_delta_depth /* This updates often, so lets have some more */
+        } else if ref_name.starts_with("app/") || ref_name.starts_with("runtime/") {
+            let parts : Vec<&str> = ref_name.split("/").collect();
+            if parts.len() == 4 {
+                let id = parts[1];
+                let arch = parts[2];
+                for dc in &self.deltas {
+                    if dc.matches_ref(id, arch) {
+                        return dc.depth
+                    }
+                }
+            };
+            0
+        } else {
+            0 /* weird ref? */
         }
     }
 }
@@ -157,6 +288,7 @@ pub struct AppState {
     pub db: Addr<DbExecutor>,
     pub config: Arc<Config>,
     pub job_queue: Addr<JobQueue>,
+    pub delta_generator: Addr<DeltaGenerator>,
 }
 
 fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
@@ -182,28 +314,41 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let repoconfig = state.config.get_repoconfig(&repo)?;
     // Strip out any "../.." or other unsafe things
     let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
-    let path = Path::new(&repoconfig.path).join(relpath);
-    Ok(NamedFile::open(path)?)
+    let path = Path::new(&repoconfig.path).join(&relpath);
+    match NamedFile::open(path) {
+        Ok(file) => Ok(file),
+        Err(e) => {
+            // Was this a delta, if so check the deltas queued for deletion
+            if relpath.starts_with("deltas") {
+                let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
+                Ok(NamedFile::open(tmp_path)?)
+            } else {
+                Err(e)?
+            }
+        },
+    }
 }
 
 pub fn create_app(
     db: Addr<DbExecutor>,
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
+    delta_generator: &Addr<DeltaGenerator>,
 ) -> App<AppState> {
     let state = AppState {
         db: db.clone(),
         job_queue: job_queue.clone(),
         config: config.clone(),
+        delta_generator: delta_generator.clone(),
     };
 
     App::with_state(state)
-        .middleware(middleware::Logger::default())
+        .middleware(Logger::default())
         .scope("/api/v1", |scope| {
             scope
                 .middleware(TokenParser::new(&config.secret))
                 .resource("/token_subset", |r| r.method(Method::POST).with(api::token_subset))
-                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::POST).with(api::get_job)})
+                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::GET).with(api::get_job)})
                 .resource("/build", |r| { r.method(Method::POST).with(api::create_build);
                                           r.method(Method::GET).with(api::builds) })
                 .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
@@ -219,9 +364,12 @@ pub fn create_app(
                                                       r.method(Method::POST).with(api::publish);
                                                        r.method(Method::GET).with(api::get_publish_job) })
                 .resource("/build/{id}/purge", |r| { r.method(Method::POST).with(api::purge) })
+                .resource("/ws/delta", |r| r.route().f(api::ws_delta))
         })
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
         })
         .handler("/repo/{repo}/", |req: &HttpRequest<AppState>| handle_repo(req))
+        .resource("/status", |r| r.method(Method::GET).with(api::status))
+        .resource("/status/{id}", |r| r.method(Method::GET).with(api::job_status))
 }

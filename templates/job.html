@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+{% if !finished %}
+  <meta http-equiv="refresh" content="5" >
+{% endif %}
+  <title>Job {{ id }}</title>
+</head>
+<body>
+<h1>Job {{ id }} - {{ kind }}: {{ status }}</h1>
+<pre>{{ contents }}</pre>
+Output:
+<pre>{{ log }}</pre>
+Results:
+<pre>{{ results }}<pre>
+</body>
+</html>

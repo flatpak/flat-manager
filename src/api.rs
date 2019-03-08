@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::os::unix;
+use std::os::unix::fs::PermissionsExt;
 use std::path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -21,11 +22,13 @@ use serde::Serialize;
 use app::{AppState,Claims};
 use errors::ApiError;
 use db::*;
-use models::{NewBuild,NewBuildRef};
-use actix_web::ResponseError;
+use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
+use actix_web::{ResponseError, ws};
 use tokens::{self, ClaimsValidator};
 use models::DbExecutor;
 use jobs::ProcessJobs;
+use askama::Template;
+use deltas::RemoteWorker;
 
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
@@ -564,8 +567,19 @@ fn save_file(
                 // persist consumes the named file, so we need to
                 // completely move it out of the shared Rc+RefCell
                 let named_file = Rc::try_unwrap(shared_file2).unwrap().into_inner();
-                match named_file.persist(object_file) {
-                    Ok(_persisted_file) => future::result(Ok(res)),
+                match named_file.persist(&object_file) {
+                    Ok(persisted_file) => {
+                        if let Ok(metadata) = persisted_file.metadata() {
+                            let mut perms = metadata.permissions();
+                            perms.set_mode(0o644);
+                            if let Err(_e) = fs::set_permissions(&object_file, perms) {
+                                warn!("Can't change permissions on uploaded file");
+                            }
+                        } else {
+                            warn!("Can't get permissions on uploaded file");
+                        };
+                        future::result(Ok(res))
+                    },
                     Err(e) => future::err(ApiError::InternalServerError(e.to_string()))
                 }
             }),
@@ -665,7 +679,7 @@ pub fn commit(
                         })
         })
         .and_then(move |job| {
-            job_queue.do_send(ProcessJobs());
+            job_queue.do_send(ProcessJobs(None));
             respond_with_url(&job, &req, "show_commit_job", &[params.id.to_string()])
         })
         .from_err()
@@ -711,14 +725,18 @@ pub fn publish(
     let req2 = req.clone();
 
     db_request (&state, LookupBuild { id: build_id })
-        .and_then (move |build| req2.has_token_repo(&build.repo) )
-        .and_then (move |_ok| {
+        .and_then (move |build| {
+            req2.has_token_repo(&build.repo)?;
+            Ok(build)
+        })
+        .and_then (move |build| {
             db_request (&state,
                         StartPublishJob {
                             id: build_id,
+                            repo: build.repo.clone(),
                         })
                 .and_then(move |job| {
-                    job_queue.do_send(ProcessJobs());
+                    job_queue.do_send(ProcessJobs(Some(build.repo)));
                     respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
                 })
         })
@@ -763,4 +781,78 @@ pub fn purge(
         })
         .from_err()
         .responder()
+}
+
+#[derive(Template)]
+#[template(path = "job.html")]
+struct JobStatusData {
+    id: i32,
+    kind: String,
+    status: String,
+    contents: String,
+    results: String,
+    log: String,
+    finished: bool,
+}
+
+fn job_status_data(job: Job) -> JobStatusData {
+    JobStatusData {
+        id: job.id,
+        kind: JobKind::from_db(job.kind).map_or ("Unknown".to_string(), |k| format! ("{:?}", k)),
+        status: JobStatus::from_db(job.status).map_or ("Unknown".to_string(), |s| format! ("{:?}", s)),
+        contents: job.contents,
+        results: job.results.unwrap_or("".to_string()),
+        log: job.log,
+        finished: job.status >= JobStatus::Ended as i16,
+    }
+}
+
+pub fn job_status(
+    params: Path<JobPathParams>,
+    state: State<AppState>
+) -> FutureResponse<HttpResponse> {
+
+    db_request (&state,
+                LookupJob {
+                    id: params.id,
+                    log_offset: None,
+                })
+        .and_then(move |job| {
+            let s = job_status_data(job).render().unwrap();
+            Ok(HttpResponse::Ok().content_type("text/html").body(s))
+        })
+        .from_err()
+        .responder()
+}
+
+#[derive(Template)]
+#[template(path = "status.html")]
+struct Status {
+    jobs: Vec<JobStatusData>,
+}
+
+pub fn status(
+    state: State<AppState>
+) -> FutureResponse<HttpResponse> {
+
+    db_request (&state, ListJobs { })
+        .and_then(move |jobs| {
+            let s = Status {
+                jobs: jobs.into_iter().map(job_status_data).collect()
+            }.render().unwrap();
+            Ok(HttpResponse::Ok().content_type("text/html").body(s))
+        })
+        .from_err()
+        .responder()
+}
+
+pub fn ws_delta(req: &HttpRequest<AppState>) -> Result<HttpResponse, actix_web::Error> {
+    let state = req.state();
+    if let Err(e) = req.has_token_claims("delta", "generate") {
+        return Ok(e.error_response())
+    }
+    ws::start(
+        req,
+        RemoteWorker::new(&state.config, &state.delta_generator),
+    )
 }

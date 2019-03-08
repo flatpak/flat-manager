@@ -2,8 +2,13 @@
 name = "flat-manager"
 version = "0.2.2"
 authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
+license = "MIT OR Apache-2.0"
 # Needs nightly, so disable for now:
 # default-run = "repo-manager"
+
+[lib]
+name = "flatmanager"
+path = "src/lib.rs"
 
 [dependencies]
 env_logger = "0.5"
@@ -11,6 +16,7 @@ env_logger = "0.5"
 actix = "0.7"
 actix-net = "0.2"
 actix-web = "0.7"
+askama = "0.7"
 
 futures = "0.1"
 serde = "1.0"
@@ -28,3 +34,9 @@ base64 = "0.9"
 log = "0.4"
 libc = "0.2"
 argparse = "0.2.2"
+walkdir = "2"
+byteorder = "1.3"
+hex = "0.3"
+filetime = "0.2"
+num_cpus = "1.0"
+time = "0.1"

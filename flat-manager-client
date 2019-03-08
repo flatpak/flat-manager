@@ -24,10 +24,10 @@ import os
 import os
 import sys
 import traceback
-from urllib.parse import urlparse
-from urllib.parse import urljoin
+from urllib.parse import urlparse,urljoin,urlsplit,urlunsplit
 import errno
 import time
+import fnmatch
 
 from argparse import ArgumentParser
 from functools import reduce
@@ -39,12 +39,31 @@ from gi.repository import GLib, Gio, OSTree
 UPLOAD_CHUNK_LIMIT = 4 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
 
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
+
+def try_get_json(response):
+    try:
+        return resp.json()
+    except:
+        return {}
+
+
 class ApiError(Exception):
-    def __init__(self, response, body):
+    def __init__(self, response):
         self.response = response
-        self.body = body
+        try:
+            self.body = json.loads(response.json());
+        except:
+            self.body = {"status": response.status_code, "error-type": "no-error", "message": "No json error details from server"}
+
     def __str__(self):
-        return "API call %s returned status %s: %s: %s" % (self.response.url, self.response.status_code, self.response.reason, self.body)
+        return json.dumps( {
+            "error": "API call failed",
+            "url": self.response.url,
+            "status_code": self.response.status_code,
+            "details": self.body
+        }, indent=4)
 
 # This is similar to the regular payload, but opens the file lazily
 class NamedFilePart:
@@ -153,7 +172,7 @@ def missing_objects(build_url, token, wanted):
         session = requests.Session()
         resp = session.get(build_url + "/missing_objects", data=data, headers=headers)
         if resp.status_code != 200:
-            raise ApiError(resp, resp.json())
+            raise ApiError(resp)
         data = resp.json()
         missing.extend(data["missing"])
     return missing
@@ -168,7 +187,7 @@ def upload_files(build_url, token, files):
     session = requests.Session()
     resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
 
 def upload_deltafile(build_url, token, f):
     file_dict = {}
@@ -176,7 +195,7 @@ def upload_deltafile(build_url, token, f):
     session = requests.Session()
     resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
 
 def upload_objects(repo_path, build_url, token, objects):
     req = []
@@ -206,7 +225,7 @@ def create_ref(build_url, token, ref, commit):
     session = requests.Session()
     resp = session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data;
 
@@ -215,7 +234,7 @@ def add_extra_ids(build_url, token, extra_ids):
     session = requests.Session()
     resp = session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data;
 
@@ -223,7 +242,7 @@ def get_build(build_url, token):
     session = requests.Session()
     resp = session.get(build_url, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data
 
@@ -231,33 +250,43 @@ def wait_for_job(job_url, token):
     old_job_status  = 0
     printed_len = 0
     iterations_since_change=0
+    error_iterations = 0
     while True:
         try:
             session = requests.Session()
             resp = session.get(job_url,
                                headers={'Authorization': 'Bearer ' + token},
                                json={'log-offset': printed_len})
-            if resp.status_code != 200:
-                raise ApiError(resp, resp.json())
-            job = resp.json()
-            job_status = job['status']
-            if job_status > 0 and old_job_status == 0:
-                print("/ Job was started");
-            old_job_status = job_status
-            log = job['log']
-            if len(log) > 0:
-                iterations_since_change=0
-                for line in log.splitlines(True):
-                    print("| %s" % line, end="")
-                printed_len = printed_len + len(log)
-            else:
-                iterations_since_change=iterations_since_change+1
-            if job_status > 1:
-                if job_status == 2:
-                    print("\ Job completed successfully")
+            if resp.status_code == 200:
+                error_iterations = 0
+                job = resp.json()
+                job_status = job['status']
+                if job_status > 0 and old_job_status == 0:
+                    print("/ Job was started");
+                old_job_status = job_status
+                log = job['log']
+                if len(log) > 0:
+                    iterations_since_change=0
+                    for line in log.splitlines(True):
+                        print("| %s" % line, end="")
+                    printed_len = printed_len + len(log)
                 else:
-                    print("\ Job failed")
-                return job
+                    iterations_since_change=iterations_since_change+1
+                if job_status > 1:
+                    if job_status == 2:
+                        print("\ Job completed successfully")
+                    else:
+                        print("\ Job failed")
+                    return job
+            else:
+                iterations_since_change=4 # Start at 4 so we ramp up the delay faster
+                error_iterations=error_iterations + 1
+                if error_iterations <= 5:
+                    print("Unexpected repsonse %s getting job log, ignoring" % resp.status_code)
+                else:
+                    raise ApiError(resp)
+
+
         except requests.exceptions.ConnectionError as e:
             # Client disconnected, retry
             # Not sure exactly why, but i got a lot of ConnectionResetErrors here
@@ -282,7 +311,7 @@ def commit_build(build_url, wait, token):
     session = requests.Session()
     resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
     print("job: %s" % job)
@@ -296,13 +325,20 @@ def publish_build(build_url, wait, token):
     session = requests.Session()
     resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
     if resp.status_code != 200:
-        print ("resp.json(): ", resp.json())
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
     if wait:
         print("Waiting for publish job")
         job = wait_for_job (job_url, token);
+        results = json.loads(job.get("results", "{}"))
+        update_job_url = results.get("update-repo-job", None)
+        if update_job_url:
+            print("Queued repo update job at " + update_job_url)
+            if args.wait_update:
+                print("Waiting for repo update job")
+                update_job = wait_for_job (update_job_url, token);
+
     return job;
 
 def purge_build(build_url, token):
@@ -310,7 +346,7 @@ def purge_build(build_url, token):
     session = requests.Session()
     resp = session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     return resp.json()
 
 def create_token(manager_url, token, name, subject, scope, duration):
@@ -323,7 +359,7 @@ def create_token(manager_url, token, name, subject, scope, duration):
         "duration": duration,
     } )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     return data["token"]
 
@@ -337,7 +373,7 @@ def create_command(args):
         "repo": args.repo
     } )
     if resp.status_code != 200:
-        raise ApiError(resp, resp.json())
+        raise ApiError(resp)
     data = resp.json()
     print(resp.headers['location'])
     return 0
@@ -347,6 +383,13 @@ def delta_name_part_encode(commit):
 
 def delta_name_encode (delta):
     return "-".join(map(delta_name_part_encode, delta.split("-")))
+
+def should_skip_delta(id, globs):
+    if globs:
+        for glob in globs:
+            if fnmatch.fnmatch(id, glob):
+                return True
+    return False
 
 def push_command(args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
@@ -398,15 +441,16 @@ def push_command(args):
     upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
 
     _, deltas = local_repo.list_static_delta_names ()
-    print("deltas: " + str(deltas))
     if len(deltas) > 0:
         print("Uploading deltas")
 
         for ref, commit in refs.items():
             # Skip screenshots here
-            if ref.startswith("app/") or ref.startswith("runtime/"):
+            parts = ref.split("/")
+            if len(parts) == 4 and (parts[0] == "app" or parts[0] =="runtime") and not should_skip_delta(parts[1], args.ignore_delta):
                 for delta in deltas:
-                    if delta == commit or delta.endswith("-" + commit):
+                    # Only upload from-scratch deltas, as these are the only reused ones
+                    if delta == commit:
                         print(" %s: %s" % (ref, delta))
                         delta_name = delta_name_encode (delta)
                         delta_dir = args.repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
@@ -428,7 +472,15 @@ def push_command(args):
         commit_build(args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
-        publish_build(args.build_url, args.wait, args.token)
+        publish_job = publish_build(args.build_url, args.wait, args.token)
+
+        results = json.loads(publish_job.get("results", "{}"))
+        update_job_url = results.get("update-repo-job", None)
+        if update_job_url:
+            print("Queued repo update job at " + update_job_url)
+            if args.wait_update:
+                print("Waiting for repo update job")
+                update_job = wait_for_job (update_job_url, token);
 
 def commit_command(args):
     commit_build(args.build_url, args.wait, args.token)
@@ -445,6 +497,10 @@ def purge_command(args):
 def create_token_command(args):
     new_token = create_token(args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
     print(new_token)
+    return 0
+
+def follow_job_command(args):
+    job = wait_for_job(args.job_url, args.token)
     return 0
 
 if __name__ == '__main__':
@@ -476,8 +532,11 @@ if __name__ == '__main__':
     push_parser.add_argument('--publish', action='store_true',
                              help='publish build after commiting')
     push_parser.add_argument('--extra-id', action='append', help='add extra collection-id')
+    push_parser.add_argument('--ignore-delta', action='append', help='don\'t upload deltas matching this glob')
     push_parser.add_argument('--wait', action='store_true',
                              help='wait for commit/publish to finish')
+    push_parser.add_argument('--wait-update', action='store_true',
+                             help='wait for update-repo to finish')
     push_parser.add_argument('--minimal-token', action='store_true',
                              help='Create minimal token for the upload')
     push_parser.set_defaults(func=push_command)
@@ -491,6 +550,8 @@ if __name__ == '__main__':
     publish_parser = subparsers.add_parser('publish', help='Publish build')
     publish_parser.add_argument('--wait', action='store_true',
                              help='wait for publish to finish')
+    publish_parser.add_argument('--wait-update', action='store_true',
+                             help='wait for update-repo to finish')
     publish_parser.add_argument('build_url', help='remote build url')
     publish_parser.set_defaults(func=publish_command)
 
@@ -507,6 +568,10 @@ if __name__ == '__main__':
                                      default=60*60*24, # Default duration is one day
                                      type=int)
     create_token_parser.set_defaults(func=create_token_command)
+
+    follow_job_parser = subparsers.add_parser('follow-job', help='Follow existing job log')
+    follow_job_parser.add_argument('job_url', help='url of job')
+    follow_job_parser.set_defaults(func=follow_job_command)
 
     args = parser.parse_args()
 
@@ -539,7 +604,11 @@ if __name__ == '__main__':
         res = args.func(args)
     except SystemExit:
         raise # Pass on regular exit callse
+    except ApiError as e:
+        eprint(e)
     except:
-        print("\n\nUnexpected error in %s:" % (args.subparser_name))
-        traceback.print_exc()
+        eprint(json.dumps( {
+            "error": "Unexpected error in %s" % (args.subparser_name),
+            "details": traceback.format_exc().split("\n")
+        }, indent=4))
     exit(res)

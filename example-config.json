@@ -37,6 +37,7 @@
         }
     },
     "port": 8080,
+    "delay-update-secs": 10,
     "database-url": "postgres://%2Fvar%2Frun%2Fpostgresql/repo",
     "build-repo-base": "build-repo",
     "build-gpg-key": null,

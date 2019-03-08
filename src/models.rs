@@ -1,7 +1,7 @@
 use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool};
-use std::mem;
+use std::{mem,time};
 
 use chrono;
 use schema::{ builds, build_refs, jobs, job_dependencies };
@@ -146,10 +146,23 @@ pub enum JobStatus {
     Broken,
 }
 
+impl JobStatus {
+    pub fn from_db(val: i16) -> Option<Self> {
+        match val {
+            0 => Some(JobStatus::New),
+            1 => Some(JobStatus::Started),
+            2 => Some(JobStatus::Ended),
+            3 => Some(JobStatus::Broken),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug,PartialEq)]
 pub enum JobKind {
     Commit,
     Publish,
+    UpdateRepo,
 }
 
 impl JobKind {
@@ -157,6 +170,7 @@ impl JobKind {
         match self {
             JobKind::Commit => 0,
             JobKind::Publish => 1,
+            JobKind::UpdateRepo => 2,
         }
     }
 
@@ -164,6 +178,7 @@ impl JobKind {
         match val {
             0 => Some(JobKind::Commit),
             1 => Some(JobKind::Publish),
+            2 => Some(JobKind::UpdateRepo),
             _ => None,
         }
     }
@@ -174,6 +189,8 @@ impl JobKind {
 pub struct NewJob {
     pub kind: i16,
     pub contents: String,
+    pub start_after: Option<time::SystemTime>,
+    pub repo: Option<String>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
@@ -185,9 +202,11 @@ pub struct Job {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub results: Option<String>,
     pub log: String,
+    pub start_after: Option<time::SystemTime>,
+    pub repo: Option<String>,
 }
 
-#[derive(Debug, Queryable, Identifiable, Associations)]
+#[derive(Insertable, Debug, Queryable, Identifiable, Associations)]
 #[table_name = "job_dependencies"]
 #[primary_key(job_id, depends_on)]
 #[belongs_to(Job, foreign_key = "job_id")]
@@ -217,4 +236,9 @@ pub struct CommitJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublishJob {
     pub build: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UpdateRepoJob {
+    pub repo: String,
 }
