@@ -348,7 +348,7 @@ pub fn create_app(
             scope
                 .middleware(TokenParser::new(&config.secret))
                 .resource("/token_subset", |r| r.method(Method::POST).with(api::token_subset))
-                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::POST).with(api::get_job)})
+                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::GET).with(api::get_job)})
                 .resource("/build", |r| { r.method(Method::POST).with(api::create_build);
                                           r.method(Method::GET).with(api::builds) })
                 .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
