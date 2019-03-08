@@ -774,7 +774,7 @@ impl UpdateRepoJobInstance {
             fs::create_dir_all(&dst_parent)?;
 
             job_log_and_info(self.job_id, conn,
-                                    &format!("Queuing delta {:?} for deletion", src.strip_prefix(&deltas_dir).unwrap()));
+                                    &format!(" Queuing delta {:?} for deletion", src.strip_prefix(&deltas_dir).unwrap()));
 
             if dst.exists() {
                 fs::remove_dir_all(&dst)?;
@@ -807,7 +807,7 @@ impl UpdateRepoJobInstance {
 
         for dir in to_delete {
             job_log_and_info(self.job_id, conn,
-                             &format!("Deleting old delta {:?}", dir.strip_prefix(&tmp_deltas_dir).unwrap()));
+                             &format!(" Deleting old delta {:?}", dir.strip_prefix(&tmp_deltas_dir).unwrap()));
             fs::remove_dir_all(&dir)?;
         }
 
