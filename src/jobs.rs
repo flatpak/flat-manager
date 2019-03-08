@@ -583,7 +583,10 @@ impl PublishJobInstance {
                          &format!("Follow logs at: {}/status/{}",
                                   config.base_url, update_job.id));
 
-        Ok(json!({ "refs": commits}))
+        Ok(json!({
+            "refs": commits,
+            "update-repo-job": format!("{}/api/v1/job/{}", config.base_url, update_job.id),
+        }))
     }
 }
 
