@@ -318,14 +318,19 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
 
     fn handle(&mut self, msg: DbRequestWrapper<StartCommitJob>, _: &mut Self::Context) -> Self::Result {
         let conn = &self.0.get().unwrap();
-        conn.transaction::<Job, DieselError, _>(|| {
+        conn.transaction::<Job, ApiError, _>(|| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(msg.0.id))
                 .get_result::<Build>(conn)?;
             let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
-            if !current_repo_state.same_state_as(&RepoState::Uploading) {
-                return Err(DieselError::RollbackTransaction)
-            };
+            match current_repo_state {
+                RepoState::Uploading => (),
+                RepoState::Verifying => return Err(ApiError::WrongRepoState(format!("Build is currently being commited"), "uploading".to_string(), "verifying".to_string())),
+                RepoState::Ready => return Err(ApiError::WrongRepoState(format!("Build is already commited"), "uploading".to_string(), "ready".to_string())),
+                RepoState::Failed(s) => return Err(ApiError::WrongRepoState(format!("Commit already failed: {}", s), "uploading".to_string(), "failed".to_string())),
+                RepoState::Purging |
+                RepoState::Purged => return Err(ApiError::WrongRepoState("Build has been purged".to_string(), "uploading".to_string(), "purged".to_string())),
+            }
             let (val, reason) = RepoState::to_db(&RepoState::Verifying);
             let job =
             diesel::insert_into(schema::jobs::table)
@@ -347,12 +352,6 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
                 .get_result::<Build>(conn)?;
             Ok(job)
         })
-            .map_err(|e| {
-                match e {
-                    DieselError::RollbackTransaction => ApiError::BadRequest("Build is already commited".to_string()),
-                    _ => From::from(e)
-                }
-            })
     }
 }
 
@@ -372,20 +371,29 @@ impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
 
     fn handle(&mut self, msg: DbRequestWrapper<StartPublishJob>, _: &mut Self::Context) -> Self::Result {
         let conn = &self.0.get().unwrap();
-        conn.transaction::<Job, DieselError, _>(|| {
+        conn.transaction::<Job, ApiError, _>(|| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(msg.0.id))
                 .get_result::<Build>(conn)?;
             let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
-            if !current_published_state.same_state_as(&PublishedState::Unpublished) {
-                error!("Unexpected publishing state {:?}", current_published_state);
-                return Err(DieselError::RollbackTransaction) // Already published
-            };
+
+            match current_published_state {
+                PublishedState::Unpublished => (),
+                PublishedState::Publishing => return Err(ApiError::WrongPublishedState("Build is currently being published".to_string(), "unpublished".to_string(), "publishing".to_string())),
+                PublishedState::Published => return Err(ApiError::WrongPublishedState("Build has already been published".to_string(), "unpublished".to_string(), "published".to_string())),
+                PublishedState::Failed(s) => return Err(ApiError::WrongPublishedState(format!("Previous publish failed: {}", s), "unpublished".to_string(), "failed".to_string())),
+            }
+
             let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
-            if !current_repo_state.same_state_as(&RepoState::Ready) {
-                error!("Unexpected repo state {:?}", current_repo_state);
-                return Err(DieselError::RollbackTransaction) // Not commited correctly
-            };
+            match current_repo_state {
+                RepoState::Uploading => return Err(ApiError::WrongRepoState("Build is not commited".to_string(), "ready".to_string(), "uploading".to_string())),
+                RepoState::Verifying => return Err(ApiError::WrongRepoState("Build is not commited".to_string(), "ready".to_string(), "verifying".to_string())),
+                RepoState::Ready => (),
+                RepoState::Failed(s) => return Err(ApiError::WrongRepoState(format!("Build failed: {}", s), "ready".to_string(), "failed".to_string())),
+                RepoState::Purging |
+                RepoState::Purged => return Err(ApiError::WrongRepoState("Build has been purged".to_string(), "ready".to_string(), "purged".to_string())),
+            }
+
             let (val, reason) = PublishedState::to_db(&PublishedState::Publishing);
             let job =
                 diesel::insert_into(schema::jobs::table)
@@ -406,12 +414,6 @@ impl Handler<DbRequestWrapper<StartPublishJob>> for DbExecutor {
                 .get_result::<Build>(conn)?;
             Ok(job)
         })
-            .map_err(|e| {
-                match e {
-                    DieselError::RollbackTransaction => ApiError::BadRequest("Invalid build state for publish".to_string()),
-                    _ => From::from(e)
-                }
-            })
     }
 }
 

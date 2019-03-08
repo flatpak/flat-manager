@@ -64,6 +64,12 @@ pub enum ApiError {
     #[fail(display = "BadRequest: {}", _0)]
     BadRequest(String),
 
+    #[fail(display = "WrongRepoState({}): {}", _1, _0)]
+    WrongRepoState(String,String,String),
+
+    #[fail(display = "WrongPublishedState({}): {}", _1, _0 )]
+    WrongPublishedState(String,String,String),
+
     #[fail(display = "InvalidToken")]
     InvalidToken,
 
@@ -107,22 +113,41 @@ impl ApiError {
         match *self {
             ApiError::InternalServerError(ref _internal_message) => json!({
                 "status": 500,
+                "error-type": "internal-error",
                 "message": "Internal Server Error"
             }),
             ApiError::NotFound => json!({
                 "status": 404,
+                "error-type": "not-found",
                 "message": "Not found",
             }),
             ApiError::BadRequest(ref message) => json!({
                 "status": 400,
+                "error-type": "generic-error",
                 "message": message,
+            }),
+            ApiError::WrongRepoState(ref message, ref state, ref expected) => json!({
+                "status": 400,
+                "message": message,
+                "error-type": "wrong-repo-state",
+                "current-state": state,
+                "expected-state": expected,
+            }),
+            ApiError::WrongPublishedState(ref message, ref state, ref expected) => json!({
+                "status": 400,
+                "message": message,
+                "error-type": "wrong-published-state",
+                "current-state": state,
+                "expected-state": expected,
             }),
             ApiError::InvalidToken => json!({
                 "status": 401,
+                "error-type": "invalid-token",
                 "message": "Invalid token",
             }),
             ApiError::NotEnoughPermissions(ref message) => json!({
                 "status": 401,
+                "error-type": "token-insufficient",
                 "message": format!("Not enough permissions: {})", message),
             }),
         }
@@ -134,6 +159,8 @@ impl ApiError {
             ApiError::InternalServerError(ref _internal_message) => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::BadRequest(ref _message) => StatusCode::BAD_REQUEST,
+            ApiError::WrongRepoState(_,_,_) => StatusCode::BAD_REQUEST,
+            ApiError::WrongPublishedState(_,_,_) => StatusCode::BAD_REQUEST,
             ApiError::InvalidToken => StatusCode::UNAUTHORIZED,
             ApiError::NotEnoughPermissions(ref _message) => StatusCode::UNAUTHORIZED,
         }
