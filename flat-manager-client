@@ -27,6 +27,7 @@ import traceback
 from urllib.parse import urlparse,urljoin,urlsplit,urlunsplit
 import errno
 import time
+import fnmatch
 
 from argparse import ArgumentParser
 from functools import reduce
@@ -383,6 +384,13 @@ def delta_name_part_encode(commit):
 def delta_name_encode (delta):
     return "-".join(map(delta_name_part_encode, delta.split("-")))
 
+def should_skip_delta(id, globs):
+    if globs:
+        for glob in globs:
+            if fnmatch.fnmatch(id, glob):
+                return True
+    return False
+
 def push_command(args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
@@ -433,15 +441,16 @@ def push_command(args):
     upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
 
     _, deltas = local_repo.list_static_delta_names ()
-    print("deltas: " + str(deltas))
     if len(deltas) > 0:
         print("Uploading deltas")
 
         for ref, commit in refs.items():
             # Skip screenshots here
-            if ref.startswith("app/") or ref.startswith("runtime/"):
+            parts = ref.split("/")
+            if len(parts) == 4 and (parts[0] == "app" or parts[0] =="runtime") and not should_skip_delta(parts[1], args.ignore_delta):
                 for delta in deltas:
-                    if delta == commit or delta.endswith("-" + commit):
+                    # Only upload from-scratch deltas, as these are the only reused ones
+                    if delta == commit:
                         print(" %s: %s" % (ref, delta))
                         delta_name = delta_name_encode (delta)
                         delta_dir = args.repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
@@ -519,6 +528,7 @@ if __name__ == '__main__':
     push_parser.add_argument('--publish', action='store_true',
                              help='publish build after commiting')
     push_parser.add_argument('--extra-id', action='append', help='add extra collection-id')
+    push_parser.add_argument('--ignore-delta', action='append', help='don\'t upload deltas matching this glob')
     push_parser.add_argument('--wait', action='store_true',
                              help='wait for commit/publish to finish')
     push_parser.add_argument('--wait-update', action='store_true',
