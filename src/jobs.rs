@@ -557,6 +557,7 @@ impl PublishJobInstance {
                     .arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
                     .arg("checkout")
                     .arg("--user-mode")
+                    .arg("--bareuseronly-dirs")
                     .arg("--union")
                     .arg(&build_ref.ref_name)
                     .arg(&screenshots_dir);
@@ -878,6 +879,7 @@ impl UpdateRepoJobInstance {
                 .arg("checkout")
                 .arg("--user-mode")
                 .arg("--union")
+                .arg("--bareuseronly-dirs")
                 .arg(&appstream_ref)
                 .arg(appstream_dir.join(arch));
             do_command(cmd)?;
