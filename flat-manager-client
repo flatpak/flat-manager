@@ -249,33 +249,43 @@ def wait_for_job(job_url, token):
     old_job_status  = 0
     printed_len = 0
     iterations_since_change=0
+    error_iterations = 0
     while True:
         try:
             session = requests.Session()
             resp = session.get(job_url,
                                headers={'Authorization': 'Bearer ' + token},
                                json={'log-offset': printed_len})
-            if resp.status_code != 200:
-                raise ApiError(resp)
-            job = resp.json()
-            job_status = job['status']
-            if job_status > 0 and old_job_status == 0:
-                print("/ Job was started");
-            old_job_status = job_status
-            log = job['log']
-            if len(log) > 0:
-                iterations_since_change=0
-                for line in log.splitlines(True):
-                    print("| %s" % line, end="")
-                printed_len = printed_len + len(log)
-            else:
-                iterations_since_change=iterations_since_change+1
-            if job_status > 1:
-                if job_status == 2:
-                    print("\ Job completed successfully")
+            if resp.status_code == 200:
+                error_iterations = 0
+                job = resp.json()
+                job_status = job['status']
+                if job_status > 0 and old_job_status == 0:
+                    print("/ Job was started");
+                old_job_status = job_status
+                log = job['log']
+                if len(log) > 0:
+                    iterations_since_change=0
+                    for line in log.splitlines(True):
+                        print("| %s" % line, end="")
+                    printed_len = printed_len + len(log)
                 else:
-                    print("\ Job failed")
-                return job
+                    iterations_since_change=iterations_since_change+1
+                if job_status > 1:
+                    if job_status == 2:
+                        print("\ Job completed successfully")
+                    else:
+                        print("\ Job failed")
+                    return job
+            else:
+                iterations_since_change=4 # Start at 4 so we ramp up the delay faster
+                error_iterations=error_iterations + 1
+                if error_iterations <= 5:
+                    print("Unexpected repsonse %s getting job log, ignoring" % resp.status_code)
+                else:
+                    raise ApiError(resp)
+
+
         except requests.exceptions.ConnectionError as e:
             # Client disconnected, retry
             # Not sure exactly why, but i got a lot of ConnectionResetErrors here
