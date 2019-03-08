@@ -499,6 +499,10 @@ def create_token_command(args):
     print(new_token)
     return 0
 
+def follow_job_command(args):
+    job = wait_for_job(args.job_url, args.token)
+    return 0
+
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
 
@@ -564,6 +568,10 @@ if __name__ == '__main__':
                                      default=60*60*24, # Default duration is one day
                                      type=int)
     create_token_parser.set_defaults(func=create_token_command)
+
+    follow_job_parser = subparsers.add_parser('follow-job', help='Follow existing job log')
+    follow_job_parser.add_argument('job_url', help='url of job')
+    follow_job_parser.set_defaults(func=follow_job_command)
 
     args = parser.parse_args()
 
