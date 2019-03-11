@@ -35,7 +35,7 @@ mod models;
 mod schema;
 mod tokens;
 mod jobs;
-mod ostree;
+pub mod ostree;
 mod deltas;
 mod delayed;
 mod logger;
@@ -55,6 +55,7 @@ use jobs::{JobQueue, StopJobQueue};
 use models::DbExecutor;
 
 pub use deltas::{RemoteClientMessage,RemoteServerMessage};
+pub use errors::{DeltaGenerationError};
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
     let config_data = app::load_config(&path).expect(&format!("Failed to read config file {:?}", &path));

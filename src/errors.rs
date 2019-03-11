@@ -7,6 +7,19 @@ use actix_web::http::StatusCode;
 use ostree::OstreeError;
 
 #[derive(Fail, Debug, Clone)]
+pub enum DeltaGenerationError {
+    #[fail(display = "Failed: {}", _0)]
+    Failed(String),
+}
+
+impl DeltaGenerationError {
+    pub fn new(s: &str) -> Self {
+        DeltaGenerationError::Failed(s.to_string())
+    }
+}
+
+
+#[derive(Fail, Debug, Clone)]
 pub enum JobError {
     #[fail(display = "InternalError: {}", _0)]
     InternalError(String),
@@ -38,6 +51,16 @@ impl From<OstreeError> for JobError {
         match e {
             _ => {
                 JobError::InternalError(e.to_string())
+            }
+        }
+    }
+}
+
+impl From<DeltaGenerationError> for JobError {
+    fn from(e: DeltaGenerationError) -> Self {
+        match e {
+            _ => {
+                JobError::InternalError(format!("Failed to generate delta: {}", e.to_string()))
             }
         }
     }
