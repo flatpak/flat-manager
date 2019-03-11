@@ -8,7 +8,7 @@ use ostree::OstreeError;
 
 #[derive(Fail, Debug, Clone)]
 pub enum DeltaGenerationError {
-    #[fail(display = "Failed: {}", _0)]
+    #[fail(display = "{}", _0)]
     Failed(String),
 }
 
@@ -18,6 +18,17 @@ impl DeltaGenerationError {
     }
 }
 
+impl From<io::Error> for DeltaGenerationError {
+    fn from(e: io::Error) -> Self {
+        DeltaGenerationError::new(&e.to_string())
+    }
+}
+
+impl From<OstreeError> for DeltaGenerationError {
+    fn from(e: OstreeError) -> Self {
+        DeltaGenerationError::new(&e.to_string())
+    }
+}
 
 #[derive(Fail, Debug, Clone)]
 pub enum JobError {
