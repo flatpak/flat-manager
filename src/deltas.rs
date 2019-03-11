@@ -1,7 +1,7 @@
 use actix::prelude::*;
 use actix::Actor;
 use app::Config;
-use errors::{JobError};
+use errors::{DeltaGenerationError};
 use futures::Future;
 use ostree;
 use std::process::Command;
@@ -31,17 +31,17 @@ impl DeltaRequest {
 
 
 impl Message for DeltaRequest {
-    type Result = Result<(), JobError>;
+    type Result = Result<(), DeltaGenerationError>;
 }
 
 trait WorkerWrapper : std::fmt::Debug {
-    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), JobError>, Error=MailboxError>>;
+    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), DeltaGenerationError>, Error=MailboxError>>;
 }
 
 #[derive(Debug)]
 struct QueuedRequest {
     request: DeltaRequest,
-    delayed_result: DelayedResult<(),JobError>,
+    delayed_result: DelayedResult<(),DeltaGenerationError>,
 }
 
 impl QueuedRequest {
@@ -149,7 +149,7 @@ impl DeltaGenerator {
 }
 
 impl Handler<DeltaRequest> for DeltaGenerator {
-    type Result = ResponseActFuture<Self, (), JobError>;
+    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
 
     fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
         let r =
@@ -237,7 +237,7 @@ impl Actor for LocalWorker {
 pub struct LocalWorkerWrapper(Addr<LocalWorker>);
 
 impl WorkerWrapper for LocalWorkerWrapper {
-    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), JobError>, Error=MailboxError>> {
+    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), DeltaGenerationError>, Error=MailboxError>> {
         Box::new(self
                  .0
                  .send(request))
@@ -245,11 +245,11 @@ impl WorkerWrapper for LocalWorkerWrapper {
 }
 
 impl Handler<DeltaRequest> for LocalWorker {
-    type Result = Result<(), JobError>;
+    type Result = Result<(), DeltaGenerationError>;
 
     fn handle(&mut self, msg: DeltaRequest, _ctx: &mut Self::Context) -> Self::Result {
         let repoconfig = self.config.get_repoconfig(&msg.repo)
-            .map_err(|_e| JobError::new(&format!("No repo named: {}", &msg.repo)))?;
+            .map_err(|_e| DeltaGenerationError::new(&format!("No repo named: {}", &msg.repo)))?;
         let repo_path = repoconfig.get_abs_repo_path();
         let delta = msg.delta;
 
@@ -277,10 +277,10 @@ impl Handler<DeltaRequest> for LocalWorker {
             .arg(&repo_path);
 
         let o = cmd.output()
-            .map_err(move |e| JobError::new(&format!("Failed to generate delta {}: {}", delta.to_string(), e)))?;
+            .map_err(move |e| DeltaGenerationError::new(&format!("build-update-repo failed: {}", e)))?;
 
         if !o.status.success() {
-            return Err(JobError::new("delta generation exited unsuccesfully"));
+            return Err(DeltaGenerationError::new("delta generation exited unsuccesfully"));
         }
         Ok(())
     }
@@ -314,7 +314,7 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 pub struct RemoteWorkerItem {
     id: u32,
     request: DeltaRequest,
-    delayed_result: DelayedResult<(),JobError>,
+    delayed_result: DelayedResult<(),DeltaGenerationError>,
 }
 
 
@@ -352,7 +352,7 @@ pub enum RemoteServerMessage {
 pub struct RemoteWorkerWrapper(Addr<RemoteWorker>);
 
 impl WorkerWrapper for RemoteWorkerWrapper {
-    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), JobError>, Error=MailboxError>> {
+    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), DeltaGenerationError>, Error=MailboxError>> {
         Box::new(self
                  .0
                  .send(request))
@@ -441,7 +441,7 @@ impl RemoteWorker {
             Some(mut item) => {
                 item.delayed_result.set(match errmsg {
                     None => Ok(()),
-                    Some(msg) => Err(JobError::new(&format!("Remote worked id {} failed to generate delta: {}", id, &msg))),
+                    Some(msg) => Err(DeltaGenerationError::new(&format!("Remote worked id {} failed to generate delta: {}", id, &msg))),
                 })
             },
             None => error!("Got finished message for unexpected handle {}", id),
@@ -468,7 +468,7 @@ impl RemoteWorker {
 }
 
 impl Handler<DeltaRequest> for RemoteWorker {
-    type Result = ResponseActFuture<Self, (), JobError>;
+    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
 
     fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
         let url = {
@@ -476,7 +476,7 @@ impl Handler<DeltaRequest> for RemoteWorker {
                 match self.config.get_repoconfig(&msg.repo) {
                     Ok(c) => c,
                     Err(e) => return Box::new(
-                        DelayedResult::err(JobError::new(&format!("Can't get repoconfig: {}", e)))
+                        DelayedResult::err(DeltaGenerationError::new(&format!("Can't get repoconfig: {}", e)))
                             .into_actor(self)),
                 };
             repoconfig.get_base_url(&self.config)
