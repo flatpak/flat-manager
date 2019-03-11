@@ -7,6 +7,13 @@ use std::path;
 use std::str;
 use walkdir::WalkDir;
 use hex;
+use std::process::Command;
+use tokio_process::CommandExt;
+use std::os::unix::process::CommandExt as UnixCommandExt;
+use futures::Future;
+use futures::future::Either;
+use std::path::{PathBuf};
+use futures::future;
 
 #[derive(Fail, Debug, Clone, PartialEq)]
 pub enum OstreeError {
@@ -16,6 +23,10 @@ pub enum OstreeError {
     NoSuchCommit(String),
     #[fail(display = "Invalid utf8 string")]
     InvalidUtf8,
+    #[fail(display = "Command {} failed to start: {}", _0, _1)]
+    ExecFailed(String,String),
+    #[fail(display = "Command {} exited unsucessfully with stderr: {}", _0, _1)]
+    CommandFailed(String,String),
     #[fail(display = "Internal Error: {}", _0)]
     InternalError(String),
 }
@@ -420,4 +431,92 @@ pub fn calc_deltas_for_ref (repo_path: &path::PathBuf, ref_name: &str, depth: u3
     }
 
     res
+}
+
+fn result_from_output(output: std::process::Output, command: &str) -> Result<(), OstreeError> {
+    if !output.status.success() {
+        Err(OstreeError::CommandFailed(command.to_string(), String::from_utf8_lossy(&output.stderr).trim().to_string()))
+    } else {
+        Ok(())
+    }
+}
+
+pub fn pull_commit_async(repo_path: &PathBuf,
+                         url: &String,
+                         commit: &String) -> Box<Future<Item=(), Error=OstreeError>> {
+    let mut cmd = Command::new("ostree");
+    cmd
+        .before_exec (|| {
+            // Setsid in the child to avoid SIGINT on server killing
+            // child and breaking the graceful shutdown
+            unsafe { libc::setsid() };
+            Ok(())
+        });
+    cmd
+        .arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
+        .arg("pull")
+        .arg(&format!("--url={}", url))
+        .arg("upstream")
+        .arg(commit);
+
+    info!("Pulling commit {}", commit);
+    Box::new(
+        cmd
+            .output_async()
+            .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))
+            .and_then(|output| {
+                result_from_output(output, "ostree pull")}
+            )
+    )
+}
+
+pub fn pull_delta_async(repo_path: &PathBuf,
+                        url: &String,
+                        delta: &Delta) -> Box<Future<Item=(), Error=OstreeError>> {
+    let url_clone = url.clone();
+    let repo_path_clone = repo_path.clone();
+    let to = delta.to.clone();
+    Box::new(
+        if let Some(ref from) = delta.from {
+            Either::A(pull_commit_async(&repo_path, &url, from))
+        } else {
+            Either::B(future::result(Ok(())))
+        }
+        .and_then(move |_| pull_commit_async(&repo_path_clone, &url_clone, &to))
+    )
+}
+
+pub fn generate_delta_async(repo_path: &PathBuf,
+                            delta: &Delta) -> Box<Future<Item=(), Error=OstreeError>> {
+    let mut cmd = Command::new("flatpak");
+
+    cmd
+        .before_exec (|| {
+            // Setsid in the child to avoid SIGINT on server killing
+            // child and breaking the graceful shutdown
+            unsafe { libc::setsid() };
+            Ok(())
+        });
+
+    cmd
+        .arg("build-update-repo")
+        .arg("--generate-static-delta-to")
+        .arg(delta.to.clone());
+
+    if let Some(ref from) = delta.from {
+        cmd
+            .arg("--generate-static-delta-from")
+            .arg(from.clone());
+    };
+
+    cmd
+        .arg(&repo_path);
+
+    info!("Generating delta {}", delta.to_string());
+    Box::new(
+        cmd
+            .output_async()
+            .map_err(|e| OstreeError::ExecFailed("flatpak build-update-repo".to_string(), e.to_string()))
+            .and_then(|output| result_from_output(output, "flatpak build-update-repo"))
+    )
 }
