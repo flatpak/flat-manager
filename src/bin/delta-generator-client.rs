@@ -9,24 +9,67 @@ extern crate log;
 #[macro_use]
 extern crate serde_json;
 extern crate num_cpus;
+extern crate mpart_async;
+extern crate tokio;
+extern crate futures_fs;
 
 use actix::*;
 use actix_web::http::header;
+use actix_web::http;
+use actix_web::client;
 use actix_web::ws::{Client, ClientWriter, Message, ProtocolError};
 use dotenv::dotenv;
 use std::path::{Path,PathBuf};
 use std::env;
+use std::fs;
+use std::io;
+use std::io::Write;
 use std::time::Duration;
+use futures::Future;
+use mpart_async::MultipartRequest;
+use futures::Stream;
+use futures::future;
+use futures_fs::FsPool;
+
 use flatmanager::{RemoteClientMessage,RemoteServerMessage};
+use flatmanager::ostree;
+use flatmanager::errors::DeltaGenerationError;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(10);
 
+fn init_ostree_repo(repo_path: &PathBuf) -> io::Result<()> {
+    for &d in ["extensions",
+               "objects",
+               "refs/heads",
+               "refs/mirrors",
+               "refs/remotes",
+               "state",
+               "tmp/cache"].iter() {
+        fs::create_dir_all(repo_path.join(d))?;
+    }
+
+    let mut file = fs::File::create(repo_path.join("config"))?;
+    file.write_all(format!(
+r#"[core]
+repo_version=1
+mode=bare-user
+# We use one single upstream remote which we pass the url to manually each tim
+[remote "upstream"]
+url=
+gpg-verify=false
+gpg-verify-summary=false
+"#).as_bytes())?;
+    Ok(())
+}
+
 struct Manager {
+    fs_pool: FsPool,
     url: String,
     token: String,
     client: Option<Addr<DeltaClient>>,
     capacity: u32,
+    repo: PathBuf,
 }
 
 impl Manager {
@@ -52,12 +95,20 @@ impl Manager {
                 .map(|(reader, writer), manager, ctx| {
                     let addr = ctx.address();
                     let capacity = manager.capacity;
+                    let repo = manager.repo.clone();
+                    let url = manager.url.clone();
+                    let token = manager.token.clone();
+                    let fs_pool = manager.fs_pool.clone();
                     manager.client = Some(DeltaClient::create(move |ctx| {
                         DeltaClient::add_stream(reader, ctx);
                         DeltaClient {
+                            fs_pool: fs_pool,
                             writer: writer,
                             manager: addr,
+                            url: url,
+                            token: token,
                             capacity: capacity,
+                            repo: repo,
                         }
                     }));
                     ()
@@ -89,11 +140,14 @@ impl Handler<ClientClosed> for Manager {
     }
 }
 
-
 struct DeltaClient {
+    fs_pool: FsPool,
     writer: ClientWriter,
     manager: Addr<Manager>,
+    url: String,
+    token: String,
     capacity: u32,
+    repo: PathBuf,
 }
 
 impl Actor for DeltaClient {
@@ -109,6 +163,83 @@ impl Actor for DeltaClient {
     fn stopped(&mut self, _: &mut Context<Self>) {
         info!("Disconnected");
     }
+}
+
+fn pull_and_generate_delta_async(repo_path: &PathBuf,
+                                 url: &String,
+                                 delta: &ostree::Delta) -> Box<Future<Item=(), Error=DeltaGenerationError>> {
+    let url = url.clone();
+    let repo_path2 = repo_path.clone();
+    let delta_clone = delta.clone();
+    Box::new(
+        ostree::pull_delta_async(&repo_path, &url, &delta_clone)
+            .and_then(move |_| ostree::generate_delta_async(&repo_path2, &delta_clone))
+            .from_err()
+            )
+}
+
+fn add_delta_parts(fs_pool: &FsPool,
+                   repo_path: &PathBuf,
+                   delta: &ostree::Delta,
+                   mpart: &mut MultipartRequest<futures_fs::FsReadStream>) -> Result<(),DeltaGenerationError>
+{
+    let delta_path = delta.delta_path(repo_path)?;
+
+    for entry in fs::read_dir(delta_path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            let filename = path.file_name().unwrap();
+            let deltafilename = format!("{}.{}.delta", delta.to_name().unwrap(), filename.to_string_lossy());
+            mpart.add_stream("content", &deltafilename,"application/octet-stream",
+                             fs_pool.read(path.clone(), Default::default()));
+        }
+    }
+    Ok(())
+}
+
+
+pub fn upload_delta(fs_pool: &FsPool,
+                    base_url: &String,
+                    token: &String,
+                    repo: &String,
+                    repo_path: &PathBuf,
+                    delta: &ostree::Delta) -> Box<Future<Item=(), Error=DeltaGenerationError>> {
+    let url = format!("{}/api/v1/delta/upload/{}", base_url, repo);
+    let token = token.clone();
+
+    let mut mpart = MultipartRequest::default();
+
+    info!("Uploading delta {}", delta.to_name().unwrap_or("??".to_string()));
+    if let Err(e) = add_delta_parts(fs_pool, repo_path, delta, &mut mpart) {
+        return Box::new(future::err(e))
+    }
+
+    Box::new(
+        client::ClientRequest::build()
+            .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={}", mpart.get_boundary()))
+            .header(header::AUTHORIZATION, format!("Bearer {}", token))
+            .uri(&url)
+            .method(http::Method::POST)
+            .body(actix_web::Body::Streaming(Box::new(mpart.from_err())))
+            .unwrap()
+            .send()
+            .then(|r| {
+                match r {
+                    Ok(response) => {
+                        if response.status().is_success() {
+                            Ok(())
+                        } else {
+                            error!("Unexpected upload response: {:?}", response);
+                            Err(DeltaGenerationError::new(&format!("Delta upload failed with error {}", response.status())))
+                        }
+                    },
+                    Err(e) => {
+                        error!("Unexpected upload error: {:?}", e);
+                        Err(DeltaGenerationError::new(&format!("Delta upload failed with error {}", e)))
+                    },
+                }
+            }))
 }
 
 impl DeltaClient {
@@ -127,6 +258,7 @@ impl DeltaClient {
     }
 
     fn finished(&mut self, id: u32, errmsg: Option<String>) {
+        info!("Sending finished for request {}", id);
         self.writer.text(json!(
             RemoteClientMessage::Finished {
                 id: id,
@@ -135,17 +267,36 @@ impl DeltaClient {
         ).to_string());
     }
 
+    fn msg_request_delta(&mut self,
+                         id: u32,
+                         url: String,
+                         repo: String,
+                         delta: ostree::Delta,
+                         ctx: &mut Context<Self>)
+    {
+        info!("Got delta request {}: {} {}", id, repo, delta.to_string());
+        let path = self.repo.clone();
+        let path2 = self.repo.clone();
+        let delta2 = delta.clone();
+        let base_url = self.url.clone();
+        let token = self.token.clone();
+        let reponame = repo.clone();
+        let fs_pool = self.fs_pool.clone();
+        ctx.spawn(
+            pull_and_generate_delta_async(&path, &url, &delta)
+                .and_then(move |_| upload_delta(&fs_pool, &base_url, &token, &reponame, &path2, &delta2))
+                .into_actor(self)
+                .then(move |r, client, _ctx| {
+                    client.finished(id, r.err().map(|e| e.to_string()));
+                    actix::fut::ok(())
+                }));
+
+        // TODO: GC delta-repo now and then
+    }
+
     fn message(&mut self, message: RemoteServerMessage, ctx: &mut Context<Self>) {
-        info!("Got client message: {:?}", message);
         match message {
-            RemoteServerMessage::RequestDelta { id, url, repo, delta } => {
-                // TODO: download, etc
-                info!("PROCESSING REQUEST...");
-                ctx.run_later(Duration::new(30, 0), move |client, ctx| {
-                    info!("DONE...");
-                    client.finished(id, Some("This needs to be implemented".to_string()));
-                });
-            }
+            RemoteServerMessage::RequestDelta { id, url, repo, delta } => self.msg_request_delta(id, url, repo, delta, ctx),
         }
     }
 }
@@ -187,16 +338,25 @@ fn main() {
     let capacity: u32 = env::var("CAPACITY")
         .map(|s| s.parse().expect("Failed to parse $CAPACITY"))
         .unwrap_or (num_cpus::get() as u32);
-    let _workdir = env::var("WORKDIR")
+    let workdir = env::var("WORKDIR")
         .map(|s| cwd.join(Path::new(&s)))
         .unwrap_or_else(|_e| cwd.clone());
 
+    let repodir = workdir.join("delta-repo");
+
+    if !repodir.exists() {
+        init_ostree_repo(&repodir).expect("Failed to create repo");
+    }
+
     let _addr = Manager {
+        fs_pool: FsPool::default(),
         url: url,
         token: token,
         client: None,
         capacity: capacity,
+        repo: repodir,
     }.start();
 
-    let _ = sys.run();
+    let r = sys.run();
+    println!("System run returned {:?}", r);
 }
