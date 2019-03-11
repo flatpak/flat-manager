@@ -489,7 +489,8 @@ fn filename_parse_delta(name: &str) -> Option<path::PathBuf> {
          .join(&v[1]))
 }
 
-fn get_upload_subpath(field: &multipart::Field<dev::Payload>) -> error::Result<path::PathBuf, ApiError> {
+fn get_upload_subpath(field: &multipart::Field<dev::Payload>,
+                      state: &Arc<UploadState>) -> error::Result<path::PathBuf, ApiError> {
     let cd = field.content_disposition().ok_or(
         ApiError::BadRequest("No content disposition for multipart item".to_string()))?;
     let filename = cd.get_filename().ok_or(
@@ -499,8 +500,10 @@ fn get_upload_subpath(field: &multipart::Field<dev::Payload>) -> error::Result<p
         return Err(ApiError::BadRequest("Invalid upload filename".to_string()));
     }
 
-    if let Some(path) = filename_parse_object(filename) {
-        return Ok(path)
+    if !state.only_deltas {
+        if let Some(path) = filename_parse_object(filename) {
+            return Ok(path)
+        }
     }
 
     if let Some(path) = filename_parse_delta(filename) {
@@ -512,6 +515,7 @@ fn get_upload_subpath(field: &multipart::Field<dev::Payload>) -> error::Result<p
 
 struct UploadState {
     repo_path: path::PathBuf,
+    only_deltas: bool,
 }
 
 fn start_save(
@@ -536,7 +540,7 @@ fn save_file(
     field: multipart::Field<dev::Payload>,
     state: &Arc<UploadState>
 ) -> Box<Future<Item = i64, Error = ApiError>> {
-    let repo_subpath = match get_upload_subpath (&field) {
+    let repo_subpath = match get_upload_subpath (&field, state) {
         Ok(subpath) => subpath,
         Err(e) => return Box::new(future::err(e)),
     };
@@ -614,7 +618,10 @@ pub fn upload(
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return From::from(e);
     }
-    let uploadstate = Arc::new(UploadState { repo_path: state.config.build_repo_base.join(params.id.to_string()).join("upload") });
+    let uploadstate = Arc::new(UploadState {
+        only_deltas: false,
+        repo_path: state.config.build_repo_base.join(params.id.to_string()).join("upload")
+    });
     let req2 = req.clone();
     db_request (&state, LookupBuild { id: params.id })
         .and_then (move |build| req2.has_token_repo(&build.repo))
@@ -843,6 +850,39 @@ pub fn status(
             Ok(HttpResponse::Ok().content_type("text/html").body(s))
         })
         .from_err()
+        .responder()
+}
+
+#[derive(Deserialize)]
+pub struct DeltaUploadParams {
+    repo: String,
+}
+
+pub fn delta_upload(
+    params: Path<DeltaUploadParams>,
+    req: HttpRequest<AppState>,
+    state: State<AppState>,
+) -> FutureResponse<HttpResponse> {
+    if let Err(e) = req.has_token_claims("delta", "generate") {
+        return From::from(e);
+    }
+
+    let repoconfig = match state.config.get_repoconfig(&params.repo) {
+        Ok(repoconfig) => repoconfig,
+        Err(e) => return From::from(e)
+    }.clone();
+
+    let uploadstate = Arc::new(UploadState {
+        only_deltas: true,
+        repo_path: repoconfig.get_abs_repo_path().clone()
+    });
+    Box::new(req.multipart()
+             .map_err(|e| ApiError::InternalServerError(e.to_string()))
+             .map(move |item| { handle_multipart_item (item, &uploadstate) })
+             .flatten()
+             .collect()
+             .map(|sizes| HttpResponse::Ok().json(sizes))
+             .from_err())
         .responder()
 }
 

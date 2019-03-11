@@ -365,6 +365,7 @@ pub fn create_app(
                                                        r.method(Method::GET).with(api::get_publish_job) })
                 .resource("/build/{id}/purge", |r| { r.method(Method::POST).with(api::purge) })
                 .resource("/delta/worker", |r| r.route().f(api::ws_delta))
+                .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with(api::delta_upload))
         })
         .scope("/build-repo/{id}", |scope| {
             scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
