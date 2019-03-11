@@ -26,11 +26,13 @@ extern crate hex;
 extern crate filetime;
 extern crate num_cpus;
 extern crate time;
+extern crate tokio;
+extern crate tokio_process;
 
 mod api;
 mod app;
 mod db;
-mod errors;
+pub mod errors;
 mod models;
 mod schema;
 mod tokens;
