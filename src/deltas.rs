@@ -3,9 +3,8 @@ use actix::Actor;
 use app::Config;
 use errors::{DeltaGenerationError};
 use futures::Future;
+use futures::future;
 use ostree;
-use std::process::Command;
-use std::os::unix::process::CommandExt;
 use std::collections::{VecDeque,HashMap};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -230,7 +229,7 @@ pub struct LocalWorker {
 }
 
 impl Actor for LocalWorker {
-    type Context = SyncContext<Self>;
+    type Context = Context<Self>;
 }
 
 #[derive(Debug)]
@@ -245,44 +244,25 @@ impl WorkerWrapper for LocalWorkerWrapper {
 }
 
 impl Handler<DeltaRequest> for LocalWorker {
-    type Result = Result<(), DeltaGenerationError>;
+    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
 
     fn handle(&mut self, msg: DeltaRequest, _ctx: &mut Self::Context) -> Self::Result {
-        let repoconfig = self.config.get_repoconfig(&msg.repo)
-            .map_err(|_e| DeltaGenerationError::new(&format!("No repo named: {}", &msg.repo)))?;
+        let repoconfig = match self.config.get_repoconfig(&msg.repo) {
+            Err(_e) => {
+                return Box::new(
+                    future::err(DeltaGenerationError::new(&format!("No repo named: {}", &msg.repo)))
+                        .into_actor(self))
+            },
+            Ok(r) => r,
+        };
+
         let repo_path = repoconfig.get_abs_repo_path();
         let delta = msg.delta;
 
-        let mut cmd = Command::new("flatpak");
-        cmd
-            .before_exec (|| {
-                // Setsid in the child to avoid SIGINT on server killing
-                // child and breaking the graceful shutdown
-                unsafe { libc::setsid() };
-                Ok(())
-            });
-
-        cmd
-            .arg("build-update-repo")
-            .arg("--generate-static-delta-to")
-            .arg(delta.to.clone());
-
-        if let Some(ref from) = delta.from {
-            cmd
-                .arg("--generate-static-delta-from")
-                .arg(from.clone());
-        };
-
-        cmd
-            .arg(&repo_path);
-
-        let o = cmd.output()
-            .map_err(move |e| DeltaGenerationError::new(&format!("build-update-repo failed: {}", e)))?;
-
-        if !o.status.success() {
-            return Err(DeltaGenerationError::new("delta generation exited unsuccesfully"));
-        }
-        Ok(())
+        Box::new(
+            ostree::generate_delta_async(&repo_path, &delta)
+                .from_err()
+                .into_actor(self))
     }
 }
 
@@ -290,9 +270,9 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
 
     let n_threads = config.local_delta_threads;
     let config_copy = config.clone();
-    let threaded_worker = SyncArbiter::start(n_threads as usize, move || LocalWorker {
+    let local_worker = LocalWorker {
         config: config_copy.clone(),
-    });
+    }.start();
 
 
     let mut generator = DeltaGenerator {
@@ -303,7 +283,7 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
         next_worker_id: 0,
     };
 
-    generator.add_worker("local", 0, n_threads, Box::new(LocalWorkerWrapper(threaded_worker)));
+    generator.add_worker("local", 0, n_threads, Box::new(LocalWorkerWrapper(local_worker)));
     generator.start()
 }
 
