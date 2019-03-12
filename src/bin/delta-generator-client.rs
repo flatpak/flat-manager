@@ -172,7 +172,8 @@ fn pull_and_generate_delta_async(repo_path: &PathBuf,
     let repo_path2 = repo_path.clone();
     let delta_clone = delta.clone();
     Box::new(
-        ostree::pull_delta_async(&repo_path, &url, &delta_clone)
+        /* We do 5 retries, because pull is sometimes not super stable */
+        ostree::pull_delta_async(5, &repo_path, &url, &delta_clone)
             .and_then(move |_| ostree::generate_delta_async(&repo_path2, &delta_clone))
             .from_err()
             )

@@ -441,36 +441,52 @@ fn result_from_output(output: std::process::Output, command: &str) -> Result<(),
     }
 }
 
-pub fn pull_commit_async(repo_path: &PathBuf,
-                         url: &String,
-                         commit: &String) -> Box<Future<Item=(), Error=OstreeError>> {
-    let mut cmd = Command::new("ostree");
-    cmd
-        .before_exec (|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            unsafe { libc::setsid() };
-            Ok(())
-        });
-    cmd
-        .arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
-        .arg("pull")
-        .arg(&format!("--url={}", url))
-        .arg("upstream")
-        .arg(commit);
+pub fn pull_commit_async(n_retries: i32,
+                         repo_path: PathBuf,
+                         url: String,
+                         commit: String) -> Box<Future<Item=(), Error=OstreeError>> {
+    Box::new(future::loop_fn(n_retries, move |count| {
+        let mut cmd = Command::new("ostree");
+        cmd
+            .before_exec (|| {
+                // Setsid in the child to avoid SIGINT on server killing
+                // child and breaking the graceful shutdown
+                unsafe { libc::setsid() };
+                Ok(())
+            });
+        cmd
+            .arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
+            .arg("pull")
+            .arg(&format!("--url={}", url))
+            .arg("upstream")
+            .arg(&commit);
 
-    info!("Pulling commit {}", commit);
-    Box::new(
+        info!("Pulling commit {}", commit);
+        let commit_clone = commit.clone();
         cmd
             .output_async()
             .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))
             .and_then(|output| {
                 result_from_output(output, "ostree pull")}
             )
-    )
+            .then(move |r| {
+                match r {
+                    Ok(res) => Ok(future::Loop::Break(res)),
+                    Err(e) => {
+                        if count > 1 {
+                            warn!("Pull error, retrying commit {}: {}", commit_clone, e.to_string());
+                            Ok(future::Loop::Continue(count - 1))
+                        } else {
+                            Err(e)
+                        }
+                    }
+                }
+            })
+    }))
 }
 
-pub fn pull_delta_async(repo_path: &PathBuf,
+pub fn pull_delta_async(n_retries: i32,
+                        repo_path: &PathBuf,
                         url: &String,
                         delta: &Delta) -> Box<Future<Item=(), Error=OstreeError>> {
     let url_clone = url.clone();
@@ -478,11 +494,11 @@ pub fn pull_delta_async(repo_path: &PathBuf,
     let to = delta.to.clone();
     Box::new(
         if let Some(ref from) = delta.from {
-            Either::A(pull_commit_async(&repo_path, &url, from))
+            Either::A(pull_commit_async(n_retries, repo_path.clone(), url.clone(), from.clone()))
         } else {
             Either::B(future::result(Ok(())))
         }
-        .and_then(move |_| pull_commit_async(&repo_path_clone, &url_clone, &to))
+        .and_then(move |_| pull_commit_async(n_retries, repo_path_clone, url_clone, to))
     )
 }
 
