@@ -1,5 +1,6 @@
 use actix::prelude::*;
 use actix::Actor;
+use actix::dev::ToEnvelope;
 use app::Config;
 use errors::{DeltaGenerationError};
 use futures::Future;
@@ -12,6 +13,8 @@ use std::sync::Arc;
 use std::time::{Instant, Duration};
 use actix_web::ws;
 use serde_json;
+use rand;
+use rand::prelude::IteratorRandom;
 
 use app::AppState;
 use delayed::DelayedResult;
@@ -33,10 +36,6 @@ impl Message for DeltaRequest {
     type Result = Result<(), DeltaGenerationError>;
 }
 
-trait WorkerWrapper : std::fmt::Debug {
-    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), DeltaGenerationError>, Error=MailboxError>>;
-}
-
 #[derive(Debug)]
 struct QueuedRequest {
     request: DeltaRequest,
@@ -54,13 +53,28 @@ impl QueuedRequest {
 }
 
 #[derive(Debug)]
-struct WorkerInfo {
+struct WorkerInfo<A: actix::Actor> {
     name: String,
     id: usize,
-    prio: u32,
     available: Cell<u32>,
-    wrapper: Box<WorkerWrapper>,
+    addr: Addr<A>,
 }
+
+impl<A: Actor> WorkerInfo<A> {
+    pub fn is_available(&self) -> bool {
+        self.available.get() > 0
+    }
+    pub fn claim(&self) {
+        let current = self.available.get();
+        assert!(current > 0);
+        self.available.set(current - 1);
+    }
+
+    pub fn unclaim(&self) {
+        self.available.set(self.available.get() + 1);
+    }
+}
+
 
 /* The DeltaGenerator is an actor handling the DeltaRequest message, but
  * it then fronts a number of workers that it queues the request onto.
@@ -70,7 +84,8 @@ struct WorkerInfo {
 pub struct DeltaGenerator {
     config: Arc<Config>,
     outstanding: VecDeque<QueuedRequest>,
-    workers: Vec<Rc<WorkerInfo>>,
+    local_worker: Rc<WorkerInfo<LocalWorker>>,
+    remote_workers: Vec<Rc<WorkerInfo<RemoteWorker>>>,
     next_worker_id: usize,
 }
 
@@ -79,33 +94,36 @@ impl Actor for DeltaGenerator {
 }
 
 impl DeltaGenerator {
-    fn add_worker(&mut self, name: &str, prio: u32, available: u32, worker: Box<WorkerWrapper>) -> usize {
+    fn add_worker(&mut self, name: &str, available: u32, addr: Addr<RemoteWorker>) -> usize {
         let id = self.next_worker_id;
         self.next_worker_id += 1;
-        self.workers.push(Rc::new(WorkerInfo {
+        self.remote_workers.push(Rc::new(WorkerInfo {
             name: name.to_string(),
             id: id,
-            prio: prio,
             available: Cell::new(available),
-            wrapper: worker,
+            addr: addr,
         }));
         info!("New delta worker {} registred as #{} ", name, id);
         id
     }
 
     fn remove_worker(&mut self, id: usize) {
-        if let Some(index) = self.workers.iter().position(|w| w.id == id) {
-            let w = self.workers.remove(index);
+        if let Some(index) = self.remote_workers.iter().position(|w| w.id == id) {
+            let w = self.remote_workers.remove(index);
             info!("Delta worker {} #{} unregistred", w.name, w.id);
         } else {
             error!("Trying to remove worker #{} which doesn't exist", id);
         }
     }
 
-    fn start_request(&mut self, worker: Rc<WorkerInfo>, mut queued_request: QueuedRequest, ctx: &mut Context<Self>) {
-        worker.available.set(worker.available.get() - 1);
+    fn start_request<A>(&self, worker: Rc<WorkerInfo<A>>, mut queued_request: QueuedRequest, ctx: &mut Context<Self>)
+        where A: Handler<DeltaRequest>,
+              A::Context: ToEnvelope<A, DeltaRequest>  {
+        info!("Assigned delta {} to worker {} #{}", queued_request.request.to_string(), worker.name, worker.id);
+        worker.claim();
         ctx.spawn(
-            worker.wrapper.forward_request(queued_request.request.clone())
+            worker.addr
+                .send(queued_request.request.clone())
                 .into_actor(self)
                 .then(move |msg_send_res, generator, ctx| {
                     match msg_send_res {
@@ -123,25 +141,33 @@ impl DeltaGenerator {
                         },
                     };
 
-                    worker.available.set(worker.available.get() + 1);
+                    worker.unclaim();
                     generator.run_queue(ctx);
                     actix::fut::ok(())
-                }));
+                })
+        );
     }
 
     fn run_queue(&mut self, ctx: &mut Context<Self>) {
-        /* Use workers with the highest prio available */
-        let max_prio = self.workers.iter().fold(0, |acc, w| u32::max(acc, w.prio));
-
         while let Some(request) = self.outstanding.pop_front() {
-            let worker_maybe = self.workers.iter().find(|w| w.prio == max_prio && w.available.get() > 0).map(|w| w.clone());
-            if let Some(worker) = worker_maybe {
-                info!("Assigned delta {} to worker {} #{}", request.request.to_string(), worker.name, worker.id);
-                self.start_request(worker.clone(), request, ctx);
+            if self.remote_workers.is_empty() {
+                /* No remotes, fallback to local worker */
+                if self.local_worker.is_available() {
+                    self.start_request(self.local_worker.clone(), request, ctx);
+                } else {
+                    /* No worker available, return to queue */
+                    self.outstanding.push_front(request);
+                    break;
+                }
             } else {
-                /* No worker available, return to queue */
-                self.outstanding.push_front(request);
-                break;
+                /* Find available worker */
+                if let Some(available_worker) = self.remote_workers.iter().filter(|w| w.is_available()).choose(&mut rand::thread_rng()) {
+                    self.start_request(available_worker.clone(), request, ctx);
+                } else {
+                    /* No worker available, return to queue */
+                    self.outstanding.push_front(request);
+                    break;
+                }
             }
         }
     }
@@ -200,7 +226,7 @@ impl Handler<RegisterRemoteWorker> for DeltaGenerator {
     type Result = usize;
 
     fn handle(&mut self, msg: RegisterRemoteWorker, _ctx: &mut Self::Context) -> usize {
-        self.add_worker( &msg.name, 1, msg.capacity, Box::new(RemoteWorkerWrapper(msg.addr)))
+        self.add_worker( &msg.name, msg.capacity, msg.addr)
     }
 }
 
@@ -230,17 +256,6 @@ pub struct LocalWorker {
 
 impl Actor for LocalWorker {
     type Context = Context<Self>;
-}
-
-#[derive(Debug)]
-pub struct LocalWorkerWrapper(Addr<LocalWorker>);
-
-impl WorkerWrapper for LocalWorkerWrapper {
-    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), DeltaGenerationError>, Error=MailboxError>> {
-        Box::new(self
-                 .0
-                 .send(request))
-    }
 }
 
 impl Handler<DeltaRequest> for LocalWorker {
@@ -274,16 +289,19 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
         config: config_copy.clone(),
     }.start();
 
-
-    let mut generator = DeltaGenerator {
+    let generator = DeltaGenerator {
         config: config,
-        //fallback: fallback_addr,
         outstanding: VecDeque::new(),
-        workers: Vec::new(),
-        next_worker_id: 0,
+        local_worker: Rc::new(WorkerInfo {
+            name: "local".to_string(),
+            id: 0,
+            available: Cell::new(n_threads),
+            addr: local_worker,
+        }),
+        remote_workers: Vec::new(),
+        next_worker_id: 1,
     };
 
-    generator.add_worker("local", 0, n_threads, Box::new(LocalWorkerWrapper(local_worker)));
     generator.start()
 }
 
@@ -326,17 +344,6 @@ pub enum RemoteServerMessage {
         repo: String,
         delta: ostree::Delta,
     },
-}
-
-#[derive(Debug)]
-pub struct RemoteWorkerWrapper(Addr<RemoteWorker>);
-
-impl WorkerWrapper for RemoteWorkerWrapper {
-    fn forward_request(&self, request: DeltaRequest) -> Box<Future<Item=Result<(), DeltaGenerationError>, Error=MailboxError>> {
-        Box::new(self
-                 .0
-                 .send(request))
-    }
 }
 
 impl RemoteWorker {

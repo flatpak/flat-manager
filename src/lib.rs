@@ -18,8 +18,7 @@ extern crate serde;
 #[macro_use] extern crate serde_derive;
 extern crate tempfile;
 extern crate jsonwebtoken as jwt;
-#[macro_use]
-extern crate log;
+#[macro_use] extern crate log;
 extern crate libc;
 extern crate walkdir;
 extern crate hex;
@@ -28,6 +27,7 @@ extern crate num_cpus;
 extern crate time;
 extern crate tokio;
 extern crate tokio_process;
+extern crate rand;
 
 mod api;
 mod app;
