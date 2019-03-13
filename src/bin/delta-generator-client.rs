@@ -24,7 +24,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::time::Duration;
+use std::time::{Instant, Duration};
 use futures::Future;
 use mpart_async::MultipartRequest;
 use futures::Stream;
@@ -36,6 +36,7 @@ use flatmanager::ostree;
 use flatmanager::errors::DeltaGenerationError;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const SERVER_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(10);
 
 fn init_ostree_repo(repo_path: &PathBuf) -> io::Result<()> {
@@ -81,7 +82,7 @@ impl Manager {
     }
 
     fn connect(&mut self, ctx: &mut Context<Self>) {
-        println!("Connecting to server at {}...", self.url);
+        info!("Connecting to server at {}...", self.url);
         ctx.spawn(
             Client::new(&format!("{}/api/v1/delta/worker", self.url))
                 .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
@@ -109,6 +110,7 @@ impl Manager {
                             token: token,
                             capacity: capacity,
                             repo: repo,
+                            last_recieved_pong: Instant::now(),
                         }
                     }));
                     ()
@@ -148,6 +150,7 @@ struct DeltaClient {
     token: String,
     capacity: u32,
     repo: PathBuf,
+    last_recieved_pong: Instant,
 }
 
 impl Actor for DeltaClient {
@@ -156,7 +159,7 @@ impl Actor for DeltaClient {
     fn started(&mut self, ctx: &mut Context<Self>) {
         info!("Connected");
         // Kick off heartbeat process
-        self.heartbeat(ctx);
+        self.run_heartbeat(ctx);
         self.register();
     }
 
@@ -244,9 +247,14 @@ pub fn upload_delta(fs_pool: &FsPool,
 }
 
 impl DeltaClient {
-    fn heartbeat(&self, ctx: &mut Context<Self>) {
-        ctx.run_interval(HEARTBEAT_INTERVAL, |client, _ctx| {
+    fn run_heartbeat(&self, ctx: &mut Context<Self>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |client, ctx| {
             client.writer.ping("");
+            if Instant::now().duration_since(client.last_recieved_pong) > SERVER_TIMEOUT {
+                warn!("Server heartbeat missing, disconnecting!");
+                client.close();
+                ctx.stop()
+            }
         });
     }
 
@@ -295,6 +303,10 @@ impl DeltaClient {
         // TODO: GC delta-repo now and then
     }
 
+    fn close(&mut self) {
+        self.manager.do_send(ClientClosed);
+    }
+
     fn message(&mut self, message: RemoteServerMessage, ctx: &mut Context<Self>) {
         match message {
             RemoteServerMessage::RequestDelta { id, url, repo, delta } => self.msg_request_delta(id, url, repo, delta, ctx),
@@ -311,6 +323,9 @@ impl StreamHandler<Message, ProtocolError> for DeltaClient {
                     Err(e) => error!("Got invalid websocket message: {}", e),
                 }
             },
+            Message::Pong(_) => {
+                self.last_recieved_pong = Instant::now();
+            },
             _ => (),
         }
     }
@@ -319,7 +334,8 @@ impl StreamHandler<Message, ProtocolError> for DeltaClient {
     }
 
     fn finished(&mut self, ctx: &mut Context<Self>) {
-        self.manager.do_send(ClientClosed);
+        // websocket got closed
+        self.close();
         ctx.stop()
     }
 }
@@ -359,5 +375,5 @@ fn main() {
     }.start();
 
     let r = sys.run();
-    println!("System run returned {:?}", r);
+    info!("System run returned {:?}", r);
 }

@@ -19,6 +19,9 @@ use rand::prelude::IteratorRandom;
 use app::AppState;
 use delayed::DelayedResult;
 
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
+
 #[derive(Debug,Clone,PartialEq)]
 pub struct DeltaRequest {
     pub repo: String,
@@ -305,9 +308,6 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
     generator.start()
 }
 
-const CLIENT_TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_secs(30);
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
-
 #[derive(Debug)]
 pub struct RemoteWorkerItem {
     id: u32,
@@ -324,7 +324,7 @@ pub struct RemoteWorker {
     last_item_id: u32,
     outstanding: HashMap<u32, RemoteWorkerItem>,
     config: Arc<Config>,
-    heartbeat: Instant,
+    last_recieved_ping: Instant,
     generator: Addr<DeltaGenerator>,
 }
 
@@ -355,7 +355,7 @@ impl RemoteWorker {
             last_item_id: 0,
             outstanding: HashMap::new(),
             config: config.clone(),
-            heartbeat: Instant::now(),
+            last_recieved_ping: Instant::now(),
             generator: generator.clone(),
         }
     }
@@ -443,9 +443,9 @@ impl RemoteWorker {
         }
     }
 
-    fn heartbeat(&self, ctx: &mut ws::WebsocketContext<Self, AppState>) {
-        ctx.run_interval(CLIENT_TIMEOUT_CHECK_INTERVAL, |worker, ctx| {
-            if Instant::now().duration_since(worker.heartbeat) > CLIENT_TIMEOUT {
+    fn run_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self, AppState>) {
+        ctx.run_interval(HEARTBEAT_INTERVAL, |worker, ctx| {
+            if Instant::now().duration_since(worker.last_recieved_ping) > CLIENT_TIMEOUT {
                 warn!("Delta worker heartbeat missing, disconnecting!");
                 ctx.stop();
                 return;
@@ -491,7 +491,7 @@ impl Actor for RemoteWorker {
         // Kick off heartbeat process
         self.remote = ctx.request().connection_info().remote().map(|s| s.to_string());
         info!("Remote delta worker from {} connected", self.remote.clone().unwrap_or("Unknown".to_string()));
-        self.heartbeat(ctx);
+        self.run_heartbeat(ctx);
     }
 
     fn stopping(&mut self, _ctx: &mut Self::Context) -> Running {
@@ -513,11 +513,10 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for RemoteWorker {
     fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         match msg {
             ws::Message::Ping(msg) => {
-                self.heartbeat = Instant::now();
+                self.last_recieved_ping = Instant::now();
                 ctx.pong(&msg);
             }
             ws::Message::Pong(_) => {
-                self.heartbeat = Instant::now();
             }
             ws::Message::Text(text) => {
                 match serde_json::from_str::<RemoteClientMessage>(&text) {
