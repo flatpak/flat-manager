@@ -536,3 +536,27 @@ pub fn generate_delta_async(repo_path: &PathBuf,
             .and_then(|output| result_from_output(output, "flatpak build-update-repo"))
     )
 }
+
+pub fn prune_async(repo_path: &PathBuf) -> Box<Future<Item=(), Error=OstreeError>> {
+    let mut cmd = Command::new("ostree");
+
+    cmd
+        .before_exec (|| {
+            // Setsid in the child to avoid SIGINT on server killing
+            // child and breaking the graceful shutdown
+            unsafe { libc::setsid() };
+            Ok(())
+        });
+
+    cmd
+        .arg("prune")
+        .arg(&format!("--repo={}", repo_path.to_string_lossy()))
+        .arg("--keep-younger-than=3 days ago");
+
+    Box::new(
+        cmd
+            .output_async()
+            .map_err(|e| OstreeError::ExecFailed("ostree prune".to_string(), e.to_string()))
+            .and_then(|output| result_from_output(output, "ostree prune"))
+    )
+}

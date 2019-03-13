@@ -12,6 +12,7 @@ extern crate num_cpus;
 extern crate mpart_async;
 extern crate tokio;
 extern crate futures_fs;
+extern crate futures_locks;
 
 use actix::*;
 use actix_web::http::header;
@@ -38,6 +39,9 @@ use flatmanager::errors::DeltaGenerationError;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const SERVER_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(10);
+
+// Prune once a day
+const PRUNE_INTERVAL: Duration = Duration::from_secs(60*60*24);
 
 fn init_ostree_repo(repo_path: &PathBuf) -> io::Result<()> {
     for &d in ["extensions",
@@ -110,6 +114,7 @@ impl Manager {
                             token: token,
                             capacity: capacity,
                             repo: repo,
+                            repo_lock: futures_locks::RwLock::new(1),
                             last_recieved_pong: Instant::now(),
                         }
                     }));
@@ -150,6 +155,7 @@ struct DeltaClient {
     token: String,
     capacity: u32,
     repo: PathBuf,
+    repo_lock: futures_locks::RwLock<i32>,
     last_recieved_pong: Instant,
 }
 
@@ -160,6 +166,7 @@ impl Actor for DeltaClient {
         info!("Connected");
         // Kick off heartbeat process
         self.run_heartbeat(ctx);
+        self.run_regular_prune(ctx);
         self.register();
     }
 
@@ -276,6 +283,35 @@ impl DeltaClient {
         ).to_string());
     }
 
+    fn prune_repo(&mut self, ctx: &mut Context<Self>) {
+        info!("Waiting to prune repo");
+        let path = self.repo.clone();
+        ctx.spawn(
+            // We take a write lock across the entire operation to
+            // block out all delta request handling during the prune
+            self.repo_lock.write()
+                .into_actor(self)
+                .then(move |guard, client, _ctx| {
+                    info!("Pruning repo");
+                    ostree::prune_async(&path)
+                        .into_actor(client)
+                        .then(move |r, _client, _ctx| {
+                            match r {
+                                Err(e) => error!("Failed to prune repo: {}", e.to_string()),
+                                _ => info!("Pruning repo done"),
+                            };
+                            &guard;
+                            actix::fut::ok(())
+                        })
+                })
+        );
+    }
+
+    fn run_regular_prune(&mut self, ctx: &mut Context<Self>) {
+        self.prune_repo(ctx);
+        ctx.run_interval(PRUNE_INTERVAL, |client, ctx| client.prune_repo(ctx));
+    }
+
     fn msg_request_delta(&mut self,
                          id: u32,
                          url: String,
@@ -292,15 +328,22 @@ impl DeltaClient {
         let reponame = repo.clone();
         let fs_pool = self.fs_pool.clone();
         ctx.spawn(
-            pull_and_generate_delta_async(&path, &url, &delta)
-                .and_then(move |_| upload_delta(&fs_pool, &base_url, &token, &reponame, &path2, &delta2))
+            // We take a read lock across the entire operation to
+            // protect against the regular GC:ing the repo, which
+            // takes a write lock
+            self.repo_lock.read()
                 .into_actor(self)
-                .then(move |r, client, _ctx| {
-                    client.finished(id, r.err().map(|e| e.to_string()));
-                    actix::fut::ok(())
-                }));
-
-        // TODO: GC delta-repo now and then
+                .then(move |guard, client, _ctx| {
+                    pull_and_generate_delta_async(&path, &url, &delta)
+                        .and_then(move |_| upload_delta(&fs_pool, &base_url, &token, &reponame, &path2, &delta2))
+                        .into_actor(client)
+                        .then(move |r, client, _ctx| {
+                            &guard;
+                            client.finished(id, r.err().map(|e| e.to_string()));
+                            actix::fut::ok(())
+                        })
+                })
+        );
     }
 
     fn close(&mut self) {

@@ -580,6 +580,7 @@ dependencies = [
  "filetime 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-fs 0.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "futures-locks 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "jsonwebtoken 5.0.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.48 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -655,6 +656,16 @@ dependencies = [
  "bytes 0.4.11 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures-cpupool 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "futures-locks"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-current-thread 0.1.4 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tokio-executor 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -2129,6 +2140,7 @@ dependencies = [
 "checksum futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)" = "49e7653e374fe0d0c12de4250f0bdb60680b8c80eed558c5c7538eec9c89e21b"
 "checksum futures-cpupool 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)" = "ab90cde24b3319636588d0c35fe03b1333857621051837ed769faefb4c2162e4"
 "checksum futures-fs 0.0.5 (registry+https://github.com/rust-lang/crates.io-index)" = "9b9f2aeb603383051bab2898cb253a0efed9b590582d0b7baaa0b25de2a536d5"
+"checksum futures-locks 0.3.3 (registry+https://github.com/rust-lang/crates.io-index)" = "bd5658075ca5ae3918993c5bc95b43fcf22f927227660556a947da598f9f8981"
 "checksum h2 0.1.16 (registry+https://github.com/rust-lang/crates.io-index)" = "ddb2b25a33e231484694267af28fec74ac63b5ccf51ee2065a5e313b834d836e"
 "checksum hex 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "805026a5d0141ffc30abb3be3173848ad46a1b1664fe632428479619a3644d77"
 "checksum hostname 0.1.5 (registry+https://github.com/rust-lang/crates.io-index)" = "21ceb46a83a85e824ef93669c8b390009623863b5c195d1ba747292c0c72f94e"
