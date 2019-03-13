@@ -7,7 +7,9 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    ::std::env::set_var("RUST_LOG", "info");
+    if env::var("RUST_LOG").is_err() {
+        env::set_var("RUST_LOG", "info");
+    }
     env_logger::init();
     let sys = actix::System::new("repo-manage");
 
