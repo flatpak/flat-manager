@@ -505,7 +505,7 @@ def push_command(args):
 
     if args.publish:
         publish_job = publish_build(args.build_url, args.wait, args.token)
-        update_job_id = publish_job["results"].get("update-repo-job", None)
+        update_job_id = publish_job.get("results", {}).get("update-repo-job", None)
         if update_job_id:
             print("Queued repo update job %d" %(update_job_id))
             update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
@@ -527,21 +527,26 @@ def push_command(args):
     return data
 
 def commit_command(args):
-    commit_build(args.build_url, args.wait, args.token)
-    return 0
+    job = commit_build(args.build_url, args.wait, args.token)
+    return job
 
 def publish_command(args):
-    publish_build(args.build_url, args.wait, args.token)
-    return 0
+    job = publish_build(args.build_url, args.wait, args.token)
+    update_job_id = job.get("results", {}).get("update-repo-job", None)
+    if update_job_id:
+        print("Queued repo update job %d" %(update_job_id))
+        update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
+        if args.wait_update:
+            print("Waiting for repo update job")
+            update_job = wait_for_job (update_job_url, args.token);
+        else:
+            update_job = get_job(update_job_url, args.token)
+        reparse_job_results(update_job)
+        update_job["location"] = update_job_url
+    return job
 
 def purge_command(args):
     job = purge_build(args.build_url, args.token)
-    update_job_url = job["results"].get("update-repo-job", None)
-    if update_job_url:
-        print("Queued repo update job at " + update_job_url)
-        if args.wait_update:
-            print("Waiting for repo update job")
-            job = wait_for_job (update_job_url, token);
     return job
 
 def create_token_command(args):
@@ -552,7 +557,7 @@ def create_token_command(args):
 
 def follow_job_command(args):
     job = wait_for_job(args.job_url, args.token)
-    return 0
+    return job
 
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
