@@ -24,7 +24,7 @@ import os
 import os
 import sys
 import traceback
-from urllib.parse import urlparse,urljoin,urlsplit,urlunsplit
+from urllib.parse import urlparse,urlunparse,urljoin,urlsplit,urlunsplit
 import errno
 import time
 import fnmatch
@@ -48,6 +48,11 @@ def try_get_json(response):
     except:
         return {}
 
+class UsageException(Exception):
+    def __init__(self, msg):
+        self.msg = msg
+    def __str__(self):
+        return self.msg
 
 class ApiError(Exception):
     def __init__(self, response):
@@ -57,13 +62,17 @@ class ApiError(Exception):
         except:
             self.body = {"status": response.status_code, "error-type": "no-error", "message": "No json error details from server"}
 
-    def __str__(self):
-        return json.dumps( {
-            "error": "API call failed",
+    def repr(self):
+        return {
+            "type": "api",
             "url": self.response.url,
             "status_code": self.response.status_code,
             "details": self.body
-        }, indent=4)
+        }
+
+    def __str__(self):
+        return "Api call to %s failed with status %d, details: %s" % (self.response.url, self.response.status_code, self.body)
+        return json.dumps(self.repr(), indent=4)
 
 # This is similar to the regular payload, but opens the file lazily
 class NamedFilePart:
@@ -246,6 +255,21 @@ def get_build(build_url, token):
     data = resp.json()
     return data
 
+# For stupid reasons this is a string with json, lets expand it
+def reparse_job_results(job):
+    job["results"] = json.loads(job.get("results", "{}"))
+    return job
+
+def get_job(job_url, token):
+    session = requests.Session()
+    resp = session.get(job_url,
+                       headers={'Authorization': 'Bearer ' + token},
+                       json={})
+    if resp.status_code != 200:
+        raise ApiError(resp)
+    data = resp.json()
+    return data
+
 def wait_for_job(job_url, token):
     old_job_status  = 0
     printed_len = 0
@@ -314,10 +338,12 @@ def commit_build(build_url, wait, token):
         raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
-    print("job: %s" % job)
     if wait:
         print("Waiting for commit job")
         job = wait_for_job (job_url, token);
+
+    reparse_job_results(job)
+    job["location"] = job_url
     return job
 
 def publish_build(build_url, wait, token):
@@ -328,17 +354,14 @@ def publish_build(build_url, wait, token):
         raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
+    reparse_job_results(job)
+    job["location"] = resp.headers['location'];
     if wait:
         print("Waiting for publish job")
         job = wait_for_job (job_url, token);
-        results = json.loads(job.get("results", "{}"))
-        update_job_url = results.get("update-repo-job", None)
-        if update_job_url:
-            print("Queued repo update job at " + update_job_url)
-            if args.wait_update:
-                print("Waiting for repo update job")
-                update_job = wait_for_job (update_job_url, token);
 
+    reparse_job_results(job)
+    job["location"] = job_url
     return job;
 
 def purge_build(build_url, token):
@@ -360,8 +383,7 @@ def create_token(manager_url, token, name, subject, scope, duration):
     } )
     if resp.status_code != 200:
         raise ApiError(resp)
-    data = resp.json()
-    return data["token"]
+    return resp.json()
 
 def get_object_multipart(repo_path, object):
     return NamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], object)
@@ -375,8 +397,10 @@ def create_command(args):
     if resp.status_code != 200:
         raise ApiError(resp)
     data = resp.json()
-    print(resp.headers['location'])
-    return 0
+    data["location"] = resp.headers['location']
+    if not args.print_output:
+        print(resp.headers['location'])
+    return data
 
 def delta_name_part_encode(commit):
     return base64.b64encode(binascii.unhexlify(commit), b"+_")[:-1].decode("utf-8")
@@ -391,13 +415,17 @@ def should_skip_delta(id, globs):
                 return True
     return False
 
+def build_url_to_api(build_url):
+    parts = urlparse(build_url)
+    path = os.path.dirname(os.path.dirname(parts.path))
+    return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
+
 def push_command(args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
         local_repo.open(None)
     except GLib.Error as err:
-        print("Can't open repo %s: %s" % (args.repo_path, err.message))
-        return 1
+        raise UsageException("Can't open repo %s: %s" % (args.repo_path, err.message)) from err
 
     refs = {}
     if len(args.branches) == 0:
@@ -412,7 +440,7 @@ def push_command(args):
 
     if (args.minimal_token):
         id = os.path.basename(urlparse(args.build_url).path)
-        token = create_token(args.build_url, args.token, "minimal-upload", "build/%s" % (id), ["upload"], 60*60)
+        token = create_token(args.build_url, args.token, "minimal-upload", "build/%s" % (id), ["upload"], 60*60)["token"]
     else:
         token = args.token
 
@@ -467,20 +495,36 @@ def push_command(args):
     if args.extra_id:
         add_extra_ids(args.build_url, token, args.extra_id)
 
+    commit_job = None
+    publish_job = None
+    update_job = None
+
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
-        commit_build(args.build_url, args.publish or args.wait, args.token)
+        commit_job = commit_build(args.build_url, args.publish or args.wait, args.token)
 
     if args.publish:
         publish_job = publish_build(args.build_url, args.wait, args.token)
-
-        results = json.loads(publish_job.get("results", "{}"))
-        update_job_url = results.get("update-repo-job", None)
-        if update_job_url:
-            print("Queued repo update job at " + update_job_url)
+        update_job_id = publish_job["results"].get("update-repo-job", None)
+        if update_job_id:
+            print("Queued repo update job %d" %(update_job_id))
+            update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
             if args.wait_update:
                 print("Waiting for repo update job")
                 update_job = wait_for_job (update_job_url, token);
+            else:
+                update_job = get_job(update_job_url, token)
+            reparse_job_results(update_job)
+            update_job["location"] = update_job_url
+
+    data = get_build(args.build_url, args.token)
+    if commit_job:
+        data["commit_job"] = commit_job
+    if publish_job:
+        data["publish_job"] = publish_job
+    if update_job:
+        data["update_job"] = update_job
+    return data
 
 def commit_command(args):
     commit_build(args.build_url, args.wait, args.token)
@@ -491,13 +535,20 @@ def publish_command(args):
     return 0
 
 def purge_command(args):
-    purge_build(args.build_url, args.token)
-    return 0
+    job = purge_build(args.build_url, args.token)
+    update_job_url = job["results"].get("update-repo-job", None)
+    if update_job_url:
+        print("Queued repo update job at " + update_job_url)
+        if args.wait_update:
+            print("Waiting for repo update job")
+            job = wait_for_job (update_job_url, token);
+    return job
 
 def create_token_command(args):
-    new_token = create_token(args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
-    print(new_token)
-    return 0
+    data = create_token(args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
+    if not args.print_output:
+        print(data['token'])
+    return data
 
 def follow_job_command(args):
     job = wait_for_job(args.job_url, args.token)
@@ -511,6 +562,8 @@ if __name__ == '__main__':
                         help='enable verbose output')
     parser.add_argument('--debug', action='store_true',
                         help='enable debugging output')
+    parser.add_argument('--output', help='Write output json to file')
+    parser.add_argument('--print-output', action='store_true', help='Print output json')
     parser.add_argument('--token', help='use this token')
     parser.add_argument('--token-file', help='use token from file')
     subparsers = parser.add_subparsers(title='subcommands',
@@ -600,15 +653,54 @@ if __name__ == '__main__':
 
 
     res = 1
+    output = None
     try:
-        res = args.func(args)
+        output = {
+            "command": args.subparser_name,
+            "result": args.func(args),
+        }
     except SystemExit:
+        # Something called sys.exit(), lets just exit
+        res = 1
         raise # Pass on regular exit callse
     except ApiError as e:
-        eprint(e)
+        eprint(str(e))
+        output = {
+            "command": args.subparser_name,
+            "error": e.repr(),
+        }
+    except UsageException as e:
+        eprint(str(e))
+        output = {
+            "error": {
+                "type": "usage",
+                "details": {
+                    "message": str(e),
+                }
+            }
+        }
     except:
-        eprint(json.dumps( {
-            "error": "Unexpected error in %s" % (args.subparser_name),
-            "details": traceback.format_exc().split("\n")
-        }, indent=4))
+        ei = sys.exc_info()
+        eprint("Unexpected %s exception in %s: %s" % (ei[0].__name__, args.subparser_name, ei[1]))
+        eprint(traceback.format_exc())
+        output = {
+            "command": args.subparser_name,
+            "error": {
+                "type": "exception",
+                "details": {
+                    "error-type": ei[0].__name__,
+                    "message": str(ei[1]),
+                }
+            }
+        }
+        res = 1
+
+    if output:
+        if args.print_output:
+            print(json.dumps(output, indent=4))
+        if args.output:
+            f = open(args.output,"w+")
+            f.write(json.dumps(output, indent=4))
+            f.write("\n")
+            f.close()
     exit(res)

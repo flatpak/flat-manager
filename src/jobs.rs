@@ -579,13 +579,10 @@ impl PublishJobInstance {
             job_log_and_info(self.job_id, conn,
                              &format!("Piggy-backed on existing update job {}", update_job.id));
         }
-        job_log_and_info(self.job_id, conn,
-                         &format!("Follow logs at: {}/status/{}",
-                                  config.base_url, update_job.id));
 
         Ok(json!({
             "refs": commits,
-            "update-repo-job": format!("{}/api/v1/job/{}", config.base_url, update_job.id),
+            "update-repo-job": update_job.id,
         }))
     }
 }
