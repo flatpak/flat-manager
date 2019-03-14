@@ -243,7 +243,10 @@ pub fn get_build(
     req: HttpRequest<AppState>,
 ) -> FutureResponse<HttpResponse> {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "build") {
-        return From::from(e);
+        /* We allow getting a build for uploaders too, as it is similar info, and useful */
+        if !req.has_token_claims(&format!("build/{}", params.id), "upload").is_ok() {
+            return From::from(e);
+        }
     }
     db_request (&state, LookupBuild { id: params.id })
         .and_then(|build| Ok(HttpResponse::Ok().json(build)))
