@@ -297,7 +297,7 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     let state = req.state();
 
     // Strip out any "../.." or other unsafe things
-    let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
+    let relpath = PathBuf::from_param(tail.trim_start_matches('/'))?;
     // The id won't have slashes, but it could have ".." or some other unsafe thing
     let safe_id = PathBuf::from_param(&id)?;
     let path = Path::new(&state.config.build_repo_base).join(&safe_id).join(&relpath);
@@ -313,7 +313,7 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let state = req.state();
     let repoconfig = state.config.get_repoconfig(&repo)?;
     // Strip out any "../.." or other unsafe things
-    let relpath = PathBuf::from_param(tail.trim_left_matches('/'))?;
+    let relpath = PathBuf::from_param(tail.trim_start_matches('/'))?;
     let path = Path::new(&repoconfig.path).join(&relpath);
     match NamedFile::open(path) {
         Ok(file) => Ok(file),

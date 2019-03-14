@@ -280,7 +280,7 @@ pub fn parse_ref (repo_path: &path::PathBuf, ref_name: &str) ->OstreeResult<Stri
     let commit =
         fs::read_to_string(ref_dir)
         .map_err(|_e| OstreeError::NoSuchRef(ref_name.to_string()))?
-        .trim_right().to_string();
+        .trim_end().to_string();
     Ok(commit)
 }
 
