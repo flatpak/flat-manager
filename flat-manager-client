@@ -337,10 +337,12 @@ def wait_for_job(job_url, token):
             sleep_time=60
         time.sleep(sleep_time)
 
-def commit_build(build_url, wait, token):
+def commit_build(build_url, eol, wait, token):
     print("Commiting build %s" % (build_url))
     session = requests.Session()
-    resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {} )
+    resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {
+        "endoflife": eol,
+    })
     if resp.status_code != 200:
         raise ApiError(resp)
     job = resp.json()
@@ -508,7 +510,7 @@ def push_command(args):
 
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
-        commit_job = commit_build(args.build_url, args.publish or args.wait, args.token)
+        commit_job = commit_build(args.build_url, args.end_of_life, args.publish or args.wait, args.token)
 
     if args.publish:
         publish_job = publish_build(args.build_url, args.wait, args.token)
@@ -534,7 +536,7 @@ def push_command(args):
     return data
 
 def commit_command(args):
-    job = commit_build(args.build_url, args.wait, args.token)
+    job = commit_build(args.build_url, args.end_of_life, args.wait, args.token)
     return job
 
 def publish_command(args):
@@ -604,11 +606,13 @@ if __name__ == '__main__':
                              help='wait for update-repo to finish')
     push_parser.add_argument('--minimal-token', action='store_true',
                              help='Create minimal token for the upload')
+    push_parser.add_argument('--end-of-life', help='Set end of life')
     push_parser.set_defaults(func=push_command)
 
     commit_parser = subparsers.add_parser('commit', help='Commit build')
     commit_parser.add_argument('--wait', action='store_true',
                              help='wait for commit to finish')
+    commit_parser.add_argument('--end-of-life', help='Set end of life')
     commit_parser.add_argument('build_url', help='remote build url')
     commit_parser.set_defaults(func=commit_command)
 
