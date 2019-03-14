@@ -271,6 +271,7 @@ def get_job(job_url, token):
     return data
 
 def wait_for_job(job_url, token):
+    reported_delay = False
     old_job_status  = 0
     printed_len = 0
     iterations_since_change=0
@@ -285,6 +286,12 @@ def wait_for_job(job_url, token):
                 error_iterations = 0
                 job = resp.json()
                 job_status = job['status']
+                if job_status == 0 and not reported_delay:
+                    reported_delay = True
+                    start_after = job.get("start_after", {}).get("secs_since_epoch", None)
+                    now = time.time()
+                    if start_after > now:
+                        print("Waiting %d seconds before starting job" % (int(start_after - now)))
                 if job_status > 0 and old_job_status == 0:
                     print("/ Job was started");
                 old_job_status = job_status
