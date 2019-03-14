@@ -659,6 +659,7 @@ if __name__ == '__main__':
             "command": args.subparser_name,
             "result": args.func(args),
         }
+        res = 0
     except SystemExit:
         # Something called sys.exit(), lets just exit
         res = 1
