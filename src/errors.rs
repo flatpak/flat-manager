@@ -98,10 +98,10 @@ pub enum ApiError {
     #[fail(display = "BadRequest: {}", _0)]
     BadRequest(String),
 
-    #[fail(display = "WrongRepoState({}): {}", _1, _0)]
+    #[fail(display = "WrongRepoState({}): {}", _2, _0)]
     WrongRepoState(String,String,String),
 
-    #[fail(display = "WrongPublishedState({}): {}", _1, _0 )]
+    #[fail(display = "WrongPublishedState({}): {}", _2, _0 )]
     WrongPublishedState(String,String,String),
 
     #[fail(display = "InvalidToken")]
@@ -160,14 +160,14 @@ impl ApiError {
                 "error-type": "generic-error",
                 "message": message,
             }),
-            ApiError::WrongRepoState(ref message, ref state, ref expected) => json!({
+            ApiError::WrongRepoState(ref message, ref expected, ref state) => json!({
                 "status": 400,
                 "message": message,
                 "error-type": "wrong-repo-state",
                 "current-state": state,
                 "expected-state": expected,
             }),
-            ApiError::WrongPublishedState(ref message, ref state, ref expected) => json!({
+            ApiError::WrongPublishedState(ref message, ref expected, ref state) => json!({
                 "status": 400,
                 "message": message,
                 "error-type": "wrong-published-state",
