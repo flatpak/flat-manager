@@ -174,27 +174,28 @@ impl DeltaGenerator {
             }
         }
     }
-}
 
-impl Handler<DeltaRequest> for DeltaGenerator {
-    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
-
-    fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
-        let r =
-            self.outstanding.iter()
-            .find(|req| req.request == msg)
+    fn handle_request(&mut self, request: DeltaRequest, ctx: &mut Context<Self>) -> DelayedResult<(),DeltaGenerationError> {
+        self.outstanding.iter()
+            .find(|req| req.request == request)
             .map(|req| req.delayed_result.clone())
             .unwrap_or_else( || {
-                let req = QueuedRequest::new(&msg);
+                let req = QueuedRequest::new(&request);
                 let r = req.delayed_result.clone();
                 self.outstanding.push_back(req);
 
                 /* Maybe a worker can handle it directly? */
                 self.run_queue(ctx);
                 r
-            });
+            })
+    }
+}
 
-        Box::new(r.into_actor(self))
+impl Handler<DeltaRequest> for DeltaGenerator {
+    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
+
+    fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
+        Box::new(self.handle_request(msg, ctx).into_actor(self))
     }
 }
 
