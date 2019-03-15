@@ -22,14 +22,13 @@ use libc;
 use std::collections::{HashMap,HashSet};
 use std::iter::FromIterator;
 use walkdir::WalkDir;
-use futures::prelude::*;
-use futures::future;
+use std::sync::mpsc;
 
 use ostree;
 use app::{RepoConfig, Config};
 use errors::{JobError, JobResult};
 use models::{NewJob, Job, JobDependency, JobKind, CommitJob, PublishJob, UpdateRepoJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
-use deltas::{DeltaGenerator, DeltaRequest};
+use deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
 use models;
 use schema::*;
 use schema;
@@ -703,42 +702,30 @@ impl UpdateRepoJobInstance {
                        repoconfig: &RepoConfig,
                        conn: &PgConnection) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Generating deltas");
-        let join =
-            future::join_all(
-                deltas
-                    .iter()
-                    .map(|delta| {
-                        let generate_delta = delta.clone();
-                        self.delta_generator.send(DeltaRequest {
-                            repo: repoconfig.name.clone(),
-                            delta: generate_delta.clone(),
-                        })
-                            .and_then(move |response| {
-                                match response {
-                                    Ok(_) => {
-                                        job_log_and_info(self.job_id, conn,
-                                                         &format!(" {}", generate_delta.to_string()));
-                                        Ok(())
-                                    },
-                                    Err(e) => {
-                                        job_log_and_info(self.job_id, conn,
-                                                         &format!(" failed to generate {}: {}",
-                                                                  generate_delta.to_string(),
-                                                                  e));
-                                        Ok(())
-                                    },
-                                }
-                            })
-                            .or_else(move |e| {
-                                job_log_and_info(self.job_id, conn,
-                                                 &format!("Failed to request delta: {}", e));
-                                Err(e)
-                            })
-                    })
-            );
 
-        if let Err(e) = join.wait() {
-            error!("failed to request delta generation: {}", e);
+        let (tx, rx) = mpsc::channel();
+
+        /* We can't use a regular .send() here, as that requres a current task which is
+         * not available in a sync actor like this. Instead we use the non-blocking
+         * do_send and implement returns using a mpsc::channel.
+        */
+
+        for delta in deltas.iter() {
+            self.delta_generator.do_send(DeltaRequestSync {
+                delta_request: DeltaRequest {
+                    repo: repoconfig.name.clone(),
+                    delta: delta.clone(),
+                },
+                tx: tx.clone(),
+            })
+        }
+
+        for (delta, result) in rx.iter().take(deltas.len()) {
+            let message = match result {
+                Ok(()) => format!(" {}", delta.to_string()),
+                Err(e) => format!(" failed to generate {}: {}", delta.to_string(), e),
+            };
+            job_log_and_info(self.job_id, conn, &message);
         }
 
         job_log_and_info(self.job_id, conn, "All deltas generated");

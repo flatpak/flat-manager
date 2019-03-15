@@ -15,6 +15,7 @@ use actix_web::ws;
 use serde_json;
 use rand;
 use rand::prelude::IteratorRandom;
+use std::sync::mpsc;
 
 use app::AppState;
 use delayed::DelayedResult;
@@ -34,9 +35,18 @@ impl DeltaRequest {
     }
 }
 
-
 impl Message for DeltaRequest {
     type Result = Result<(), DeltaGenerationError>;
+}
+
+#[derive(Debug,Clone)]
+pub struct DeltaRequestSync {
+    pub delta_request: DeltaRequest,
+    pub tx: mpsc::Sender<(ostree::Delta, Result<(), DeltaGenerationError>)>,
+}
+
+impl Message for DeltaRequestSync {
+    type Result = Result<(), ()>;
 }
 
 #[derive(Debug)]
@@ -196,6 +206,28 @@ impl Handler<DeltaRequest> for DeltaGenerator {
 
     fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
         Box::new(self.handle_request(msg, ctx).into_actor(self))
+    }
+}
+
+impl Handler<DeltaRequestSync> for DeltaGenerator {
+    type Result = ResponseActFuture<Self, (), ()>;
+
+    fn handle(&mut self, msg: DeltaRequestSync, ctx: &mut Self::Context) -> Self::Result {
+        let request = msg.delta_request.clone();
+        let delta = request.delta.clone();
+        let tx = msg.tx.clone();
+        let r = self.handle_request(request, ctx);
+        ctx.spawn(Box::new(r
+                           .then(move |r| {
+                               if let Err(_e) = tx.send((delta, r.clone())) {
+                                   error!("Failed to reply to sync delta request");
+                               }
+                               r
+                           })
+                           .map_err(|_e| ())
+                           .into_actor(self)
+        ));
+        Box::new(actix::fut::ok(()))
     }
 }
 
