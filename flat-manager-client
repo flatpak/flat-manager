@@ -288,10 +288,12 @@ def wait_for_job(job_url, token):
                 job_status = job['status']
                 if job_status == 0 and not reported_delay:
                     reported_delay = True
-                    start_after = job.get("start_after", {}).get("secs_since_epoch", None)
-                    now = time.time()
-                    if start_after > now:
-                        print("Waiting %d seconds before starting job" % (int(start_after - now)))
+                    start_after_struct = job.get("start_after", None)
+                    if start_after_struct:
+                        start_after = start_after_struct.get("secs_since_epoch", None)
+                        now = time.time()
+                        if start_after and start_after > now:
+                            print("Waiting %d seconds before starting job" % (int(start_after - now)))
                 if job_status > 0 and old_job_status == 0:
                     print("/ Job was started");
                 old_job_status = job_status
