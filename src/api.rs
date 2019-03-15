@@ -839,6 +839,7 @@ pub fn job_status(
 #[template(path = "status.html")]
 struct Status {
     jobs: Vec<JobStatusData>,
+    version: String,
 }
 
 pub fn status(
@@ -848,7 +849,8 @@ pub fn status(
     db_request (&state, ListJobs { })
         .and_then(move |jobs| {
             let s = Status {
-                jobs: jobs.into_iter().map(job_status_data).collect()
+                jobs: jobs.into_iter().map(job_status_data).collect(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
             }.render().unwrap();
             Ok(HttpResponse::Ok().content_type("text/html").body(s))
         })
