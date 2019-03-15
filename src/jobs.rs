@@ -10,13 +10,11 @@ use filetime;
 use serde_json;
 use std::cell::RefCell;
 use std::str;
-use std::thread;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::{Arc};
-use std::sync::mpsc;
 use std::path::PathBuf;
 use std::time;
 use std::os::unix::process::CommandExt;
@@ -705,65 +703,43 @@ impl UpdateRepoJobInstance {
                        repoconfig: &RepoConfig,
                        conn: &PgConnection) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Generating deltas");
-
-        let deltas = deltas.clone();
-        let reponame =  repoconfig.name.clone();
-        let delta_generator = self.delta_generator.clone();
-
-        let (tx, rx) = mpsc::channel();
-
-        /* This is kinda hacky, but necessary. We're on a sync actor, which means
-         * we cant use Addr.send() without running into https://github.com/actix/actix/issues/178
-         * The mailbox for the delta generator is not unbounded, and send will try
-         * to park the calling current task when the destination mbox is full,
-         * and there is no current task to part.
-         *
-         * To work around this we're using a thread with a new tokio runtime, so that we get
-         * a current task.
-         */
-        thread::spawn(move || {
-            let _rt = tokio::runtime::Runtime::new().expect("Cannot create tokio runtime");
-
-            let join =
-                future::join_all(
-                    deltas
-                        .iter()
-                        .map(|delta| {
-                            let generate_delta = delta.clone();
-                            let tx = tx.clone();
-                            delta_generator.send(DeltaRequest {
-                                repo: reponame.clone(),
-                                delta: generate_delta.clone(),
-                            })
-                                .then(move |response| {
-                                    let message = match &response {
-                                        Ok(Ok(_)) => format!(" {}", delta.to_string()),
-                                        Ok(Err(e)) => format!(" failed to generate {}: {}", delta.to_string(), e),
-                                        Err(e) => format!("Failed to request delta: {}", e),
-                                    };
-
-                                    if let Err(e) = tx.send(Some(message)) {
-                                        error!("Failed to report delta generation result: {}", e);
-                                    };
-                                    response
-                                })
+        let join =
+            future::join_all(
+                deltas
+                    .iter()
+                    .map(|delta| {
+                        let generate_delta = delta.clone();
+                        self.delta_generator.send(DeltaRequest {
+                            repo: repoconfig.name.clone(),
+                            delta: generate_delta.clone(),
                         })
-                );
+                            .and_then(move |response| {
+                                match response {
+                                    Ok(_) => {
+                                        job_log_and_info(self.job_id, conn,
+                                                         &format!(" {}", generate_delta.to_string()));
+                                        Ok(())
+                                    },
+                                    Err(e) => {
+                                        job_log_and_info(self.job_id, conn,
+                                                         &format!(" failed to generate {}: {}",
+                                                                  generate_delta.to_string(),
+                                                                  e));
+                                        Ok(())
+                                    },
+                                }
+                            })
+                            .or_else(move |e| {
+                                job_log_and_info(self.job_id, conn,
+                                                 &format!("Failed to request delta: {}", e));
+                                Err(e)
+                            })
+                    })
+            );
 
-            if let Err(e) = join.wait() {
-                error!("failed to request delta generation: {}", e);
-            }
-            if let Err(e) = tx.send(None) {
-                error!("Failed to signal delta generation end: {}", e);
-            };
-        });
-
-        for m in rx.iter() {
-            match m {
-                Some(message) => job_log_and_info(self.job_id, conn, &message),
-                None => break,
-            }
-         }
+        if let Err(e) = join.wait() {
+            error!("failed to request delta generation: {}", e);
+        }
 
         job_log_and_info(self.job_id, conn, "All deltas generated");
 
