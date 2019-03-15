@@ -1,6 +1,6 @@
 [package]
 name = "flat-manager"
-version = "0.3.1"
+version = "0.3.2"
 authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
 license = "MIT OR Apache-2.0"
 # Needs nightly, so disable for now:
