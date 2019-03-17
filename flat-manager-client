@@ -315,7 +315,7 @@ def wait_for_job(job_url, token):
                 iterations_since_change=4 # Start at 4 so we ramp up the delay faster
                 error_iterations=error_iterations + 1
                 if error_iterations <= 5:
-                    print("Unexpected repsonse %s getting job log, ignoring" % resp.status_code)
+                    print("Unexpected response %s getting job log, ignoring" % resp.status_code)
                 else:
                     raise ApiError(resp)
 
