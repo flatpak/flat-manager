@@ -40,6 +40,10 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const SERVER_TIMEOUT: Duration = Duration::from_secs(60);
 const CONNECTION_RETRY_DELAY: Duration = Duration::from_secs(10);
 
+const UPLOAD_BUFFER_CAPACITY_BYTES: usize = 512 * 1024;
+// Delta uploads can be slow, so don't timeout unnecessary
+const UPLOAD_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 // Prune once a day
 const PRUNE_INTERVAL: Duration = Duration::from_secs(60*60*24);
 
@@ -230,6 +234,8 @@ pub fn upload_delta(fs_pool: &FsPool,
         client::ClientRequest::build()
             .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={}", mpart.get_boundary()))
             .header(header::AUTHORIZATION, format!("Bearer {}", token))
+            .write_buffer_capacity(UPLOAD_BUFFER_CAPACITY_BYTES)
+            .timeout(UPLOAD_TIMEOUT)
             .uri(&url)
             .method(http::Method::POST)
             .body(actix_web::Body::Streaming(Box::new(mpart.from_err())))
