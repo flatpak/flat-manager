@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "flat-manager"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "actix 0.7.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "actix-net 0.2.6 (registry+https://github.com/rust-lang/crates.io-index)",
