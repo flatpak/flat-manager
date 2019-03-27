@@ -6,6 +6,10 @@ license = "MIT OR Apache-2.0"
 # Needs nightly, so disable for now:
 # default-run = "repo-manager"
 
+[profile.release]
+# include debug-symbols in release builds
+debug = true
+
 [lib]
 name = "flatmanager"
 path = "src/lib.rs"
