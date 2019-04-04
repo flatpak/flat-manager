@@ -340,7 +340,7 @@ def wait_for_job(job_url, token):
         time.sleep(sleep_time)
 
 def commit_build(build_url, eol, wait, token):
-    print("Commiting build %s" % (build_url))
+    print("Committing build %s" % (build_url))
     session = requests.Session()
     resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {
         "endoflife": eol,
@@ -599,7 +599,7 @@ if __name__ == '__main__':
     push_parser.add_argument('--commit', action='store_true',
                              help='commit build after pushing')
     push_parser.add_argument('--publish', action='store_true',
-                             help='publish build after commiting')
+                             help='publish build after committing')
     push_parser.add_argument('--extra-id', action='append', help='add extra collection-id')
     push_parser.add_argument('--ignore-delta', action='append', help='don\'t upload deltas matching this glob')
     push_parser.add_argument('--wait', action='store_true',

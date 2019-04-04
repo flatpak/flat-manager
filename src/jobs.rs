@@ -376,7 +376,7 @@ impl CommitJobInstance {
                 .arg(&build_repo_path)
                 .arg(&build_ref.ref_name);
 
-            job_log_and_info(self.job_id, conn, &format!("Commiting ref {} ({})", build_ref.ref_name, build_ref.commit));
+            job_log_and_info(self.job_id, conn, &format!("Committing ref {} ({})", build_ref.ref_name, build_ref.commit));
             do_command(cmd)?;
 
             let commit = ostree::parse_ref(&build_repo_path, &build_ref.ref_name)?;
