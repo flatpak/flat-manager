@@ -50,6 +50,7 @@ fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf,
 r#"[core]
 repo_version=1
 mode=archive-z2
+min-free-space-size=500MB
 {}parent={}"#,
                            match opt_collection_id {
                                Some(collection_id) => format!("collection-id={}.Build{}\n", collection_id, build_id),
