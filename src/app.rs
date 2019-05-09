@@ -1,5 +1,6 @@
 use actix::prelude::*;
-use actix_web::{self, App, http::Method, HttpRequest, fs::NamedFile};
+use actix_web::{self, App, http::Method, HttpRequest, fs::NamedFile,
+                error::ErrorNotFound};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -301,9 +302,16 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     // The id won't have slashes, but it could have ".." or some other unsafe thing
     let safe_id = PathBuf::from_param(&id)?;
     let path = Path::new(&state.config.build_repo_base).join(&safe_id).join(&relpath);
+    if path.is_dir() {
+        return Err(ErrorNotFound("Ignoring directory"));
+    }
     NamedFile::open(path).or_else(|_e| {
         let fallback_path = Path::new(&state.config.build_repo_base).join(&safe_id).join("parent").join(&relpath);
-        Ok(NamedFile::open(fallback_path)?)
+        if fallback_path.is_dir() {
+            Err(ErrorNotFound("Ignoring directory"))
+        } else {
+            Ok(NamedFile::open(fallback_path)?)
+        }
     })
 }
 
@@ -315,13 +323,20 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     // Strip out any "../.." or other unsafe things
     let relpath = PathBuf::from_param(tail.trim_start_matches('/'))?;
     let path = Path::new(&repoconfig.path).join(&relpath);
+    if path.is_dir() {
+        return Err(ErrorNotFound("Ignoring directory"));
+    }
     match NamedFile::open(path) {
         Ok(file) => Ok(file),
         Err(e) => {
             // Was this a delta, if so check the deltas queued for deletion
             if relpath.starts_with("deltas") {
                 let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
-                Ok(NamedFile::open(tmp_path)?)
+                if tmp_path.is_dir() {
+                    Err(ErrorNotFound("Ignoring directory"))
+                } else {
+                    Ok(NamedFile::open(tmp_path)?)
+                }
             } else {
                 Err(e)?
             }
