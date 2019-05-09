@@ -382,10 +382,8 @@ pub fn create_app(
                 .resource("/delta/worker", |r| r.route().f(api::ws_delta))
                 .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with(api::delta_upload))
         })
-        .scope("/build-repo/{id}", |scope| {
-            scope.handler("/", |req: &HttpRequest<AppState>| handle_build_repo(req))
-        })
-        .handler("/repo/{repo}/", |req: &HttpRequest<AppState>| handle_repo(req))
+        .resource("/build-repo/{id}/{tail:.*}", |r| r.f(handle_build_repo))
+        .resource("/repo/{repo}/{tail:.*}", |r| r.f(handle_repo))
         .resource("/status", |r| r.method(Method::GET).with(api::status))
         .resource("/status/{id}", |r| r.method(Method::GET).with(api::job_status))
 }
