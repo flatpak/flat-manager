@@ -1,6 +1,6 @@
 use actix::prelude::*;
-use actix_web::{self, App, http::Method, HttpRequest, fs::NamedFile,
-                error::ErrorNotFound};
+use actix_web::{self, App, http::Method, HttpRequest, HttpResponse,
+                fs::NamedFile, error::ErrorNotFound};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -382,8 +382,16 @@ pub fn create_app(
                 .resource("/delta/worker", |r| r.route().f(api::ws_delta))
                 .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with(api::delta_upload))
         })
-        .resource("/build-repo/{id}/{tail:.*}", |r| r.f(handle_build_repo))
-        .resource("/repo/{repo}/{tail:.*}", |r| r.f(handle_repo))
+        .resource("/build-repo/{id}/{tail:.*}", |r| {
+            r.get().f(handle_build_repo);
+            r.head().f(handle_build_repo);
+            r.f(|_| HttpResponse::MethodNotAllowed())
+        })
+        .resource("/repo/{repo}/{tail:.*}", |r| {
+            r.get().f(handle_repo);
+            r.head().f(handle_repo);
+            r.f(|_| HttpResponse::MethodNotAllowed())
+        })
         .resource("/status", |r| r.method(Method::GET).with(api::status))
         .resource("/status/{id}", |r| r.method(Method::GET).with(api::job_status))
 }
