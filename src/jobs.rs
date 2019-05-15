@@ -101,6 +101,15 @@ IsRuntime=false
 Url={}
 "#, app_id, branch, title, url);
 
+    /* We only want to deploy the collection ID if the flatpakref is being generated for the main
+     * repo not a build repo.
+     */
+    if let Some(collection_id) = &repoconfig.collection_id {
+        if repoconfig.deploy_collection_id && maybe_build_id == None {
+            contents.push_str(&format!("DeployCollectionID={}\n", collection_id));
+        }
+    };
+
     if maybe_build_id == None {
         if let Some(suggested_name) = &repoconfig.suggested_repo_name {
             contents.push_str(&format!("SuggestRemoteName={}\n", suggested_name));
