@@ -3,7 +3,7 @@ use actix_web::middleware::{Middleware, Started, Finished};
 use actix_web::http::header::{HeaderValue, AUTHORIZATION};
 use jwt::{decode, Validation};
 
-use app::Claims;
+use app::{AppState,Claims};
 use errors::ApiError;
 
 pub trait ClaimsValidator {
@@ -151,8 +151,8 @@ impl TokenParser {
     }
 }
 
-impl<S: 'static> Middleware<S> for TokenParser {
-    fn start(&self, req: &HttpRequest<S>) -> Result<Started> {
+impl Middleware<AppState> for TokenParser {
+    fn start(&self, req: &HttpRequest<AppState>) -> Result<Started> {
         let header = req.headers().get(AUTHORIZATION).ok_or(ApiError::InvalidToken)?;
         let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
@@ -162,7 +162,7 @@ impl<S: 'static> Middleware<S> for TokenParser {
         Ok(Started::Done)
     }
 
-    fn finish(&self, req: &HttpRequest<S>, resp: &HttpResponse) -> Finished {
+    fn finish(&self, req: &HttpRequest<AppState>, resp: &HttpResponse) -> Finished {
         if resp.status() == 401 {
             if let Some(ref claims) = req.get_claims() {
                 info!("Presented: {:?}", claims);
