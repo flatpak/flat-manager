@@ -153,6 +153,15 @@ impl TokenParser {
 
 impl Middleware<AppState> for TokenParser {
     fn start(&self, req: &HttpRequest<AppState>) -> Result<Started> {
+        if req.resource().name() == "repo" {
+            let repo : String = req.match_info().query("repo")?;
+            let state = req.state();
+            let repoconfig = state.config.get_repoconfig(&repo)?;
+            if !repoconfig.private {
+                return Ok(Started::Done);
+            }
+        }
+
         let header = req.headers().get(AUTHORIZATION).ok_or(ApiError::InvalidToken)?;
         let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
