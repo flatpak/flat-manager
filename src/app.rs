@@ -18,7 +18,7 @@ use num_cpus;
 use errors::ApiError;
 use api;
 use deltas::DeltaGenerator;
-use tokens::{TokenParser};
+use tokens::{ClaimsValidator, TokenParser};
 use jobs::{JobQueue};
 use actix_web::dev::FromParam;
 use logger::Logger;
@@ -324,6 +324,17 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let repo: String = req.match_info().query("repo")?;
     let state = req.state();
     let repoconfig = state.config.get_repoconfig(&repo)?;
+
+    // If the repo is private, ensure a valid token
+    if repoconfig.private {
+        if let Err(e) = req.has_token_claims("repo", "read") {
+            return Err(From::from(e));
+        }
+        if let Err(e) = req.has_token_repo(&repo) {
+            return Err(From::from(e));
+        }
+    }
+
     // Strip out any "../.." or other unsafe things
     let relpath = PathBuf::from_param(tail.trim_start_matches('/'))?;
     let path = Path::new(&repoconfig.path).join(&relpath);
