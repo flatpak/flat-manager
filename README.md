@@ -70,6 +70,10 @@ PostgreSQL, do something like:
     sudo postgresql-setup --initdb --unit postgresql
     sudo systemctl start postgresql
 
+On Debian-based systems:
+
+   sudo apt install postgresql
+
 And create the `repo` database owned by your user:
 
     sudo -u postgres createuser $(whoami)
