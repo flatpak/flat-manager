@@ -128,10 +128,11 @@ To start the server, run:
 
 It will listen on port 8080 by default.
 
-To test adding something to the repository, you can try building a simple
-app and exporting it to a repository. This would normally happen on a
-different machine than the one serving the repository, but for testing
-we can just do it in a subdirectory:
+To test adding something to the repository, you can try building a
+simple app and exporting it to a repository. Use a recent version of
+flatpak and flatpak-builer to make sure you can build from Yaml files.
+This would normally happen on a different machine than the one serving
+the repository, but for testing we can just do it in a subdirectory:
 
     mkdir test-build
     cd test-build
