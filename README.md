@@ -1,11 +1,11 @@
- # flat-manager
+# flat-manager
 
 flat-manager serves and maintains a Flatpak repository. You point it
 at an ostree repository and it will allow Flatpak clients to install
 apps from the repository over HTTP. Additionally, it has an HTTP API
 that lets you upload new builds and manage the repository.
 
-## Building the server 
+## Building the server
 
 The server is written in Rust, so you need to have Rust and Cargo
 installed. Everything works with the stable version of Rust,
@@ -134,10 +134,11 @@ To start the server, run:
 
 It will listen on port 8080 by default.
 
-To test adding something to the repository, you can try building a simple
-app and exporting it to a repository. This would normally happen on a
-different machine than the one serving the repository, but for testing
-we can just do it in a subdirectory:
+To test adding something to the repository, you can try building a
+simple app and exporting it to a repository. Use a recent version of
+flatpak and flatpak-builer to make sure you can build from Yaml files.
+This would normally happen on a different machine than the one serving
+the repository, but for testing we can just do it in a subdirectory:
 
     mkdir test-build
     cd test-build
