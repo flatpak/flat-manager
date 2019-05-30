@@ -123,16 +123,16 @@ impl TokenParser {
     fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ApiError> {
         // "Bearer *" length
         if header.len() < 8 {
-            return Err(ApiError::InvalidToken);
+            return Err(ApiError::InvalidToken("Header length too short".to_string()));
         }
 
-        let mut parts = header.to_str().or(Err(ApiError::InvalidToken))?.splitn(2, ' ');
+        let mut parts = header.to_str().or(Err(ApiError::InvalidToken("Cannot convert header to string".to_string())))?.splitn(2, ' ');
         match parts.next() {
             Some(scheme) if scheme == "Bearer" => (),
-            _ => return Err(ApiError::InvalidToken),
+            _ => return Err(ApiError::InvalidToken("Token scheme is not Bearer".to_string())),
         }
 
-        let token = parts.next().ok_or(ApiError::InvalidToken)?;
+        let token = parts.next().ok_or(ApiError::InvalidToken("No token value in header".to_string()))?;
 
         Ok(token.to_string())
     }
@@ -144,7 +144,7 @@ impl TokenParser {
 
         let token_data = match decode::<Claims>(&token, &self.secret, &validation) {
             Ok(c) => c,
-            Err(_err) => return Err(ApiError::InvalidToken),
+            Err(_err) => return Err(ApiError::InvalidToken("Invalid token claims".to_string())),
         };
 
         Ok(token_data.claims)
@@ -153,7 +153,7 @@ impl TokenParser {
 
 impl Middleware<AppState> for TokenParser {
     fn start(&self, req: &HttpRequest<AppState>) -> Result<Started> {
-        let header = req.headers().get(AUTHORIZATION).ok_or(ApiError::InvalidToken)?;
+        let header = req.headers().get(AUTHORIZATION).ok_or(ApiError::InvalidToken("No Authorization header".to_string()))?;
         let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
 

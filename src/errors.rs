@@ -104,8 +104,8 @@ pub enum ApiError {
     #[fail(display = "WrongPublishedState({}): {}", _2, _0 )]
     WrongPublishedState(String,String,String),
 
-    #[fail(display = "InvalidToken")]
-    InvalidToken,
+    #[fail(display = "InvalidToken: {}", _0)]
+    InvalidToken(String),
 
     #[fail(display = "NotEnoughPermissions")]
     NotEnoughPermissions(String),
@@ -174,10 +174,10 @@ impl ApiError {
                 "current-state": state,
                 "expected-state": expected,
             }),
-            ApiError::InvalidToken => json!({
+            ApiError::InvalidToken(ref message) => json!({
                 "status": 401,
                 "error-type": "invalid-token",
-                "message": "Invalid token",
+                "message": message,
             }),
             ApiError::NotEnoughPermissions(ref message) => json!({
                 "status": 401,
@@ -195,7 +195,7 @@ impl ApiError {
             ApiError::BadRequest(ref _message) => StatusCode::BAD_REQUEST,
             ApiError::WrongRepoState(_,_,_) => StatusCode::BAD_REQUEST,
             ApiError::WrongPublishedState(_,_,_) => StatusCode::BAD_REQUEST,
-            ApiError::InvalidToken => StatusCode::UNAUTHORIZED,
+            ApiError::InvalidToken(_) => StatusCode::UNAUTHORIZED,
             ApiError::NotEnoughPermissions(ref _message) => StatusCode::UNAUTHORIZED,
         }
     }
