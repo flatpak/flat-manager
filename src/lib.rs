@@ -28,6 +28,8 @@ extern crate time;
 extern crate tokio;
 extern crate tokio_process;
 extern crate rand;
+extern crate glib;
+extern crate glib_sys;
 
 mod api;
 mod app;

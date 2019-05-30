@@ -1,9 +1,10 @@
 use base64;
 use byteorder::{NativeEndian,LittleEndian, ByteOrder};
 use std::fs;
-use std::io::Read;
+use std::io::{ErrorKind as IoErrorKind, Read};
 use std::num::NonZeroUsize;
 use std::path;
+use std::ptr;
 use std::str;
 use walkdir::WalkDir;
 use hex;
@@ -14,6 +15,9 @@ use futures::Future;
 use futures::future::Either;
 use std::path::{PathBuf};
 use futures::future;
+use glib_sys;
+use glib::translate::*;
+use glib::{Bytes, VariantType};
 
 #[derive(Fail, Debug, Clone, PartialEq)]
 pub enum OstreeError {
@@ -21,6 +25,8 @@ pub enum OstreeError {
     NoSuchRef(String),
     #[fail(display = "No such commit: {}", _0)]
     NoSuchCommit(String),
+    #[fail(display = "No such object: {}", _0)]
+    NoSuchObject(String),
     #[fail(display = "Invalid utf8 string")]
     InvalidUtf8,
     #[fail(display = "Command {} failed to start: {}", _0, _1)]
@@ -371,6 +377,134 @@ impl Delta {
                 self.from.as_ref().unwrap_or(&"nothing".to_string()),
                 self.to)
     }
+}
+
+// See ostree-core.h
+const OSTREE_COMMIT_GVARIANT_STRING: &str = "(a{sv}aya(say)sstayay)";
+// See ostree-repo-static-delta-private.h
+const OSTREE_STATIC_DELTA_SUPERBLOCK_FORMAT: &str = concat!(
+    "(",
+    // Delta metadata, timestamp, from checksum, to checksum
+    "a{sv}tayay",
+    // Commit object (OSTREE_COMMIT_GVARIANT_STRING)
+    "(a{sv}aya(say)sstayay)",
+    // Prerequisite deltas
+    "ay",
+    // Delta objects (OSTREE_STATIC_DELTA_META_ENTRY_FORMAT)
+    "a(uayttay)",
+    // Fallback objects (OSTREE_STATIC_DELTA_FALLBACK_FORMAT)
+    "a(yaytt)",
+    ")"
+);
+
+pub struct CommitBindings {
+    pub refs: Option<Vec<String>>,
+    pub collection: Option<String>,
+}
+
+fn get_commit_ref_bindings(metadata: &*mut glib_sys::GVariant) -> Option<Vec<String>> {
+    let binding_vtype = VariantType::new("as")
+        .expect("Could not generate VariantType");
+    let binding_variant = unsafe {
+        glib_sys::g_variant_lookup_value(*metadata,
+                                         "ostree.ref-binding".to_glib_none().0,
+                                         binding_vtype.to_glib_none().0)
+    };
+    if binding_variant.is_null() {
+        None
+    } else {
+        unsafe {
+            let strv = glib_sys::g_variant_get_strv(binding_variant,
+                                                    ptr::null_mut());
+            let ret = FromGlibPtrContainer::from_glib_none(strv);
+            glib_sys::g_free(strv as *mut _);
+            Some(ret)
+        }
+    }
+}
+
+fn get_commit_collection_binding(metadata: &*mut glib_sys::GVariant) -> Option<String> {
+    let binding_vtype = VariantType::new("s")
+        .expect("Could not generate VariantType");
+    let binding_variant = unsafe {
+        glib_sys::g_variant_lookup_value(*metadata,
+                                         "ostree.collection-binding".to_glib_none().0,
+                                         binding_vtype.to_glib_none().0)
+    };
+    if binding_variant.is_null() {
+        None
+    } else {
+        unsafe {
+            Some(from_glib_none(glib_sys::g_variant_get_string(binding_variant,
+                                                               ptr::null_mut())))
+        }
+    }
+}
+
+fn get_commit_variant_bindings(commit: &*mut glib_sys::GVariant) -> CommitBindings {
+    let metadata = unsafe {
+        glib_sys::g_variant_get_child_value(*commit, 0)
+    };
+    let refs = get_commit_ref_bindings(&metadata);
+    let collection = get_commit_collection_binding(&metadata);
+    unsafe { glib_sys::g_variant_unref(metadata) };
+    CommitBindings {
+        refs: refs,
+        collection: collection,
+    }
+}
+
+fn validate_variant(variant: &*mut glib_sys::GVariant, vtype: &VariantType) -> OstreeResult<()> {
+    unsafe {
+        if !from_glib::<glib_sys::gboolean, bool>(glib_sys::g_variant_is_normal_form(*variant)) {
+            return Err(OstreeError::InternalError("Variant not in normal form".to_string()));
+        }
+        if !from_glib::<glib_sys::gboolean, bool>(glib_sys::g_variant_is_of_type(*variant, vtype.to_glib_none().0)) {
+            return Err(OstreeError::InternalError(format!("Variant doesn't match type {}", vtype)));
+        }
+    }
+    Ok(())
+}
+
+pub fn get_commit_bindings(commit_path: &path::Path) -> OstreeResult<CommitBindings> {
+    let contents = fs::read(commit_path).map_err(|e| match e.kind() {
+        IoErrorKind::NotFound => OstreeError::NoSuchObject(commit_path.to_string_lossy().into_owned()),
+        _ => OstreeError::InternalError(format!("Invalid commit object '{}: {}'",
+                                                commit_path.to_string_lossy().into_owned(), e)),
+    })?;
+    let bytes = Bytes::from_owned(contents);
+    let vtype = VariantType::new(OSTREE_COMMIT_GVARIANT_STRING)
+        .expect("Could not generate VariantType");
+    let commit = unsafe { glib_sys::g_variant_new_from_bytes(
+        vtype.to_glib_none().0,
+        bytes.to_glib_none().0,
+        false.to_glib()
+    )};
+    validate_variant(&commit, &vtype)?;
+    Ok(get_commit_variant_bindings(&commit))
+}
+
+pub fn get_delta_superblock_bindings(delta_path: &path::Path) -> OstreeResult<CommitBindings> {
+    let contents = fs::read(delta_path).map_err(|e| match e.kind() {
+        IoErrorKind::NotFound => OstreeError::NoSuchObject(delta_path.to_string_lossy().into_owned()),
+        _ => OstreeError::InternalError(format!("Invalid delta object '{}: {}'",
+                                                delta_path.to_string_lossy().into_owned(), e)),
+    })?;
+    let bytes = Bytes::from_owned(contents);
+    let vtype = VariantType::new(OSTREE_STATIC_DELTA_SUPERBLOCK_FORMAT)
+        .expect("Could not generate VariantType");
+    let delta = unsafe { glib_sys::g_variant_new_from_bytes(
+        vtype.to_glib_none().0,
+        bytes.to_glib_none().0,
+        false.to_glib()
+    )};
+    validate_variant(&delta, &vtype)?;
+    let commit = unsafe {
+        glib_sys::g_variant_get_child_value(delta, 4)
+    };
+    let bindings = get_commit_variant_bindings(&commit);
+    unsafe { glib_sys::g_variant_unref(commit) };
+    Ok(bindings)
 }
 
 #[cfg(test)]

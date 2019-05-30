@@ -15,9 +15,10 @@ or your distribution. On Fedora:
     sudo dnf install cargo
 
 PostgreSQL is used for the database, so the Postgres client libraries
-need to be installed first. On Fedora, this is done with:
+need to be installed first. GLib is used to parse OSTree GVariants, so it
+must also be installed. On Fedora, this is done with:
 
-    sudo dnf install postgresql-devel
+    sudo dnf install postgresql-devel glib-devel
 
 Then build the server by running:
 
