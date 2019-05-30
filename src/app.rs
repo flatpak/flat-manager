@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::io;
 use std;
 use std::process::{Command};
+use std::ffi::OsStr;
 use serde;
 use serde_json;
 use serde::Deserialize;
@@ -17,6 +18,7 @@ use num_cpus;
 
 use errors::ApiError;
 use api;
+use ostree;
 use deltas::DeltaGenerator;
 use tokens::{ClaimsValidator, TokenParser};
 use jobs::{JobQueue};
@@ -319,6 +321,40 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     })
 }
 
+fn repo_file_allowed(req: &HttpRequest<AppState>, file: &NamedFile) -> Result<(), ApiError> {
+    let path = file.path();
+
+    let bindings;
+    if path.extension().and_then(OsStr::to_str) == Some("commit") {
+        bindings = ostree::get_commit_bindings(path)
+            .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+    } else if path.file_name().and_then(OsStr::to_str) == Some("superblock") {
+        bindings = ostree::get_delta_superblock_bindings(path)
+            .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+    } else {
+        // Not a commit or delta superblock
+        return Ok(());
+    }
+
+    // See if any of the bound refs match the specified prefixes
+    let mut err = Err(ApiError::NotEnoughPermissions("No ref bindings in commit".to_string()));
+    for ref_binding in bindings.refs.unwrap_or_default().iter() {
+        // Some refs are always allowed
+        if ref_binding == "ostree-metadata" ||
+            ref_binding.starts_with("appstream/") ||
+            ref_binding.starts_with("appstream2/")
+        {
+            return Ok(());
+        }
+
+        match req.has_token_prefix(ref_binding) {
+            Ok(()) => return Ok(()),
+            Err(e) => err = Err(e),
+        }
+    }
+    err
+}
+
 fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let tail: String = req.match_info().query("tail")?;
     let repo: String = req.match_info().query("repo")?;
@@ -341,7 +377,7 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
-    match NamedFile::open(path) {
+    let named_file = match NamedFile::open(path) {
         Ok(file) => Ok(file),
         Err(e) => {
             // Was this a delta, if so check the deltas queued for deletion
@@ -356,7 +392,15 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
                 Err(e)?
             }
         },
+    }?;
+
+    // If the repo is private and a commit or delta superblock have been
+    // requested, ensure that the token has appropriate claims
+    if repoconfig.private {
+        repo_file_allowed(req, &named_file)?;
     }
+
+    Ok(named_file)
 }
 
 pub fn create_app(
