@@ -180,7 +180,7 @@ impl ApiError {
                 "message": message,
             }),
             ApiError::NotEnoughPermissions(ref message) => json!({
-                "status": 401,
+                "status": 403,
                 "error-type": "token-insufficient",
                 "message": format!("Not enough permissions: {})", message),
             }),
@@ -196,7 +196,7 @@ impl ApiError {
             ApiError::WrongRepoState(_,_,_) => StatusCode::BAD_REQUEST,
             ApiError::WrongPublishedState(_,_,_) => StatusCode::BAD_REQUEST,
             ApiError::InvalidToken(_) => StatusCode::UNAUTHORIZED,
-            ApiError::NotEnoughPermissions(ref _message) => StatusCode::UNAUTHORIZED,
+            ApiError::NotEnoughPermissions(ref _message) => StatusCode::FORBIDDEN,
         }
     }
 }
