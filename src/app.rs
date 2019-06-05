@@ -1,6 +1,8 @@
 use actix::prelude::*;
 use actix_web::{self, App, http::Method, HttpRequest, HttpResponse,
                 fs::NamedFile, error::ErrorNotFound};
+use actix_web::http::header::{CACHE_CONTROL, HeaderValue};
+use actix_web::middleware::{Middleware, Response};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -321,6 +323,29 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     })
 }
 
+struct RepoHeaders;
+
+impl Middleware<AppState> for RepoHeaders {
+    fn response(&self, req: &HttpRequest<AppState>, mut resp: HttpResponse) -> actix_web::Result<Response> {
+        let repo: String = req.match_info().query("repo")?;
+        let tail: String = req.match_info().query("tail")?;
+        let state = req.state();
+        let repoconfig = state.config.get_repoconfig(&repo)?;
+
+        // If the repo is private, set the Cache-Control header for
+        // commit and delta superblock objects to no-store so that CDNs
+        // don't cache them
+        if repoconfig.private &&
+            (tail.ends_with(".commit") || tail.ends_with("/superblock"))
+        {
+            resp.headers_mut().insert(CACHE_CONTROL,
+                                      HeaderValue::from_static("no-store"));
+        }
+
+        Ok(Response::Done(resp))
+    }
+}
+
 fn repo_file_allowed(req: &HttpRequest<AppState>, file: &NamedFile) -> Result<(), ApiError> {
     let path = file.path();
 
@@ -449,6 +474,7 @@ pub fn create_app(
         .scope("/repo", |scope| {
             scope
                 .middleware(TokenParser::new(&config.secret))
+                .middleware(RepoHeaders)
                 .resource("/{repo}/{tail:.*}", |r| {
                     r.name("repo");
                     r.get().f(handle_repo);
