@@ -148,6 +148,8 @@ pub struct RepoConfig {
     pub suggested_repo_name: Option<String>,
     pub path: PathBuf,
     pub collection_id: Option<String>,
+    #[serde(default)]
+    pub deploy_collection_id: bool,
     pub gpg_key: Option<String>,
     #[serde(skip)]
     pub gpg_key_content: Option<String>,
