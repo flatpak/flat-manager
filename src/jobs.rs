@@ -331,6 +331,7 @@ struct CommitJobInstance {
     pub job_id: i32,
     pub build_id: i32,
     pub endoflife: Option<String>,
+    pub endoflife_rebase: Option<String>,
 }
 
 impl CommitJobInstance {
@@ -340,6 +341,7 @@ impl CommitJobInstance {
                 job_id: job.id,
                 build_id: commit_job.build,
                 endoflife: commit_job.endoflife,
+                endoflife_rebase: commit_job.endoflife_rebase,
             })
         } else {
             InvalidJobInstance::new(job, JobError::new("Can't parse commit job"))
@@ -359,6 +361,16 @@ impl CommitJobInstance {
 
         let mut commits = HashMap::new();
 
+        let endoflife_rebase_arg = if let Some(endoflife_rebase) = &self.endoflife_rebase {
+            if let Some(app_ref) = build_refs.iter().filter(|app_ref| app_ref.ref_name.starts_with("app/")).nth(0) {
+                Some(format!("--end-of-life-rebase={}={}", app_ref.ref_name.split('/').nth(1).unwrap(), endoflife_rebase))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         for build_ref in build_refs.iter() {
             let mut src_ref_arg = String::from("--src-ref=");
             src_ref_arg.push_str(&build_ref.commit);
@@ -377,6 +389,11 @@ impl CommitJobInstance {
             if let Some(endoflife) = &self.endoflife {
                 cmd
                     .arg(format!("--end-of-life={}", endoflife));
+            };
+
+            if let Some(endoflife_rebase_arg) = &endoflife_rebase_arg {
+                cmd
+                    .arg(&endoflife_rebase_arg);
             };
 
             cmd
@@ -422,8 +439,8 @@ impl JobInstance for CommitJobInstance {
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("#{}: Handling Job Commit: build: {}, end-of-life: {}",
-              &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()));
+        info!("#{}: Handling Job Commit: build: {}, end-of-life: {}, eol-rebase: {}",
+              &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()), self.endoflife_rebase.as_ref().unwrap_or(&"".to_string()));
 
         let config = &executor.config;
 

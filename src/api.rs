@@ -666,6 +666,7 @@ pub fn get_commit_job(
 #[derive(Deserialize)]
 pub struct CommitArgs {
     endoflife: Option<String>,
+    endoflife_rebase: Option<String>,
 }
 
 pub fn commit(
@@ -687,6 +688,7 @@ pub fn commit(
                         StartCommitJob {
                             id: build_id,
                             endoflife: args.endoflife.clone(),
+                            endoflife_rebase: args.endoflife_rebase.clone(),
                         })
         })
         .and_then(move |job| {
