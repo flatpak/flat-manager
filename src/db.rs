@@ -307,6 +307,7 @@ impl Handler<DbRequestWrapper<ListJobs>> for DbExecutor {
 pub struct StartCommitJob {
     pub id: i32,
     pub endoflife: Option<String>,
+    pub endoflife_rebase: Option<String>,
 }
 
 impl DbRequest for StartCommitJob {
@@ -341,6 +342,7 @@ impl Handler<DbRequestWrapper<StartCommitJob>> for DbExecutor {
                     contents: json!(CommitJob {
                         build: msg.0.id,
                         endoflife: msg.0.endoflife,
+                        endoflife_rebase: msg.0.endoflife_rebase,
                     }).to_string(),
                 })
                 .get_result::<Job>(conn)?;

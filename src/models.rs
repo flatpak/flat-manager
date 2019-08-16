@@ -230,6 +230,7 @@ pub struct JobDependencyWithStatus {
 pub struct CommitJob {
     pub build: i32,
     pub endoflife: Option<String>,
+    pub endoflife_rebase: Option<String>,
 }
 
 
