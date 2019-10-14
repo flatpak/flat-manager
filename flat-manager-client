@@ -14,6 +14,8 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
+import aiohttp
+import asyncio
 import requests
 import gzip
 import base64
@@ -42,11 +44,6 @@ DEFAULT_LIMIT = 2 ** 16
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
-def try_get_json(response):
-    try:
-        return resp.json()
-    except:
-        return {}
 
 class UsageException(Exception):
     def __init__(self, msg):
@@ -90,6 +87,39 @@ class NamedFilePart:
         with open(self.filename, 'rb') as content_file:
             content = content_file.read()
             file_dict[self.objectname] = (self.objectname, content, 'application/octet-stream')
+
+# This is similar to the regular payload, but opens the file lazily
+class AsyncNamedFilePart(aiohttp.payload.Payload):
+    def __init__(self,
+                 value,
+                 disposition='attachment',
+                 *args,
+                 **kwargs):
+        self._file = None
+        if 'filename' not in kwargs:
+            kwargs['filename'] = os.path.basename(value)
+
+        super().__init__(value, *args, **kwargs)
+
+        if self._filename is not None and disposition is not None:
+            self.set_content_disposition(disposition, filename=self._filename)
+
+        self._size = os.stat(value).st_size
+
+    async def write(self, writer):
+        if self._file is None:
+            self._file = open(self._value, 'rb')
+        try:
+            chunk = self._file.read(DEFAULT_LIMIT)
+            while chunk:
+                await writer.write(chunk)
+                chunk = self._file.read(DEFAULT_LIMIT)
+        finally:
+            self._file.close()
+
+    @property
+    def size(self):
+        return self._size
 
 def ostree_object_path(repo, obj):
     repodir = repo.get_path().get_path()
@@ -186,16 +216,17 @@ def missing_objects(build_url, token, wanted):
         missing.extend(data["missing"])
     return missing
 
-def upload_files(build_url, token, files):
+async def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
-    print("Uploading %d objects (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size(), files))))
-    file_dict = {}
-    for f in files:
-        f.add_to_dict(file_dict)
-    session = requests.Session()
-    resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
-    if resp.status_code != 200:
+    print("Uploading %d objects (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size, files))))
+    with aiohttp.MultipartWriter() as writer:
+        for f in files:
+            writer.append(f)
+    writer.headers['Authorization'] = 'Bearer ' + token
+    resp = await session.request("post", build_url + '/upload',
+                                 data=writer, headers=writer.headers)
+    if resp.status != 200:
         raise ApiError(resp)
 
 def upload_deltafile(build_url, token, f):
@@ -206,28 +237,30 @@ def upload_deltafile(build_url, token, f):
     if resp.status_code != 200:
         raise ApiError(resp)
 
-def upload_objects(repo_path, build_url, token, objects):
+async def upload_objects(repo_path, build_url, token, objects):
     req = []
     total_size = 0
-    for file_obj in objects:
-        named = get_object_multipart(repo_path, file_obj)
-        file_size = named.size()
-        if total_size + file_size > UPLOAD_CHUNK_LIMIT: # The new object would bring us over the chunk limit
-            if len(req) > 0: # We already have some objects, upload those first
-                next_req = [named]
-                total_size = file_size
+    timeout = aiohttp.ClientTimeout(total=3600)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for file_obj in objects:
+            named = get_object_multipart(repo_path, file_obj)
+            file_size = named.size
+            if total_size + file_size > UPLOAD_CHUNK_LIMIT: # The new object would bring us over the chunk limit
+                if len(req) > 0: # We already have some objects, upload those first
+                    next_req = [named]
+                    total_size = file_size
+                else:
+                    next_req  =  []
+                    req.append(named)
+                    total_size = 0
+                await upload_files(session, build_url, token, req)
+                req = next_req
             else:
-                next_req  =  []
+                total_size = total_size + file_size
                 req.append(named)
-                total_size = 0
-            upload_files(build_url, token, req)
-            req = next_req
-        else:
-            total_size = total_size + file_size
-            req.append(named);
 
-    # Upload any remainder
-    upload_files(build_url, token, req)
+        # Upload any remainder
+        await upload_files(session, build_url, token, req)
 
 def create_ref(build_url, token, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
@@ -397,7 +430,7 @@ def create_token(manager_url, token, name, subject, scope, duration):
     return resp.json()
 
 def get_object_multipart(repo_path, object):
-    return NamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], object)
+    return AsyncNamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
 def create_command(args):
     build_url = urljoin(args.manager_url, "/api/v1/build")
@@ -431,7 +464,7 @@ def build_url_to_api(build_url):
     path = os.path.dirname(os.path.dirname(parts.path))
     return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
 
-def push_command(args):
+async def push_command(args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
         local_repo.open(None)
@@ -473,11 +506,11 @@ def push_command(args):
 
     # First upload all missing file objects
     print("Uploading file objects")
-    upload_objects(args.repo_path, args.build_url, token, missing_file_objects)
+    await upload_objects(args.repo_path, args.build_url, token, missing_file_objects)
 
     # Then all the metadata
     print("Uploading metadata objects")
-    upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
+    await upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
 
     _, deltas = local_repo.list_static_delta_names ()
     if len(deltas) > 0:
@@ -675,9 +708,15 @@ if __name__ == '__main__':
     res = 1
     output = None
     try:
+        if args.subparser_name == "push":
+            loop = asyncio.get_event_loop()
+            result = loop.run_until_complete(args.func(args))
+        else:
+            result = args.func(args)
+
         output = {
             "command": args.subparser_name,
-            "result": args.func(args),
+            "result": result,
         }
         res = 0
     except SystemExit:
