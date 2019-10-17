@@ -240,7 +240,7 @@ def upload_deltafile(build_url, token, f):
 async def upload_objects(repo_path, build_url, token, objects):
     req = []
     total_size = 0
-    timeout = aiohttp.ClientTimeout(total=3600)
+    timeout = aiohttp.ClientTimeout(total=90*60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for file_obj in objects:
             named = get_object_multipart(repo_path, file_obj)
