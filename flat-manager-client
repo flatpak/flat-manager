@@ -80,23 +80,6 @@ class ApiError(Exception):
         return json.dumps(self.repr(), indent=4)
 
 # This is similar to the regular payload, but opens the file lazily
-class NamedFilePart:
-    def __init__(self, filename, objectname):
-        self.filename = filename
-        self.objectname = objectname
-        self._size = None
-
-    def size(self):
-        if self._size is None:
-            self._size = os.stat(self.filename).st_size
-        return self._size
-
-    def add_to_dict(self, file_dict):
-        with open(self.filename, 'rb') as content_file:
-            content = content_file.read()
-            file_dict[self.objectname] = (self.objectname, content, 'application/octet-stream')
-
-# This is similar to the regular payload, but opens the file lazily
 class AsyncNamedFilePart(aiohttp.payload.Payload):
     def __init__(self,
                  value,
