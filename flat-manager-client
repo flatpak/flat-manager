@@ -237,13 +237,26 @@ async def upload_files(session, build_url, token, files):
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
 
-def upload_deltafile(build_url, token, f):
-    file_dict = {}
-    f.add_to_dict(file_dict)
-    session = requests.Session()
-    resp = session.request("post", build_url + '/upload', files=file_dict, headers={'Authorization': 'Bearer ' + token})
-    if resp.status_code != 200:
-        raise ApiError(resp)
+async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta):
+    for ref, commit in refs.items():
+        # Skip screenshots here
+        parts = ref.split("/")
+        if len(parts) == 4 and (parts[0] == "app" or parts[0] =="runtime") and not should_skip_delta(parts[1], ignore_delta):
+            for delta in deltas:
+                # Only upload from-scratch deltas, as these are the only reused ones
+                if delta == commit:
+                    print(" %s: %s" % (ref, delta))
+                    delta_name = delta_name_encode (delta)
+                    delta_dir = repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
+                    parts = os.listdir(delta_dir)
+                    req = []
+                    for part in parts:
+                        req.append(AsyncNamedFilePart(delta_dir + "/" + part, delta_name + "." + part + ".delta"))
+
+                    timeout = aiohttp.ClientTimeout(total=30*60)
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        await upload_files(session, build_url, token, req)
+
 
 async def upload_objects(repo_path, build_url, token, objects):
     req = []
@@ -518,24 +531,10 @@ async def push_command(args):
     print("Uploading metadata objects")
     await upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
 
-    _, deltas = local_repo.list_static_delta_names ()
+    _, deltas = local_repo.list_static_delta_names()
     if len(deltas) > 0:
         print("Uploading deltas")
-
-        for ref, commit in refs.items():
-            # Skip screenshots here
-            parts = ref.split("/")
-            if len(parts) == 4 and (parts[0] == "app" or parts[0] =="runtime") and not should_skip_delta(parts[1], args.ignore_delta):
-                for delta in deltas:
-                    # Only upload from-scratch deltas, as these are the only reused ones
-                    if delta == commit:
-                        print(" %s: %s" % (ref, delta))
-                        delta_name = delta_name_encode (delta)
-                        delta_dir = args.repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
-                        parts = os.listdir(delta_dir)
-                        for part in parts:
-                            f = NamedFilePart(delta_dir + "/" + part, delta_name + "." + part + ".delta")
-                            upload_deltafile(args.build_url, token, f)
+        await upload_deltas(args.repo_path, args.build_url, token, deltas, refs, args.ignore_delta)
 
     # Then the refs
     for ref, commit in refs.items():
