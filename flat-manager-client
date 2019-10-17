@@ -238,6 +238,9 @@ async def upload_files(session, build_url, token, files):
             raise ApiError(resp, await resp.text())
 
 async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta):
+    if not len(deltas):
+        return
+
     req = []
     for ref, commit in refs.items():
         # Skip screenshots here
@@ -533,9 +536,8 @@ async def push_command(args):
     await upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
 
     _, deltas = local_repo.list_static_delta_names()
-    if len(deltas) > 0:
-        print("Uploading deltas")
-        await upload_deltas(args.repo_path, args.build_url, token, deltas, refs, args.ignore_delta)
+    print("Uploading deltas")
+    await upload_deltas(args.repo_path, args.build_url, token, deltas, refs, args.ignore_delta)
 
     # Then the refs
     for ref, commit in refs.items():
