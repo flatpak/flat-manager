@@ -230,6 +230,7 @@ async def upload_files(session, build_url, token, files):
         raise ApiError(resp)
 
 async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta):
+    req = []
     for ref, commit in refs.items():
         # Skip screenshots here
         parts = ref.split("/")
