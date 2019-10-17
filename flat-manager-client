@@ -219,7 +219,7 @@ def missing_objects(build_url, token, wanted):
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
-    print("Uploading %d objects (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size, files))))
+    print("Uploading %d files (%d bytes)" % (len(files), reduce(lambda x, y: x + y, map(lambda f: f.size, files))))
     with aiohttp.MultipartWriter() as writer:
         for f in files:
             writer.append(f)
@@ -241,13 +241,13 @@ async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta)
                     delta_name = delta_name_encode (delta)
                     delta_dir = repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
                     parts = os.listdir(delta_dir)
-                    req = []
                     for part in parts:
                         req.append(AsyncNamedFilePart(delta_dir + "/" + part, delta_name + "." + part + ".delta"))
 
-                    timeout = aiohttp.ClientTimeout(total=30*60)
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        await upload_files(session, build_url, token, req)
+    if len(req):
+        timeout = aiohttp.ClientTimeout(total=30*60)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            await upload_files(session, build_url, token, req)
 
 
 async def upload_objects(repo_path, build_url, token, objects):
