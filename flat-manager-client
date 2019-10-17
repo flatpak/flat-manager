@@ -52,23 +52,31 @@ class UsageException(Exception):
         return self.msg
 
 class ApiError(Exception):
-    def __init__(self, response):
-        self.response = response
+    def __init__(self, response, text=None):
+        self.url = response.url
+
+        if not text:
+            self.status = response.status_code
+            self.error = response.json()
+        else:
+            self.status = response.status
+            self.error = text
+
         try:
-            self.body = json.loads(response.json());
+            self.body = json.loads(response);
         except:
-            self.body = {"status": response.status_code, "error-type": "no-error", "message": "No json error details from server"}
+            self.body = {"status": self.status, "error-type": "no-error", "message": "No json error details from server"}
 
     def repr(self):
         return {
             "type": "api",
-            "url": self.response.url,
-            "status_code": self.response.status_code,
+            "url": self.url,
+            "status_code": self.status,
             "details": self.body
         }
 
     def __str__(self):
-        return "Api call to %s failed with status %d, details: %s" % (self.response.url, self.response.status_code, self.body)
+        return "Api call to %s failed with status %d, details: %s" % (self.url, self.status, self.body)
         return json.dumps(self.repr(), indent=4)
 
 # This is similar to the regular payload, but opens the file lazily
@@ -207,10 +215,10 @@ async def upload_files(session, build_url, token, files):
         for f in files:
             writer.append(f)
     writer.headers['Authorization'] = 'Bearer ' + token
-    resp = await session.request("post", build_url + '/upload',
-                                 data=writer, headers=writer.headers)
-    if resp.status != 200:
-        raise ApiError(resp)
+    resp = await session.request("post", build_url + '/upload', data=writer, headers=writer.headers)
+    async with resp:
+        if resp.status != 200:
+            raise ApiError(resp, await resp.text())
 
 async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta):
     if not len(deltas):
