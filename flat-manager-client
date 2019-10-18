@@ -65,7 +65,7 @@ class ApiError(Exception):
         try:
             self.body = json.loads(response);
         except:
-            self.body = {"status": self.status, "error-type": "no-error", "message": "No json error details from server"}
+            self.body = {"status": self.status, "error-type": "no-error", "message": self.error}
 
     def repr(self):
         return {
@@ -88,7 +88,7 @@ class AsyncNamedFilePart(aiohttp.payload.Payload):
                  **kwargs):
         self._file = None
         if 'filename' not in kwargs:
-            kwargs['filename'] = os.path.basename(value)
+            kwargs['filename'] = value
 
         super().__init__(value, *args, **kwargs)
 
@@ -237,7 +237,9 @@ async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta)
                     delta_dir = repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
                     parts = os.listdir(delta_dir)
                     for part in parts:
-                        req.append(AsyncNamedFilePart(delta_dir + "/" + part, delta_name + "." + part + ".delta"))
+                        delta_path = delta_dir + "/" + part
+                        delta_filename = delta_name + "." + part + ".delta"
+                        req.append(AsyncNamedFilePart(delta_path, filename=delta_filename))
 
     if len(req):
         timeout = aiohttp.ClientTimeout(total=30*60)
