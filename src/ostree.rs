@@ -317,7 +317,7 @@ impl<'a> SubVariant<'a> {
 
     fn parse_as_variable_width_array(&self, element_alignment: usize) -> OstreeResult<Vec<SubVariant<'a>>> {
         let t = self.type_string.as_bytes()[0] as char;
-        if (t != 'a') {
+        if t != 'a' {
             return Err(OstreeError::InternalError(format!("Not an array: {}", self.type_string)));
         }
 
