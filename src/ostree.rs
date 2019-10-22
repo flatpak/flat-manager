@@ -88,21 +88,24 @@ impl<'a> SubVariant<'a> {
             return Err(OstreeError::InternalError(format!("Framing error: can't read frame offset at {}", offset)));
         }
         let data = &self.data[offset..offset + framing_size];
-        return Ok(
-            match framing_size {
-                0 => 0,
-                1 => usize::from(data[0]),
-                2 => usize::from(LittleEndian::read_u16(data)),
-                4 => LittleEndian::read_u32(data) as usize,
-                8 => {
-                    let len64 = LittleEndian::read_u64(data);
-                    if len64 > ::std::usize::MAX as u64 {
-                        return Err(OstreeError::InternalError("Framing error: To large framing size fror usize".to_string()));
-                    }
-                    len64 as usize
-                },
-                _ => return Err(OstreeError::InternalError(format!("Framing error: Unexpected framing size {}", framing_size))),
-            })
+        let offset = match framing_size {
+            0 => 0,
+            1 => usize::from(data[0]),
+            2 => usize::from(LittleEndian::read_u16(data)),
+            4 => LittleEndian::read_u32(data) as usize,
+            8 => {
+                let len64 = LittleEndian::read_u64(data);
+                if len64 > ::std::usize::MAX as u64 {
+                    return Err(OstreeError::InternalError("Framing error: To large framing size fror usize".to_string()));
+                }
+                len64 as usize
+            },
+            _ => return Err(OstreeError::InternalError(format!("Framing error: Unexpected framing size {}", framing_size))),
+        };
+        if offset > self.data.len() {
+            return Err(OstreeError::InternalError(format!("Framing error: out of bounds offset at {}", offset)));
+        };
+        return Ok(offset)
     }
 
     fn pad(&self, cur: usize, alignment: usize) -> usize {
