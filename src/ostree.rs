@@ -444,7 +444,7 @@ fn result_from_output(output: std::process::Output, command: &str) -> Result<(),
 pub fn pull_commit_async(n_retries: i32,
                          repo_path: PathBuf,
                          url: String,
-                         commit: String) -> Box<Future<Item=(), Error=OstreeError>> {
+                         commit: String) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     Box::new(future::loop_fn(n_retries, move |count| {
         let mut cmd = Command::new("ostree");
         cmd
@@ -488,7 +488,7 @@ pub fn pull_commit_async(n_retries: i32,
 pub fn pull_delta_async(n_retries: i32,
                         repo_path: &PathBuf,
                         url: &String,
-                        delta: &Delta) -> Box<Future<Item=(), Error=OstreeError>> {
+                        delta: &Delta) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     let url_clone = url.clone();
     let repo_path_clone = repo_path.clone();
     let to = delta.to.clone();
@@ -503,7 +503,7 @@ pub fn pull_delta_async(n_retries: i32,
 }
 
 pub fn generate_delta_async(repo_path: &PathBuf,
-                            delta: &Delta) -> Box<Future<Item=(), Error=OstreeError>> {
+                            delta: &Delta) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     let mut cmd = Command::new("flatpak");
 
     cmd
@@ -537,7 +537,7 @@ pub fn generate_delta_async(repo_path: &PathBuf,
     )
 }
 
-pub fn prune_async(repo_path: &PathBuf) -> Box<Future<Item=(), Error=OstreeError>> {
+pub fn prune_async(repo_path: &PathBuf) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     let mut cmd = Command::new("ostree");
 
     cmd

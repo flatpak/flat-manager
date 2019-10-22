@@ -62,7 +62,7 @@ min-free-space-size=500MB
 
 fn db_request<M: DbRequest> (state: &AppState,
                              msg: M) ->
-    Box<Future<Item = <M as DbRequest>::DbType, Error = ApiError>>
+    Box<dyn Future<Item = <M as DbRequest>::DbType, Error = ApiError>>
     where
     DbExecutor: actix::Handler<DbRequestWrapper<M>>
 {
@@ -543,7 +543,7 @@ fn start_save(
 fn save_file(
     field: multipart::Field<dev::Payload>,
     state: &Arc<UploadState>
-) -> Box<Future<Item = i64, Error = ApiError>> {
+) -> Box<dyn Future<Item = i64, Error = ApiError>> {
     let repo_subpath = match get_upload_subpath (&field, state) {
         Ok(subpath) => subpath,
         Err(e) => return Box::new(future::err(e)),
@@ -597,7 +597,7 @@ fn save_file(
 fn handle_multipart_item(
     item: multipart::MultipartItem<dev::Payload>,
     state: &Arc<UploadState>
-) -> Box<Stream<Item = i64, Error = ApiError>> {
+) -> Box<dyn Stream<Item = i64, Error = ApiError>> {
     match item {
         multipart::MultipartItem::Field(field) => {
             Box::new(save_file(field, state).into_stream())

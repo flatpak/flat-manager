@@ -181,7 +181,7 @@ impl Actor for DeltaClient {
 
 fn pull_and_generate_delta_async(repo_path: &PathBuf,
                                  url: &String,
-                                 delta: &ostree::Delta) -> Box<Future<Item=(), Error=DeltaGenerationError>> {
+                                 delta: &ostree::Delta) -> Box<dyn Future<Item=(), Error=DeltaGenerationError>> {
     let url = url.clone();
     let repo_path2 = repo_path.clone();
     let delta_clone = delta.clone();
@@ -219,7 +219,7 @@ pub fn upload_delta(fs_pool: &FsPool,
                     token: &String,
                     repo: &String,
                     repo_path: &PathBuf,
-                    delta: &ostree::Delta) -> Box<Future<Item=(), Error=DeltaGenerationError>> {
+                    delta: &ostree::Delta) -> Box<dyn Future<Item=(), Error=DeltaGenerationError>> {
     let url = format!("{}/api/v1/delta/upload/{}", base_url, repo);
     let token = token.clone();
 
