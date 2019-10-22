@@ -43,6 +43,82 @@ pub struct OstreeCommit {
     pub root_metadata: String,
 }
 
+fn is_base_type(byte: u8) -> bool {
+    let c = byte as char;
+    return
+        c == 'b' ||
+        c == 'y' ||
+        c == 'n' ||
+        c == 'q' ||
+        c == 'i' ||
+        c == 'u' ||
+        c == 'x' ||
+        c == 't' ||
+        c == 's' ||
+        c == 'o' ||
+        c == 'g';
+}
+
+fn type_string_element_len(type_string: &str) -> Option<usize> {
+    if type_string.len() == 0 {
+        return None;
+    }
+    let bytes = type_string.as_bytes();
+    let c = bytes[0];
+    if is_base_type(c) || c == 'v' as u8 {
+        return Some(1)
+    }
+    match c as char {
+        'm' | 'a' => {
+            if let Some(len) = type_string_element_len(&type_string[1..]) {
+                return Some(1 + len);
+            } else {
+                return None;
+            }
+        },
+        '{' => {
+            if type_string.len() < 3 || !is_base_type(bytes[1]) {
+                return None;
+            }
+            if let Some(len) = type_string_element_len(&type_string[2..]) {
+                if type_string.len() > 2 + len && bytes[2 + len] != '{' as u8 {
+                    return Some(3 + len);
+                } else {
+                    return None;
+                }
+            } else {
+                return None;
+            }
+        },
+        '(' => {
+            let mut pos : usize = 1;
+            loop {
+                if type_string.len() <= pos {
+                    return None;
+                }
+                if bytes[pos] == ')' as u8 {
+                    return Some(pos + 1);
+                }
+                if let Some(len) = type_string_element_len(&type_string[pos..]) {
+                    pos += len;
+                } else {
+                    return None
+                }
+            }
+        }
+        _ => {
+            return None;
+        }
+    }
+}
+
+fn type_string_split<'a>(type_string: &'a str) -> Option<(&'a str, &'a str)> {
+    if let Some(len) = type_string_element_len (type_string) {
+        return Some((&type_string[0..len], &type_string[len..]));
+    }
+    return None;
+}
+
 #[derive(Debug)]
 enum VariantSize {
     Fixed(NonZeroUsize),
@@ -57,22 +133,38 @@ struct VariantFieldInfo {
 
 #[derive(Debug)]
 struct SubVariant<'a> {
+    type_string: &'a str,
     data: &'a [u8],
 }
 
 #[derive(Debug)]
 struct Variant {
+    type_string: String,
     data: Vec<u8>,
 }
 
 impl Variant {
-    fn new(data: Vec<u8>) -> Variant {
-        Variant {
+    fn new(type_string: String, data: Vec<u8>) -> OstreeResult<Variant> {
+        match type_string_element_len(&type_string) {
+            None => {
+                return Err(OstreeError::InternalError(format!("Invalid type string '{}'", type_string)));
+            },
+            Some(len) => {
+                if len != type_string.len() {
+                    return Err(OstreeError::InternalError(format!("Leftover text in type string '{}'", type_string)));
+                }
+            }
+        };
+
+        Ok(Variant {
+            type_string: type_string,
             data: data,
-        }
+        })
     }
+
     fn root<'a>(&'a self) -> SubVariant<'a> {
         SubVariant {
+            type_string: &self.type_string,
             data: &self.data,
         }
     }
@@ -127,11 +219,12 @@ impl<'a> SubVariant<'a> {
         }
     }
 
-    fn subset(&self, start: usize, end: usize) -> OstreeResult<SubVariant<'a>> {
+    fn subset(&self, start: usize, end: usize, type_string: &'a str) -> OstreeResult<SubVariant<'a>> {
         if end < start || end > self.data.len() {
             return Err(OstreeError::InternalError(format!("Framing error: subset {}-{} out of bounds for {:?}", start, end, self)));
         }
         Ok( SubVariant {
+            type_string: type_string,
             data: &self.data[start..end],
         })
     }
@@ -147,12 +240,27 @@ impl<'a> SubVariant<'a> {
     fn parse_as_tuple(&self, fields: &[VariantFieldInfo]) -> OstreeResult<Vec<SubVariant<'a>>> {
         let mut result = Vec::new();
 
+        let t = self.type_string.as_bytes()[0] as char;
+        if t != '(' && t != '{' {
+            return Err(OstreeError::InternalError(format!("Not a dictionary: {}", self.type_string)));
+        }
+
+        let mut type_string_rest = &self.type_string[1..];
+
         let framing_size = self.framing_size();
         let mut frame_offset = self.data.len();
 
         let mut next : usize = 0;
         for i in 0..fields.len() {
             let field = &fields[i];
+
+            let field_type = if let Some((t, r)) = type_string_split (type_string_rest) {
+                type_string_rest = r;
+                t
+            } else {
+                return Err(OstreeError::InternalError(format!("Invalid type: {}", type_string_rest)));
+            };
+
             next = self.pad(next, field.alignment);
 
             let field_size =
@@ -170,7 +278,7 @@ impl<'a> SubVariant<'a> {
                     },
                 };
 
-            let sub = self.subset(next, next+field_size)?;
+            let sub = self.subset(next, next+field_size, field_type)?;
             result.push(sub);
             next += field_size;
         }
@@ -179,6 +287,9 @@ impl<'a> SubVariant<'a> {
     }
 
     fn parse_as_string(&self) -> OstreeResult<String> {
+        if self.type_string != "s" {
+            return Err(OstreeError::InternalError(format!("Variant type '{}' not a string", self.type_string)));
+        }
         let without_nul = &self.data[0..self.data.len() - 1];
         if let Ok(str) = str::from_utf8(without_nul) {
             Ok(str.to_string())
@@ -192,6 +303,9 @@ impl<'a> SubVariant<'a> {
     }
 
     fn parse_as_u64(&self) -> OstreeResult<u64> {
+        if self.type_string != "t" {
+            return Err(OstreeError::InternalError(format!("Variant type '{}' not a u64", self.type_string)));
+        }
         if self.data.len() != 8 {
             return Err(OstreeError::InternalError(format!("Wrong length {} for u64", self.data.len())));
         }
@@ -274,7 +388,7 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
         VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
     ];
 
-    let variant = Variant::new(contents);
+    let variant = Variant::new("(a{sv}aya(say)sstayay)".to_string(), contents)?;
     let container = variant.root();
     let commit = container.parse_as_tuple(&ostree_commit_fields)?;
 
@@ -391,6 +505,22 @@ impl Delta {
 mod tests {
     // Note this useful idiom: importing names from outer (for mod tests) scope.
     use super::*;
+
+    #[test]
+    fn test_variant_type_strings() {
+        assert_eq!(type_string_element_len("1"), None);
+        assert_eq!(type_string_element_len("i"), Some(1));
+        assert_eq!(type_string_element_len("s"), Some(1));
+        assert_eq!(type_string_element_len("asas"), Some(2));
+        assert_eq!(type_string_split("asas"), Some(("as", "as")));
+        assert_eq!(type_string_element_len("(ssas)as"), Some(6));
+        assert_eq!(type_string_element_len("(ssas"), None);
+        assert_eq!(type_string_element_len("(ssas)"), Some(6));
+        assert_eq!(type_string_element_len("(sa{sv}sas)ias"), Some(11));
+        assert_eq!(type_string_split("(ssas)ii"), Some(("(ssas)", "ii")));
+        assert_eq!(type_string_split("a{sv}as"), Some(("a{sv}", "as")));
+        assert_eq!(type_string_split("a{vv}as"), None);
+    }
 
     #[test]
     fn test_delta_name() {
