@@ -22,6 +22,8 @@ pub enum OstreeError {
     NoSuchRef(String),
     #[fail(display = "No such commit: {}", _0)]
     NoSuchCommit(String),
+    #[fail(display = "No such object: {}", _0)]
+    NoSuchObject(String),
     #[fail(display = "Invalid utf8 string")]
     InvalidUtf8,
     #[fail(display = "Command {} failed to start: {}", _0, _1)]
@@ -43,6 +45,12 @@ pub struct OstreeCommit {
     pub timestamp: u64,
     pub root_tree: String,
     pub root_metadata: String,
+}
+
+#[derive(Debug)]
+pub struct OstreeDeltaSuperblock {
+    pub metadata: HashMap<String,Variant>,
+    pub commit: OstreeCommit,
 }
 
 fn is_base_type(byte: u8) -> bool {
@@ -480,16 +488,7 @@ fn get_object_path(repo_path: &path::PathBuf, object: &str, object_type: &str) -
     path
 }
 
-pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<OstreeCommit> {
-    let path_dir = get_object_path(repo_path, commit, "commit");
-
-    let mut fp = fs::File::open(path_dir)
-        .map_err(|_e| OstreeError::NoSuchCommit(commit.clone()))?;
-
-    let mut contents = vec![];
-    fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", commit)))?;
-
+fn parse_commit (variant: &SubVariant) ->OstreeResult<OstreeCommit> {
     let ostree_commit_fields = vec![
         // 0 - a{sv} - Metadata
         VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
@@ -509,13 +508,10 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
         VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
     ];
 
-    let variant = Variant::new("(a{sv}aya(say)sstayay)".to_string(), contents)?;
-    let container = variant.root();
-    let commit = container.parse_as_tuple(&ostree_commit_fields)?;
-
+    let commit = variant.parse_as_tuple(&ostree_commit_fields)?;
     let metadata = commit[0].parse_as_asv()?;
 
-    Ok(OstreeCommit {
+    return Ok(OstreeCommit {
         metadata: metadata,
         parent: maybe_bytes_to_object (commit[1].parse_as_bytes()),
         subject: commit[3].parse_as_string()?,
@@ -523,6 +519,68 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
         timestamp: u64::from_be(commit[5].parse_as_u64()?),
         root_tree: bytes_to_object (commit[6].parse_as_bytes()),
         root_metadata: bytes_to_object (commit[7].parse_as_bytes()),
+    })
+}
+
+
+pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<OstreeCommit> {
+    let path_dir = get_object_path(repo_path, commit, "commit");
+
+    let mut fp = fs::File::open(path_dir)
+        .map_err(|_e| OstreeError::NoSuchCommit(commit.clone()))?;
+
+    let mut contents = vec![];
+    fp.read_to_end(&mut contents)
+        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", commit)))?;
+
+    let variant = Variant::new("(a{sv}aya(say)sstayay)".to_string(), contents)?;
+
+    return parse_commit (&variant.root());
+}
+
+pub fn get_delta_superblock (repo_path: &path::PathBuf, delta: &String) ->OstreeResult<OstreeDeltaSuperblock> {
+    let mut path = get_deltas_path(repo_path);
+    path.push(delta[0..2].to_string());
+    path.push(delta[2..].to_string());
+    path.push("superblock".to_string());
+
+    let mut fp = fs::File::open(path)
+        .map_err(|_e| OstreeError::NoSuchObject(delta.clone()))?;
+
+    let mut contents = vec![];
+    fp.read_to_end(&mut contents)
+        .map_err(|_e| OstreeError::InternalError(format!("Invalid delta superblock {}", delta)))?;
+
+    let ostree_superblock_fields = vec![
+        // 0 - "a{sv}", - Metadata
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        // 1 - "t", - timestamp
+        VariantFieldInfo { size: VariantSize::Fixed(std::num::NonZeroUsize::new(8).unwrap()), alignment: 8 },
+        // 2 - "ay" - from checksum
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        // 3 - "ay" - to checksum
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        // 4 - "(a{sv}aya(say)sstayay)" - commit object
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        // 5 - "ay" -Prerequisite deltas
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        // 6 - "a(uayttay)" -Delta objects
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        // 7 - "a(yaytt)" - Fallback objects
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+    ];
+
+
+    let variant = Variant::new("(a{sv}tayay(a{sv}aya(say)sstayay)aya(uayttay)a(yaytt))".to_string(), contents)?;
+    let container = variant.root();
+    let superblock = container.parse_as_tuple(&ostree_superblock_fields)?;
+
+    let metadata = superblock[0].parse_as_asv()?;
+    let commit = parse_commit(&superblock[4])?;
+
+    Ok(OstreeDeltaSuperblock {
+        metadata: metadata,
+        commit: commit,
     })
 }
 
