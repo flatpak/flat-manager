@@ -170,7 +170,8 @@ impl<'a> SubVariant<'a> {
     }
 
     fn parse_as_string(&self) -> OstreeResult<String> {
-        if let Ok(str) = str::from_utf8(self.data) {
+        let without_nul = &self.data[0..self.data.len() - 1];
+        if let Ok(str) = str::from_utf8(without_nul) {
             Ok(str.to_string())
         } else {
             return Err(OstreeError::InvalidUtf8);
