@@ -57,7 +57,6 @@ struct VariantFieldInfo {
 
 #[derive(Debug)]
 struct SubVariant<'a> {
-    offset: usize,
     data: &'a [u8],
 }
 
@@ -74,7 +73,6 @@ impl Variant {
     }
     fn root<'a>(&'a self) -> SubVariant<'a> {
         SubVariant {
-            offset: 0,
             data: &self.data,
         }
     }
@@ -124,7 +122,7 @@ impl<'a> SubVariant<'a> {
         if alignment == 0 {
             cur
         } else {
-            let offset = cur + self.offset;
+            let offset = cur;
             cur + (alignment - (offset % alignment)) % alignment
         }
     }
@@ -134,7 +132,6 @@ impl<'a> SubVariant<'a> {
             return Err(OstreeError::InternalError(format!("Framing error: subset {}-{} out of bounds for {:?}", start, end, self)));
         }
         Ok( SubVariant {
-            offset: start + self.offset,
             data: &self.data[start..end],
         })
     }
