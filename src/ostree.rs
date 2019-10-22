@@ -61,14 +61,26 @@ struct SubVariant<'a> {
     data: &'a [u8],
 }
 
-impl<'a> SubVariant<'a> {
-    fn new(data: &'a [u8]) -> SubVariant<'a> {
-        SubVariant {
-            offset: 0,
+#[derive(Debug)]
+struct Variant {
+    data: Vec<u8>,
+}
+
+impl Variant {
+    fn new(data: Vec<u8>) -> Variant {
+        Variant {
             data: data,
         }
     }
+    fn root<'a>(&'a self) -> SubVariant<'a> {
+        SubVariant {
+            offset: 0,
+            data: &self.data,
+        }
+    }
+}
 
+impl<'a> SubVariant<'a> {
     fn framing_size(&self) -> usize {
         let len = self.data.len() as u64;
         if len == 0 {
@@ -265,7 +277,8 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
         VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
     ];
 
-    let container = SubVariant::new(&contents);
+    let variant = Variant::new(contents);
+    let container = variant.root();
     let commit = container.parse_as_tuple(&ostree_commit_fields)?;
 
     Ok(OstreeCommit {
