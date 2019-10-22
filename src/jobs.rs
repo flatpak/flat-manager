@@ -264,18 +264,21 @@ fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
 
 fn do_command(mut cmd: Command) -> JobResult<()>
 {
-    let output = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .before_exec (|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            unsafe { libc::setsid() };
-            Ok(())
-        })
-        .output()
-        .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?;
+    let output =
+        unsafe {
+            cmd
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .pre_exec (|| {
+                    // Setsid in the child to avoid SIGINT on server killing
+                    // child and breaking the graceful shutdown
+                    libc::setsid();
+                    Ok(())
+                })
+                .output()
+                .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?
+        };
 
     if !output.status.success() {
         return Err(JobError::new(&format!("Command {:?} exited unsuccesfully: {}", &cmd, String::from_utf8_lossy(&output.stderr))))
