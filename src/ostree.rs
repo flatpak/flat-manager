@@ -248,7 +248,7 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
 
     let ostree_commit_fields = vec![
         // 0 - a{sv} - Metadata
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
         // 1 - ay - parent checksum (empty string for initial)
         VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
         // 2- a(say) - Related objects
