@@ -141,7 +141,7 @@ struct SubVariant<'a> {
 
 #[derive(Debug)]
 pub struct Variant {
-    type_string: String,
+    pub type_string: String,
     data: Vec<u8>,
 }
 
@@ -169,6 +169,26 @@ impl Variant {
             type_string: &self.type_string,
             data: &self.data,
         }
+    }
+
+    pub fn as_string(&self) -> OstreeResult<String> {
+        return self.root().parse_as_string();
+    }
+
+    pub fn as_string_vec(&self) -> OstreeResult<Vec<String>> {
+        return self.root().parse_as_string_vec();
+    }
+
+    pub fn as_u64(&self) -> OstreeResult<u64> {
+        return self.root().parse_as_u64();
+    }
+
+    pub fn as_i32(&self) -> OstreeResult<i32> {
+        return self.root().parse_as_i32();
+    }
+
+    pub fn as_bytes<'a>(&'a self) ->  &'a [u8] {
+        return self.root().parse_as_bytes();
     }
 }
 
@@ -384,6 +404,14 @@ impl<'a> SubVariant<'a> {
         }
     }
 
+    fn parse_as_string_vec(&self) -> OstreeResult<Vec<String>> {
+        if self.type_string != "as" {
+            return Err(OstreeError::InternalError(format!("Variant type '{}' not an array of strings", self.type_string)));
+        }
+        let array =  self.parse_as_variable_width_array(0)?;
+        return array.iter().map(|v| v.parse_as_string()).collect();
+    }
+
     fn parse_as_bytes(&self) -> &'a [u8] {
         self.data
     }
@@ -396,6 +424,13 @@ impl<'a> SubVariant<'a> {
             return Err(OstreeError::InternalError(format!("Wrong length {} for u64", self.data.len())));
         }
         Ok(NativeEndian::read_u64(self.data))
+    }
+
+    fn parse_as_i32(&self) -> OstreeResult<i32> {
+        if self.type_string != "i" {
+            return Err(OstreeError::InternalError(format!("Variant type '{}' not a i32", self.type_string)));
+        }
+        Ok(NativeEndian::read_i32(self.data))
     }
 }
 
