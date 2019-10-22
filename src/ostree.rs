@@ -447,13 +447,16 @@ pub fn pull_commit_async(n_retries: i32,
                          commit: String) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     Box::new(future::loop_fn(n_retries, move |count| {
         let mut cmd = Command::new("ostree");
-        cmd
-            .before_exec (|| {
-                // Setsid in the child to avoid SIGINT on server killing
-                // child and breaking the graceful shutdown
-                unsafe { libc::setsid() };
-                Ok(())
-            });
+        unsafe {
+            cmd
+                .pre_exec (|| {
+                    // Setsid in the child to avoid SIGINT on server killing
+                    // child and breaking the graceful shutdown
+                    libc::setsid();
+                    Ok(())
+                });
+        }
+
         cmd
             .arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
             .arg("pull")
@@ -506,13 +509,15 @@ pub fn generate_delta_async(repo_path: &PathBuf,
                             delta: &Delta) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     let mut cmd = Command::new("flatpak");
 
-    cmd
-        .before_exec (|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            unsafe { libc::setsid() };
-            Ok(())
-        });
+    unsafe {
+        cmd
+            .pre_exec (|| {
+                // Setsid in the child to avoid SIGINT on server killing
+                // child and breaking the graceful shutdown
+                libc::setsid();
+                Ok(())
+            });
+    }
 
     cmd
         .arg("build-update-repo")
@@ -540,13 +545,15 @@ pub fn generate_delta_async(repo_path: &PathBuf,
 pub fn prune_async(repo_path: &PathBuf) -> Box<dyn Future<Item=(), Error=OstreeError>> {
     let mut cmd = Command::new("ostree");
 
-    cmd
-        .before_exec (|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            unsafe { libc::setsid() };
-            Ok(())
-        });
+    unsafe {
+        cmd
+            .pre_exec (|| {
+                // Setsid in the child to avoid SIGINT on server killing
+                // child and breaking the graceful shutdown
+                libc::setsid();
+                Ok(())
+            });
+    }
 
     cmd
         .arg("prune")
