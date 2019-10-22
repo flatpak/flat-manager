@@ -138,7 +138,7 @@ struct SubVariant<'a> {
 }
 
 #[derive(Debug)]
-struct Variant {
+pub struct Variant {
     type_string: String,
     data: Vec<u8>,
 }
@@ -171,6 +171,13 @@ impl Variant {
 }
 
 impl<'a> SubVariant<'a> {
+    fn copy(&self) -> Variant {
+        return Variant {
+            type_string: self.type_string.to_string(),
+            data: self.data.to_vec(),
+        }
+    }
+
     fn framing_size(&self) -> usize {
         let len = self.data.len() as u64;
         if len == 0 {
