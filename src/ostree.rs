@@ -13,6 +13,7 @@ use std::os::unix::process::CommandExt as UnixCommandExt;
 use futures::Future;
 use futures::future::Either;
 use std::path::{PathBuf};
+use std::collections::HashMap;
 use futures::future;
 
 #[derive(Fail, Debug, Clone, PartialEq)]
@@ -35,6 +36,7 @@ pub type OstreeResult<T> = Result<T, OstreeError>;
 
 #[derive(Debug)]
 pub struct OstreeCommit {
+    pub metadata: HashMap<String,Variant>,
     pub parent: Option<String>,
     pub subject: String,
     pub body: String,
@@ -293,6 +295,83 @@ impl<'a> SubVariant<'a> {
         Ok(result)
     }
 
+    fn parse_as_variable_width_array(&self, element_alignment: usize) -> OstreeResult<Vec<SubVariant<'a>>> {
+        let t = self.type_string.as_bytes()[0] as char;
+        if (t != 'a') {
+            return Err(OstreeError::InternalError(format!("Not an array: {}", self.type_string)));
+        }
+
+        let size = self.data.len();
+        if size == 0 {
+            return Ok(Vec::new()); // Empty array
+        }
+
+        let element_type = &self.type_string[1..];
+        let framing_size = self.framing_size();
+        let last_offset = self.read_frame_offset(self.data.len() - framing_size, framing_size)?;
+        let length = (size - last_offset) / framing_size;
+        let frame_offsets = self.data.len() - length * framing_size;
+
+        let mut result = Vec::with_capacity(length);
+
+        let mut last_end : usize = 0;
+        for i in 0..length {
+            let start = self.pad(last_end, element_alignment);
+            let end = self.read_frame_offset(frame_offsets + i * framing_size, framing_size)?;
+
+            let sub = self.subset(start, end, element_type)?;
+            result.push(sub);
+            last_end = end;
+        }
+
+        Ok(result)
+    }
+
+    fn parse_as_variant(&self) ->  OstreeResult<SubVariant<'a>> {
+        if self.type_string != "v" {
+            return Err(OstreeError::InternalError(format!("Variant type '{}' not a variant", self.type_string)));
+        }
+
+        if self.data.len() == 0 {
+            return Ok (self.subset(0,0, "()")?);
+        }
+
+        let parts : Vec<&'a [u8]> = self.data.rsplitn(2, |&x| x == 0).collect();
+        if parts.len() != 2 {
+            return Err(OstreeError::InternalError(format!("No type string in variant")));
+        }
+
+        if let Ok(type_string) = str::from_utf8(parts[0]) {
+            return self.subset(0, parts[1].len(), type_string);
+        } else {
+            return Err(OstreeError::InvalidUtf8);
+        }
+    }
+
+    fn parse_as_asv_element(&self) ->  OstreeResult<(String, SubVariant<'a>)> {
+        let fields = vec![
+            // 0 - s - key
+            VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+            // 1 - v - value
+            VariantFieldInfo { size: VariantSize::Variable, alignment: 8 }
+        ];
+        let kv = self.parse_as_tuple(&fields)?;
+        let key = kv[0].parse_as_string()?;
+        let val = kv.into_iter().nth(1).unwrap();
+        return Ok((key, val));
+    }
+
+    fn parse_as_asv(&self) ->  OstreeResult<HashMap<String,Variant>> {
+        let mut res = HashMap::new();
+
+        for elt in self.parse_as_variable_width_array(8)? {
+            let (k, v) = elt.parse_as_asv_element()?;
+            let vv = v.parse_as_variant()?;
+            res.insert(k, vv.copy());
+        }
+        return Ok(res);
+    }
+
     fn parse_as_string(&self) -> OstreeResult<String> {
         if self.type_string != "s" {
             return Err(OstreeError::InternalError(format!("Variant type '{}' not a string", self.type_string)));
@@ -399,7 +478,10 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
     let container = variant.root();
     let commit = container.parse_as_tuple(&ostree_commit_fields)?;
 
+    let metadata = commit[0].parse_as_asv()?;
+
     Ok(OstreeCommit {
+        metadata: metadata,
         parent: maybe_bytes_to_object (commit[1].parse_as_bytes()),
         subject: commit[3].parse_as_string()?,
         body: commit[4].parse_as_string()?,
