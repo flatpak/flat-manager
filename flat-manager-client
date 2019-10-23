@@ -237,7 +237,7 @@ async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta)
                     delta_dir = repo_path + "/deltas/" + delta_name[:2] + "/" + delta_name[2:]
                     parts = os.listdir(delta_dir)
                     for part in parts:
-                        req.append(AsyncNamedFilePart(delta_dir + "/" + part, delta_name + "." + part + ".delta"))
+                        req.append(AsyncNamedFilePart(delta_dir + "/" + part, filename = delta_name + "." + part + ".delta"))
 
     if len(req):
         timeout = aiohttp.ClientTimeout(total=30*60)
