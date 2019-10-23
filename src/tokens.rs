@@ -113,11 +113,15 @@ impl<S> ClaimsValidator for HttpRequest<S> {
 
 pub struct TokenParser {
     secret: Vec<u8>,
+    optional: bool,
 }
 
 impl TokenParser {
     pub fn new(secret: &[u8]) -> Self {
-        TokenParser { secret: secret.to_vec() }
+        TokenParser { secret: secret.to_vec(), optional: false }
+    }
+    pub fn optional(secret: &[u8]) -> Self {
+        TokenParser { secret: secret.to_vec(), optional: true }
     }
 
     fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ApiError> {
@@ -153,7 +157,16 @@ impl TokenParser {
 
 impl Middleware<AppState> for TokenParser {
     fn start(&self, req: &HttpRequest<AppState>) -> Result<Started> {
-        let header = req.headers().get(AUTHORIZATION).ok_or(ApiError::InvalidToken("No Authorization header".to_string()))?;
+        let header = match req.headers().get(AUTHORIZATION) {
+            Some(h) => h,
+            None => {
+                if self.optional {
+                    return Ok(Started::Done);
+                } else {
+                    return Err(ApiError::InvalidToken("No Authorization header".to_string()))?;
+                }
+            },
+        };
         let token = self.parse_authorization(header)?;
         let claims = self.validate_claims(token)?;
 
