@@ -163,7 +163,7 @@ impl Middleware<AppState> for TokenParser {
     }
 
     fn finish(&self, req: &HttpRequest<AppState>, resp: &HttpResponse) -> Finished {
-        if resp.status() == 401 {
+        if resp.status() == 401 || resp.status() == 403 {
             if let Some(ref claims) = req.get_claims() {
                 info!("Presented: {:?}", claims);
             }
