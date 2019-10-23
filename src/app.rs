@@ -4,6 +4,7 @@ use actix_web::{self, App, http::Method, HttpRequest, HttpResponse,
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
+use std::ffi::OsStr;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::io;
@@ -18,10 +19,11 @@ use num_cpus;
 use errors::ApiError;
 use api;
 use deltas::DeltaGenerator;
-use tokens::{TokenParser};
+use tokens::{TokenParser, ClaimsValidator};
 use jobs::{JobQueue};
 use actix_web::dev::FromParam;
 use logger::Logger;
+use ostree;
 
 fn as_base64<S>(key: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
     where S: serde::Serializer
@@ -321,6 +323,35 @@ fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile
     })
 }
 
+fn get_commit_for_file(path: &PathBuf) -> Option<ostree::OstreeCommit> {
+    if path.file_name() == Some(OsStr::new("superblock")) {
+        if let Ok(superblock) = ostree::load_delta_superblock_file (&path) {
+            return Some(superblock.commit);
+        }
+    }
+
+    if path.extension() == Some(OsStr::new("commit")) {
+        if let Ok(commit) = ostree::load_commit_file (&path) {
+            return Some(commit);
+        }
+    }
+    return None;
+}
+
+fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, repoconfig: &RepoConfig, path: &PathBuf) -> Result<(), ApiError> {
+    let token_type = commit.metadata.get("xa.token-type").map(|v| v.as_i32().unwrap_or(0)).unwrap_or(repoconfig.default_token_type);
+    if !repoconfig.require_auth_for_token_types.contains(&token_type) {
+        return Ok(());
+    }
+
+    let commit_ref = commit.metadata.get("xa.ref").ok_or (ApiError::InternalServerError(format!("No ref binding for commit {:?}", path)))?.as_string()?;
+    let ref_parts: Vec<&str> = commit_ref.split('/').collect();
+    if (ref_parts[0] == "app" || ref_parts[0] == "runtime") && ref_parts.len() > 2 {
+        return req.has_token_prefix(ref_parts[1])
+    }
+    Ok(())
+}
+
 fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let tail: String = req.match_info().query("tail")?;
     let repo: String = req.match_info().query("repo")?;
@@ -332,6 +363,14 @@ fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
+
+    if let Some(commit) = get_commit_for_file (&path) {
+        let repo : String = req.match_info().query("repo")?;
+        let state = req.state();
+        let repoconfig = state.config.get_repoconfig(&repo)?;
+        verify_repo_token(req, commit, repoconfig, &path)?;
+    }
+
     match NamedFile::open(path) {
         Ok(file) => Ok(file),
         Err(e) => {
