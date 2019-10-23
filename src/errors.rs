@@ -67,6 +67,16 @@ impl From<OstreeError> for JobError {
     }
 }
 
+impl From<OstreeError> for ApiError {
+    fn from(e: OstreeError) -> Self {
+        match e {
+            _ => {
+                ApiError::InternalServerError(e.to_string())
+            }
+        }
+    }
+}
+
 impl From<DeltaGenerationError> for JobError {
     fn from(e: DeltaGenerationError) -> Self {
         match e {
