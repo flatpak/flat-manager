@@ -523,33 +523,33 @@ fn parse_commit (variant: &SubVariant) ->OstreeResult<OstreeCommit> {
 }
 
 
-pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<OstreeCommit> {
-    let path_dir = get_object_path(repo_path, commit, "commit");
-
-    let mut fp = fs::File::open(path_dir)
-        .map_err(|_e| OstreeError::NoSuchCommit(commit.clone()))?;
+pub fn load_commit_file (path: &path::PathBuf) ->OstreeResult<OstreeCommit> {
+    let basename = path.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
+    let mut fp = fs::File::open(path)
+        .map_err(|_e| OstreeError::NoSuchCommit(basename.to_string()))?;
 
     let mut contents = vec![];
     fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", commit)))?;
+        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", basename)))?;
 
     let variant = Variant::new("(a{sv}aya(say)sstayay)".to_string(), contents)?;
 
     return parse_commit (&variant.root());
 }
 
-pub fn get_delta_superblock (repo_path: &path::PathBuf, delta: &String) ->OstreeResult<OstreeDeltaSuperblock> {
-    let mut path = get_deltas_path(repo_path);
-    path.push(delta[0..2].to_string());
-    path.push(delta[2..].to_string());
-    path.push("superblock".to_string());
+pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<OstreeCommit> {
+    let path = get_object_path(repo_path, commit, "commit");
+    return load_commit_file(&path);
+}
 
+pub fn load_delta_superblock_file (path: &path::PathBuf) ->OstreeResult<OstreeDeltaSuperblock> {
+    let basename = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
     let mut fp = fs::File::open(path)
-        .map_err(|_e| OstreeError::NoSuchObject(delta.clone()))?;
+        .map_err(|_e| OstreeError::NoSuchObject(basename.to_string()))?;
 
     let mut contents = vec![];
     fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid delta superblock {}", delta)))?;
+        .map_err(|_e| OstreeError::InternalError(format!("Invalid delta superblock {}", basename)))?;
 
     let ostree_superblock_fields = vec![
         // 0 - "a{sv}", - Metadata
@@ -582,6 +582,15 @@ pub fn get_delta_superblock (repo_path: &path::PathBuf, delta: &String) ->Ostree
         metadata: metadata,
         commit: commit,
     })
+}
+
+pub fn get_delta_superblock (repo_path: &path::PathBuf, delta: &String) ->OstreeResult<OstreeDeltaSuperblock> {
+    let mut path = get_deltas_path(repo_path);
+    path.push(delta[0..2].to_string());
+    path.push(delta[2..].to_string());
+    path.push("superblock".to_string());
+
+    return load_delta_superblock_file(&path);
 }
 
 pub fn parse_ref (repo_path: &path::PathBuf, ref_name: &str) ->OstreeResult<String> {
