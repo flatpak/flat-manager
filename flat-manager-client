@@ -365,8 +365,6 @@ def publish_build(build_url, wait, token):
         raise ApiError(resp)
     job = resp.json()
     job_url = resp.headers['location'];
-    reparse_job_results(job)
-    job["location"] = resp.headers['location'];
     if wait:
         print("Waiting for publish job")
         job = wait_for_job (job_url, token);
