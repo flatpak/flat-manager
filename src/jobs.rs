@@ -264,18 +264,21 @@ fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
 
 fn do_command(mut cmd: Command) -> JobResult<()>
 {
-    let output = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .before_exec (|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            unsafe { libc::setsid() };
-            Ok(())
-        })
-        .output()
-        .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?;
+    let output =
+        unsafe {
+            cmd
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .pre_exec (|| {
+                    // Setsid in the child to avoid SIGINT on server killing
+                    // child and breaking the graceful shutdown
+                    libc::setsid();
+                    Ok(())
+                })
+                .output()
+                .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?
+        };
 
     if !output.status.success() {
         return Err(JobError::new(&format!("Command {:?} exited unsuccesfully: {}", &cmd, String::from_utf8_lossy(&output.stderr))))
@@ -283,7 +286,7 @@ fn do_command(mut cmd: Command) -> JobResult<()>
     Ok(())
 }
 
-fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<JobInstance> {
+fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance> {
     match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => CommitJobInstance::new(job),
         Some(JobKind::Publish) => PublishJobInstance::new(job),
@@ -307,7 +310,7 @@ struct InvalidJobInstance {
 
 impl InvalidJobInstance {
     fn new(job: Job,
-           error: JobError) -> Box<JobInstance> {
+           error: JobError) -> Box<dyn JobInstance> {
         Box::new(InvalidJobInstance {
             job_id: job.id,
             error: error,
@@ -335,7 +338,7 @@ struct CommitJobInstance {
 }
 
 impl CommitJobInstance {
-    fn new(job: Job) -> Box<JobInstance> {
+    fn new(job: Job) -> Box<dyn JobInstance> {
         if let Ok(commit_job) = serde_json::from_str::<CommitJob>(&job.contents) {
             Box::new(CommitJobInstance {
                 job_id: job.id,
@@ -504,7 +507,7 @@ struct PublishJobInstance {
 }
 
 impl PublishJobInstance {
-    fn new(job: Job) -> Box<JobInstance> {
+    fn new(job: Job) -> Box<dyn JobInstance> {
         if let Ok(publish_job) = serde_json::from_str::<PublishJob>(&job.contents) {
             Box::new(PublishJobInstance {
                 job_id: job.id,
@@ -687,7 +690,7 @@ struct UpdateRepoJobInstance {
 }
 
 impl UpdateRepoJobInstance {
-    fn new(job: Job, delta_generator: Addr<DeltaGenerator>) -> Box<JobInstance> {
+    fn new(job: Job, delta_generator: Addr<DeltaGenerator>) -> Box<dyn JobInstance> {
         if let Ok(update_repo_job) = serde_json::from_str::<UpdateRepoJob>(&job.contents) {
             Box::new(UpdateRepoJobInstance {
                 delta_generator: delta_generator,
@@ -936,7 +939,7 @@ impl JobInstance for UpdateRepoJobInstance {
     }
 }
 
-fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box<JobInstance>, DieselError> {
+fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box<dyn JobInstance>, DieselError> {
     use diesel::dsl::exists;
     use diesel::dsl::not;
     use diesel::dsl::now;
@@ -960,7 +963,7 @@ fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box
                         )
                     )));
 
-            let mut new_instances : Vec<Box<JobInstance>> = match for_repo {
+            let mut new_instances : Vec<Box<dyn JobInstance>> = match for_repo {
                 None => {
                     jobs::table
                         .order(jobs::id)
