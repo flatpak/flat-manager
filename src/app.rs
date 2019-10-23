@@ -388,14 +388,19 @@ pub fn create_app(
                 .resource("/delta/worker", |r| r.route().f(api::ws_delta))
                 .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with(api::delta_upload))
         })
+        .scope("/repo", |scope| {
+            scope
+                .middleware(TokenParser::optional(&config.secret))
+                .resource("/{repo}/{tail:.*}", |r| {
+                    r.name("repo");
+                    r.get().f(handle_repo);
+                    r.head().f(handle_repo);
+                    r.f(|_| HttpResponse::MethodNotAllowed())
+                })
+        })
         .resource("/build-repo/{id}/{tail:.*}", |r| {
             r.get().f(handle_build_repo);
             r.head().f(handle_build_repo);
-            r.f(|_| HttpResponse::MethodNotAllowed())
-        })
-        .resource("/repo/{repo}/{tail:.*}", |r| {
-            r.get().f(handle_repo);
-            r.head().f(handle_repo);
             r.f(|_| HttpResponse::MethodNotAllowed())
         })
         .resource("/status", |r| r.method(Method::GET).with(api::status))
