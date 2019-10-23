@@ -1,6 +1,8 @@
 use actix::prelude::*;
 use actix_web::{self, App, http::Method, HttpRequest, HttpResponse,
                 fs::NamedFile, error::ErrorNotFound};
+use actix_web::http::header::{CACHE_CONTROL, HeaderValue};
+use actix_web::middleware::{Middleware, Response};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -338,11 +340,32 @@ fn get_commit_for_file(path: &PathBuf) -> Option<ostree::OstreeCommit> {
     return None;
 }
 
+struct RepoHeaders;
+struct RepoHeadersData {
+    nocache: bool,
+}
+
+impl Middleware<AppState> for RepoHeaders {
+    fn response(&self, req: &HttpRequest<AppState>, mut resp: HttpResponse) -> actix_web::Result<Response> {
+        if let Some(data) = req.extensions().get::<RepoHeadersData>() {
+            if data.nocache {
+                resp.headers_mut().insert(CACHE_CONTROL,
+                                          HeaderValue::from_static("no-store"));
+            }
+        }
+        Ok(Response::Done(resp))
+    }
+}
+
 fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, repoconfig: &RepoConfig, path: &PathBuf) -> Result<(), ApiError> {
     let token_type = commit.metadata.get("xa.token-type").map(|v| v.as_i32().unwrap_or(0)).unwrap_or(repoconfig.default_token_type);
     if !repoconfig.require_auth_for_token_types.contains(&token_type) {
         return Ok(());
     }
+
+    req.extensions_mut().insert(RepoHeadersData {
+        nocache: true,
+    });
 
     let commit_ref = commit.metadata.get("xa.ref").ok_or (ApiError::InternalServerError(format!("No ref binding for commit {:?}", path)))?.as_string()?;
     let ref_parts: Vec<&str> = commit_ref.split('/').collect();
@@ -351,6 +374,7 @@ fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, 
     }
     Ok(())
 }
+
 
 fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
     let tail: String = req.match_info().query("tail")?;
@@ -430,6 +454,7 @@ pub fn create_app(
         .scope("/repo", |scope| {
             scope
                 .middleware(TokenParser::optional(&config.secret))
+                .middleware(RepoHeaders)
                 .resource("/{repo}/{tail:.*}", |r| {
                     r.name("repo");
                     r.get().f(handle_repo);
