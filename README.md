@@ -134,9 +134,8 @@ flatpak and flatpak-builer to make sure you can build from Yaml files.
 This would normally happen on a different machine than the one serving
 the repository, but for testing we can just do it in a subdirectory:
 
-    mkdir test-build
+    git clone https://github.com/flathub/org.gnome.eog.git test-build
     cd test-build
-    wget https://raw.githubusercontent.com/flathub/org.gnome.eog/master/org.gnome.eog.yml
     flatpak-builder --install-deps-from=flathub --repo=local-repo builddir org.gnome.eog.yml
     cd ..
 
