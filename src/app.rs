@@ -147,6 +147,10 @@ pub struct RepoConfig {
     pub name: String,
     pub suggested_repo_name: Option<String>,
     pub path: PathBuf,
+    #[serde(default)]
+    pub default_token_type: i32,
+    #[serde(default)]
+    pub require_auth_for_token_types: Vec<i32>,
     pub collection_id: Option<String>,
     #[serde(default)]
     pub deploy_collection_id: bool,
