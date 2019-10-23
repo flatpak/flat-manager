@@ -93,7 +93,7 @@ class AsyncNamedFilePart(aiohttp.payload.Payload):
         super().__init__(value, *args, **kwargs)
 
         if self._filename is not None and disposition is not None:
-            self.set_content_disposition(disposition, filename=self._filename)
+            self.set_content_disposition(disposition, filename=self._filename, quote_fields=False)
 
         self._size = os.stat(value).st_size
 
