@@ -94,7 +94,7 @@ impl<S> ClaimsValidator for HttpRequest<S> {
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
         self.validate_claims(|claims| {
             if !id_matches_one_prefix(id, &claims.prefixes) {
-                return Err(ApiError::NotEnoughPermissions("Not matching prefix in token".to_string()));
+                return Err(ApiError::NotEnoughPermissions(format!("Id {} not matching prefix in token", id)));
             }
             Ok(())
         })
