@@ -51,10 +51,10 @@ class UsageException(Exception):
         return self.msg
 
 class ApiError(Exception):
-    def __init__(self, response, text):
+    def __init__(self, response, body):
         self.url = response.url
         self.status = response.status
-        self.error = text
+        self.error = body
 
         try:
             self.body = json.loads(response);
@@ -196,8 +196,8 @@ async def missing_objects(session, build_url, token, wanted):
         resp = await session.get(build_url + "/missing_objects", data=data, headers=headers)
         async with resp:
             if resp.status != 200:
-                raise ApiError(resp)
-            data = resp.json()
+                raise ApiError(resp, await resp.text())
+            data = await resp.json()
             missing.extend(data["missing"])
     return missing
 
@@ -265,9 +265,9 @@ async def create_ref(session, build_url, token, ref, commit):
     resp = await session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.text())
 
-        data = resp.json()
+        data = await resp.json()
         return data
 
 async def add_extra_ids(session, build_url, token, extra_ids):
@@ -275,16 +275,16 @@ async def add_extra_ids(session, build_url, token, extra_ids):
     resp = await session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.text())
 
-        data = resp.json()
+        data = await resp.json()
         return data
 
 async def get_build(session, build_url, token):
     resp = await session.get(build_url, headers={'Authorization': 'Bearer ' + token})
     if resp.status != 200:
-        raise ApiError(resp)
-    data = resp.json()
+        raise ApiError(resp, await resp.text())
+    data = await resp.json()
     return data
 
 # For stupid reasons this is a string with json, lets expand it
@@ -296,8 +296,8 @@ async def get_job(session, job_url, token):
     resp = await session.get(job_url, headers={'Authorization': 'Bearer ' + token}, json={})
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
-        data = resp.json()
+            raise ApiError(resp, await resp.text())
+        data = await resp.json()
         return data
 
 async def wait_for_job(session, job_url, token):
@@ -312,7 +312,7 @@ async def wait_for_job(session, job_url, token):
             async with resp:
                 if resp.status == 200:
                     error_iterations = 0
-                    job = resp.json()
+                    job = await resp.json()
                     job_status = job['status']
                     if job_status == 0 and not reported_delay:
                         reported_delay = True
@@ -345,7 +345,7 @@ async def wait_for_job(session, job_url, token):
                     if error_iterations <= 5:
                         print("Unexpected response %s getting job log, ignoring" % resp.status)
                     else:
-                        raise ApiError(resp)
+                        raise ApiError(resp, await resp.text())
         except OSError as e:
             if e.args[0] == errno.ECONNRESET:
                 # Client disconnected, retry
@@ -375,9 +375,9 @@ async def commit_build(session, build_url, eol, eol_rebase, wait, token):
     })
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.text())
 
-        job = resp.json()
+        job = await resp.json()
         job_url = resp.headers['location'];
 
         if wait:
@@ -393,9 +393,9 @@ async def publish_build(session, build_url, wait, token):
     resp = await session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
+            raise ApiError(resp, await resp.text())
 
-        job = resp.json()
+        job = await resp.json()
         job_url = resp.headers['location'];
 
         if wait:
@@ -411,8 +411,8 @@ async def purge_build(session, build_url, token):
     resp = await session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
-        return resp.json()
+            raise ApiError(resp, await resp.text())
+        return await resp.json()
 
 async def create_token(session, manager_url, token, name, subject, scope, duration):
     token_url = urljoin(manager_url, "/api/v1/token_subset")
@@ -424,8 +424,8 @@ async def create_token(session, manager_url, token, name, subject, scope, durati
     })
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
-        return resp.json()
+            raise ApiError(resp, await resp.text())
+        return await resp.json()
 
 def get_object_multipart(repo_path, object):
     return AsyncNamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
@@ -437,8 +437,8 @@ async def create_command(session, args):
     })
     async with resp:
         if resp.status != 200:
-            raise ApiError(resp)
-        data = resp.json()
+            raise ApiError(resp, await resp.text())
+        data = await resp.json()
         data["location"] = resp.headers['location']
         if not args.print_output:
             print(resp.headers['location'])
