@@ -16,7 +16,6 @@
 
 import aiohttp
 import asyncio
-import requests
 import gzip
 import base64
 import binascii
@@ -189,7 +188,7 @@ def chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
-def missing_objects(build_url, token, wanted):
+async def missing_objects(session, build_url, token, wanted):
     missing=[]
     for chunk in chunks(wanted, 2000):
         wanted_json=json.dumps({'wanted': chunk}).encode('utf-8')
@@ -199,12 +198,12 @@ def missing_objects(build_url, token, wanted):
             'Content-Encoding': 'gzip',
             'Content-Type': 'application/json'
         }
-        session = requests.Session()
-        resp = session.get(build_url + "/missing_objects", data=data, headers=headers)
-        if resp.status_code != 200:
-            raise ApiError(resp)
-        data = resp.json()
-        missing.extend(data["missing"])
+        resp = await session.get(build_url + "/missing_objects", data=data, headers=headers)
+        async with resp:
+            if resp.status_code != 200:
+                raise ApiError(resp)
+            data = resp.json()
+            missing.extend(data["missing"])
     return missing
 
 async def upload_files(session, build_url, token, files):
@@ -220,7 +219,7 @@ async def upload_files(session, build_url, token, files):
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
 
-async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta):
+async def upload_deltas(session, repo_path, build_url, token, deltas, refs, ignore_delta):
     if not len(deltas):
         return
 
@@ -240,57 +239,54 @@ async def upload_deltas(repo_path, build_url, token, deltas, refs, ignore_delta)
                         req.append(AsyncNamedFilePart(delta_dir + "/" + part, filename = delta_name + "." + part + ".delta"))
 
     if len(req):
-        timeout = aiohttp.ClientTimeout(total=30*60)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            await upload_files(session, build_url, token, req)
-
-
-async def upload_objects(repo_path, build_url, token, objects):
-    req = []
-    total_size = 0
-    timeout = aiohttp.ClientTimeout(total=90*60)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        for file_obj in objects:
-            named = get_object_multipart(repo_path, file_obj)
-            file_size = named.size
-            if total_size + file_size > UPLOAD_CHUNK_LIMIT: # The new object would bring us over the chunk limit
-                if len(req) > 0: # We already have some objects, upload those first
-                    next_req = [named]
-                    total_size = file_size
-                else:
-                    next_req  =  []
-                    req.append(named)
-                    total_size = 0
-                await upload_files(session, build_url, token, req)
-                req = next_req
-            else:
-                total_size = total_size + file_size
-                req.append(named)
-
-        # Upload any remainder
         await upload_files(session, build_url, token, req)
 
-def create_ref(build_url, token, ref, commit):
+
+async def upload_objects(session, repo_path, build_url, token, objects):
+    req = []
+    total_size = 0
+    for file_obj in objects:
+        named = get_object_multipart(repo_path, file_obj)
+        file_size = named.size
+        if total_size + file_size > UPLOAD_CHUNK_LIMIT: # The new object would bring us over the chunk limit
+            if len(req) > 0: # We already have some objects, upload those first
+                next_req = [named]
+                total_size = file_size
+            else:
+                next_req  =  []
+                req.append(named)
+                total_size = 0
+            await upload_files(session, build_url, token, req)
+            req = next_req
+        else:
+            total_size = total_size + file_size
+            req.append(named)
+
+    # Upload any remainder
+    await upload_files(session, build_url, token, req)
+
+async def create_ref(session, build_url, token, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
-    session = requests.Session()
-    resp = session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    data = resp.json()
-    return data;
+    resp = await session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
 
-def add_extra_ids(build_url, token, extra_ids):
+        data = resp.json()
+        return data
+
+async def add_extra_ids(session, build_url, token, extra_ids):
     print("Adding extra ids %s" % (extra_ids))
-    session = requests.Session()
-    resp = session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    data = resp.json()
-    return data;
+    resp = await session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
 
-def get_build(build_url, token):
-    session = requests.Session()
-    resp = session.get(build_url, headers={'Authorization': 'Bearer ' + token})
+        data = resp.json()
+        return data
+
+async def get_build(session, build_url, token):
+    resp = await session.get(build_url, headers={'Authorization': 'Bearer ' + token})
     if resp.status_code != 200:
         raise ApiError(resp)
     data = resp.json()
@@ -301,17 +297,15 @@ def reparse_job_results(job):
     job["results"] = json.loads(job.get("results", "{}"))
     return job
 
-def get_job(job_url, token):
-    session = requests.Session()
-    resp = session.get(job_url,
-                       headers={'Authorization': 'Bearer ' + token},
-                       json={})
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    data = resp.json()
-    return data
+async def get_job(session, job_url, token):
+    resp = await session.get(job_url, headers={'Authorization': 'Bearer ' + token}, json={})
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
+        data = resp.json()
+        return data
 
-def wait_for_job(job_url, token):
+async def wait_for_job(session, job_url, token):
     reported_delay = False
     old_job_status  = 0
     printed_len = 0
@@ -319,54 +313,53 @@ def wait_for_job(job_url, token):
     error_iterations = 0
     while True:
         try:
-            session = requests.Session()
-            resp = session.get(job_url,
-                               headers={'Authorization': 'Bearer ' + token},
-                               json={'log-offset': printed_len})
-            if resp.status_code == 200:
-                error_iterations = 0
-                job = resp.json()
-                job_status = job['status']
-                if job_status == 0 and not reported_delay:
-                    reported_delay = True
-                    start_after_struct = job.get("start_after", None)
-                    if start_after_struct:
-                        start_after = start_after_struct.get("secs_since_epoch", None)
-                        now = time.time()
-                        if start_after and start_after > now:
-                            print("Waiting %d seconds before starting job" % (int(start_after - now)))
-                if job_status > 0 and old_job_status == 0:
-                    print("/ Job was started");
-                old_job_status = job_status
-                log = job['log']
-                if len(log) > 0:
-                    iterations_since_change=0
-                    for line in log.splitlines(True):
-                        print("| %s" % line, end="")
-                    printed_len = printed_len + len(log)
-                else:
-                    iterations_since_change=iterations_since_change+1
-                if job_status > 1:
-                    if job_status == 2:
-                        print("\ Job completed successfully")
+            resp = await session.get(job_url, headers={'Authorization': 'Bearer ' + token}, json={'log-offset': printed_len})
+            async with resp:
+                if resp.status_code == 200:
+                    error_iterations = 0
+                    job = resp.json()
+                    job_status = job['status']
+                    if job_status == 0 and not reported_delay:
+                        reported_delay = True
+                        start_after_struct = job.get("start_after", None)
+                        if start_after_struct:
+                            start_after = start_after_struct.get("secs_since_epoch", None)
+                            now = time.time()
+                            if start_after and start_after > now:
+                                print("Waiting %d seconds before starting job" % (int(start_after - now)))
+                    if job_status > 0 and old_job_status == 0:
+                        print("/ Job was started");
+                    old_job_status = job_status
+                    log = job['log']
+                    if len(log) > 0:
+                        iterations_since_change=0
+                        for line in log.splitlines(True):
+                            print("| %s" % line, end="")
+                        printed_len = printed_len + len(log)
                     else:
-                        print("\ Job failed")
-                    return job
-            else:
-                iterations_since_change=4 # Start at 4 so we ramp up the delay faster
-                error_iterations=error_iterations + 1
-                if error_iterations <= 5:
-                    print("Unexpected response %s getting job log, ignoring" % resp.status_code)
+                        iterations_since_change=iterations_since_change+1
+                    if job_status > 1:
+                        if job_status == 2:
+                            print("\ Job completed successfully")
+                        else:
+                            print("\ Job failed")
+                        return job
                 else:
-                    raise ApiError(resp)
-
-
-        except requests.exceptions.ConnectionError as e:
-            # Client disconnected, retry
-            # Not sure exactly why, but i got a lot of ConnectionResetErrors here
-            # in tests. I guess the server stops reusing a http2 session after a bit
-            # Should be fine to retry with the backof
-            pass
+                    iterations_since_change=4 # Start at 4 so we ramp up the delay faster
+                    error_iterations=error_iterations + 1
+                    if error_iterations <= 5:
+                        print("Unexpected response %s getting job log, ignoring" % resp.status_code)
+                    else:
+                        raise ApiError(resp)
+        except OSError as e:
+            if e.args[0] == errno.ECONNRESET:
+                # Client disconnected, retry
+                # Not sure exactly why, but i got a lot of ConnectionResetErrors here
+                # in tests. I guess the server stops reusing a http2 session after a bit
+                # Should be fine to retry with the backof
+                pass
+            else:
+                raise
         # Some polling backoff to avoid loading the server
         if iterations_since_change <= 1:
             sleep_time=1
@@ -380,77 +373,81 @@ def wait_for_job(job_url, token):
             sleep_time=60
         time.sleep(sleep_time)
 
-def commit_build(build_url, eol, eol_rebase, wait, token):
+async def commit_build(session, build_url, eol, eol_rebase, wait, token):
     print("Committing build %s" % (build_url))
-    session = requests.Session()
-    resp = session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {
+    resp = await session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {
         "endoflife": eol, "endoflife_rebase": eol_rebase
     })
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    job = resp.json()
-    job_url = resp.headers['location'];
-    if wait:
-        print("Waiting for commit job")
-        job = wait_for_job (job_url, token);
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
 
-    reparse_job_results(job)
-    job["location"] = job_url
-    return job
+        job = resp.json()
+        job_url = resp.headers['location'];
 
-def publish_build(build_url, wait, token):
+        if wait:
+            print("Waiting for commit job")
+            job = wait_for_job(session, job_url, token);
+
+        reparse_job_results(job)
+        job["location"] = job_url
+        return job
+
+async def publish_build(session, build_url, wait, token):
     print("Publishing build %s" % (build_url))
-    session = requests.Session()
-    resp = session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    job = resp.json()
-    job_url = resp.headers['location'];
-    if wait:
-        print("Waiting for publish job")
-        job = wait_for_job (job_url, token);
+    resp = await session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
 
-    reparse_job_results(job)
-    job["location"] = job_url
-    return job;
+        job = resp.json()
+        job_url = resp.headers['location'];
 
-def purge_build(build_url, token):
+        if wait:
+            print("Waiting for publish job")
+            job = wait_for_job(session, job_url, token);
+
+        reparse_job_results(job)
+        job["location"] = job_url
+        return job
+
+async def purge_build(session, build_url, token):
     print("Purging build %s" % (build_url))
-    session = requests.Session()
-    resp = session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    return resp.json()
+    resp = await session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
+        return resp.json()
 
-def create_token(manager_url, token, name, subject, scope, duration):
+async def create_token(session, manager_url, token, name, subject, scope, duration):
     token_url = urljoin(manager_url, "/api/v1/token_subset")
-    session = requests.Session()
-    resp = session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
+    resp = await session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
         "name": name,
         "sub": subject,
         "scope": scope,
         "duration": duration,
-    } )
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    return resp.json()
+    })
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
+        return resp.json()
 
 def get_object_multipart(repo_path, object):
     return AsyncNamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
-def create_command(args):
+async def create_command(session, args):
     build_url = urljoin(args.manager_url, "/api/v1/build")
-    session = requests.Session()
-    resp = session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={
+    resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={
         "repo": args.repo
-    } )
-    if resp.status_code != 200:
-        raise ApiError(resp)
-    data = resp.json()
-    data["location"] = resp.headers['location']
-    if not args.print_output:
-        print(resp.headers['location'])
-    return data
+    })
+    async with resp:
+        if resp.status_code != 200:
+            raise ApiError(resp)
+        data = resp.json()
+        data["location"] = resp.headers['location']
+        if not args.print_output:
+            print(resp.headers['location'])
+        return data
 
 def delta_name_part_encode(commit):
     return base64.b64encode(binascii.unhexlify(commit), b"+_")[:-1].decode("utf-8")
@@ -470,7 +467,7 @@ def build_url_to_api(build_url):
     path = os.path.dirname(os.path.dirname(parts.path))
     return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
 
-async def push_command(args):
+async def push_command(session, args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
         local_repo.open(None)
@@ -512,11 +509,11 @@ async def push_command(args):
 
     # First upload all missing file objects
     print("Uploading file objects")
-    await upload_objects(args.repo_path, args.build_url, token, missing_file_objects)
+    await upload_objects(session, args.repo_path, args.build_url, token, missing_file_objects)
 
     # Then all the metadata
     print("Uploading metadata objects")
-    await upload_objects(args.repo_path, args.build_url, token, missing_metadata_objects)
+    await upload_objects(session, args.repo_path, args.build_url, token, missing_metadata_objects)
 
     _, deltas = local_repo.list_static_delta_names()
     print("Uploading deltas")
@@ -524,11 +521,11 @@ async def push_command(args):
 
     # Then the refs
     for ref, commit in refs.items():
-        create_ref(args.build_url, token, ref, commit)
+        create_ref(session, args.build_url, token, ref, commit)
 
     # Then any extra ids
     if args.extra_id:
-        add_extra_ids(args.build_url, token, args.extra_id)
+        add_extra_ids(session, args.build_url, token, args.extra_id)
 
     commit_job = None
     publish_job = None
@@ -552,7 +549,7 @@ async def push_command(args):
             reparse_job_results(update_job)
             update_job["location"] = update_job_url
 
-    data = get_build(args.build_url, args.token)
+    data = get_build(session, args.build_url, args.token)
     if commit_job:
         data["commit_job"] = commit_job
     if publish_job:
@@ -561,38 +558,44 @@ async def push_command(args):
         data["update_job"] = update_job
     return data
 
-def commit_command(args):
-    job = commit_build(args.build_url, args.end_of_life, args.end_of_life_rebase, args.wait, args.token)
+def commit_command(session, args):
+    job = commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.wait, args.token)
     return job
 
-def publish_command(args):
-    job = publish_build(args.build_url, args.wait, args.token)
+def publish_command(session, args):
+    job = publish_build(session, args.build_url, args.wait, args.token)
     update_job_id = job.get("results", {}).get("update-repo-job", None)
     if update_job_id:
         print("Queued repo update job %d" %(update_job_id))
         update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
         if args.wait_update:
             print("Waiting for repo update job")
-            update_job = wait_for_job (update_job_url, args.token);
+            update_job = wait_for_job(session, update_job_url, args.token);
         else:
-            update_job = get_job(update_job_url, args.token)
+            update_job = get_job(session, update_job_url, args.token)
         reparse_job_results(update_job)
         update_job["location"] = update_job_url
     return job
 
-def purge_command(args):
-    job = purge_build(args.build_url, args.token)
+def purge_command(session, args):
+    job = purge_build(session, args.build_url, args.token)
     return job
 
-def create_token_command(args):
-    data = create_token(args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
+def create_token_command(session, args):
+    data = create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
     if not args.print_output:
         print(data['token'])
     return data
 
-def follow_job_command(args):
-    job = wait_for_job(args.job_url, args.token)
+def follow_job_command(session, args):
+    job = wait_for_job(session, args.job_url, args.token)
     return job
+
+async def run_with_session(args):
+    timeout = aiohttp.ClientTimeout(total=90*60)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        result = loop.run_until_complete(args.func(session, args))
+    return result
 
 if __name__ == '__main__':
     progname = os.path.basename(sys.argv[0])
@@ -699,11 +702,8 @@ if __name__ == '__main__':
     res = 1
     output = None
     try:
-        if args.subparser_name == "push":
-            loop = asyncio.get_event_loop()
-            result = loop.run_until_complete(args.func(args))
-        else:
-            result = args.func(args)
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(run_with_session(args))
 
         output = {
             "command": args.subparser_name,
