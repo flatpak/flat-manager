@@ -51,15 +51,10 @@ class UsageException(Exception):
         return self.msg
 
 class ApiError(Exception):
-    def __init__(self, response, text=None):
+    def __init__(self, response, text):
         self.url = response.url
-
-        if not text:
-            self.status = response.status_code
-            self.error = response.json()
-        else:
-            self.status = response.status
-            self.error = text
+        self.status = response.status
+        self.error = text
 
         try:
             self.body = json.loads(response);
