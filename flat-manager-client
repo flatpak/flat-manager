@@ -497,14 +497,14 @@ async def push_command(session, args):
 
     print("Refs contain %d metadata objects" % (len(metadata_objects)))
 
-    missing_metadata_objects = missing_objects(args.build_url, token, list(metadata_objects))
+    missing_metadata_objects = await missing_objects(session, args.build_url, token, list(metadata_objects))
 
     print("Remote missing %d of those" % (len(missing_metadata_objects)))
 
     file_objects = local_needed_files(local_repo, missing_metadata_objects)
     print("Has %d file objects for those" % (len(file_objects)))
 
-    missing_file_objects = missing_objects(args.build_url, token, list(file_objects))
+    missing_file_objects = await missing_objects(session, args.build_url, token, list(file_objects))
     print("Remote missing %d of those" % (len(missing_file_objects)))
 
     # First upload all missing file objects
