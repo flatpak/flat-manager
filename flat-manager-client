@@ -53,7 +53,6 @@ class ApiError(Exception):
     def __init__(self, response, body):
         self.url = response.url
         self.status = response.status
-        self.error = body
 
         try:
             self.body = json.loads(response);
@@ -397,6 +396,16 @@ async def publish_build(session, build_url, wait, token):
     print("Publishing build %s" % (build_url))
     resp = await session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
     async with resp:
+        if resp.status == 400:
+            body = await resp.text()
+            try:
+                msg = json.loads(body)
+                if msg.get("current-state", "") == "published":
+                    print("the build has been already published")
+                    return {}
+            except:
+                pass
+
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
 
