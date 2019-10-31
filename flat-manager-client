@@ -589,7 +589,7 @@ def follow_job_command(session, args):
 async def run_with_session(args):
     timeout = aiohttp.ClientTimeout(total=90*60)
     async with aiohttp.ClientSession(timeout=timeout) as session:
-        result = loop.run_until_complete(args.func(session, args))
+        result = await args.func(session, args)
     return result
 
 if __name__ == '__main__':
