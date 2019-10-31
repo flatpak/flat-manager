@@ -512,15 +512,15 @@ async def push_command(session, args):
 
     _, deltas = local_repo.list_static_delta_names()
     print("Uploading deltas")
-    await upload_deltas(args.repo_path, args.build_url, token, deltas, refs, args.ignore_delta)
+    await upload_deltas(session, args.repo_path, args.build_url, token, deltas, refs, args.ignore_delta)
 
     # Then the refs
     for ref, commit in refs.items():
-        create_ref(session, args.build_url, token, ref, commit)
+        await create_ref(session, args.build_url, token, ref, commit)
 
     # Then any extra ids
     if args.extra_id:
-        add_extra_ids(session, args.build_url, token, args.extra_id)
+        await add_extra_ids(session, args.build_url, token, args.extra_id)
 
     commit_job = None
     publish_job = None
@@ -544,7 +544,7 @@ async def push_command(session, args):
             reparse_job_results(update_job)
             update_job["location"] = update_job_url
 
-    data = get_build(session, args.build_url, args.token)
+    data = await get_build(session, args.build_url, args.token)
     if commit_job:
         data["commit_job"] = commit_job
     if publish_job:
@@ -553,37 +553,37 @@ async def push_command(session, args):
         data["update_job"] = update_job
     return data
 
-def commit_command(session, args):
-    job = commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.wait, args.token)
+async def commit_command(session, args):
+    job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.wait, args.token)
     return job
 
-def publish_command(session, args):
-    job = publish_build(session, args.build_url, args.wait, args.token)
+async def publish_command(session, args):
+    job = await publish_build(session, args.build_url, args.wait, args.token)
     update_job_id = job.get("results", {}).get("update-repo-job", None)
     if update_job_id:
         print("Queued repo update job %d" %(update_job_id))
         update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
         if args.wait_update:
             print("Waiting for repo update job")
-            update_job = wait_for_job(session, update_job_url, args.token);
+            update_job = await wait_for_job(session, update_job_url, args.token);
         else:
-            update_job = get_job(session, update_job_url, args.token)
+            update_job = await get_job(session, update_job_url, args.token)
         reparse_job_results(update_job)
         update_job["location"] = update_job_url
     return job
 
-def purge_command(session, args):
-    job = purge_build(session, args.build_url, args.token)
+async def purge_command(session, args):
+    job = await purge_build(session, args.build_url, args.token)
     return job
 
-def create_token_command(session, args):
-    data = create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
+async def create_token_command(session, args):
+    data = await create_token(session, args.manager_url, args.token, args.name, args.subject, args.scope, args.duration)
     if not args.print_output:
         print(data['token'])
     return data
 
-def follow_job_command(session, args):
-    job = wait_for_job(session, args.job_url, args.token)
+async def follow_job_command(session, args):
+    job = await wait_for_job(session, args.job_url, args.token)
     return job
 
 async def run_with_session(args):
