@@ -14,35 +14,33 @@
 # with this program; if not, write to the Free Software Foundation, Inc.,
 # 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
-import aiohttp
 import asyncio
-import gzip
 import base64
 import binascii
+import errno
+import fnmatch
+import gzip
 import json
 import logging
 import os
-import os
 import sys
-import traceback
-from urllib.parse import urlparse,urlunparse,urljoin,urlsplit,urlunsplit
-import errno
 import time
-import fnmatch
-
+import traceback
 from argparse import ArgumentParser
 from functools import reduce
+from urllib.parse import urljoin, urlparse, urlsplit, urlunparse, urlunsplit
+
+import aiohttp
 
 import gi
 gi.require_version('OSTree', '1.0')
-from gi.repository import GLib, Gio, OSTree
+from gi.repository import Gio, GLib, OSTree
 
 UPLOAD_CHUNK_LIMIT = 4 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
-
 
 class UsageException(Exception):
     def __init__(self, msg):
