@@ -31,6 +31,7 @@ from functools import reduce
 from urllib.parse import urljoin, urlparse, urlsplit, urlunparse, urlunsplit
 
 import aiohttp
+from tenacity import retry, stop_after_attempt, wait_fixed
 
 import gi
 gi.require_version('OSTree', '1.0')
@@ -199,6 +200,12 @@ async def missing_objects(session, build_url, token, wanted):
             missing.extend(data["missing"])
     return missing
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(20),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
