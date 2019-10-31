@@ -31,7 +31,7 @@ from functools import reduce
 from urllib.parse import urljoin, urlparse, urlsplit, urlunparse, urlunsplit
 
 import aiohttp
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
 
 import gi
 gi.require_version('OSTree', '1.0')
