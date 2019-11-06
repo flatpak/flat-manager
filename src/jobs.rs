@@ -72,6 +72,12 @@ fn generate_flatpakref(ref_name: &String,
     let app_id = &parts[1];
     let branch = &parts[3];
 
+    let is_runtime = if parts[0] == "runtime" {
+        "true"
+    } else {
+        "false"
+    };
+
     let (url, maybe_gpg_content) = match maybe_build_id {
         Some(build_id) => (
             format!("{}/build-repo/{}", config.base_url, build_id),
@@ -97,9 +103,9 @@ fn generate_flatpakref(ref_name: &String,
 Name={}
 Branch={}
 Title={}
-IsRuntime=false
+IsRuntime={}
 Url={}
-"#, app_id, branch, title, url);
+"#, app_id, branch, title, is_runtime, url);
 
     /* We only want to deploy the collection ID if the flatpakref is being generated for the main
      * repo not a build repo.
@@ -411,7 +417,10 @@ impl CommitJobInstance {
             let commit = ostree::parse_ref(&build_repo_path, &build_ref.ref_name)?;
             commits.insert(build_ref.ref_name.to_string(), commit);
 
-            if build_ref.ref_name.starts_with("app/") {
+            let unwanted_exts = [".Debug", ".Locale", ".Sources", ".Docs"];
+            let ref_id_parts: Vec<&str> = build_ref.ref_name.split('/').collect();
+
+            if build_ref.ref_name.starts_with("app/") || (build_ref.ref_name.starts_with("runtime/") && !unwanted_exts.iter().any(|&ext| ref_id_parts[1].ends_with(ext))) {
                 let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(self.build_id), config, repoconfig);
                 let path = build_repo_path.join(&filename);
                 File::create(&path)?.write_all(contents.as_bytes())?;
