@@ -90,7 +90,7 @@ class AsyncNamedFilePart(aiohttp.payload.Payload):
         self._size = os.stat(value).st_size
 
     async def write(self, writer):
-        if self._file is None:
+        if self._file is None or self._file.closed:
             self._file = open(self._value, 'rb')
         try:
             chunk = self._file.read(DEFAULT_LIMIT)
