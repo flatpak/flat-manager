@@ -200,7 +200,7 @@ async def missing_objects(session, build_url, token, wanted):
     return missing
 
 @retry(
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(6),
     wait=wait_fixed(20),
     retry=retry_if_exception_type(ApiError),
     reraise=True,
