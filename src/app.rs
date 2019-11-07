@@ -110,10 +110,14 @@ mod tests {
 pub struct Claims {
     pub sub: String, // "build", "build/N"
     pub scope: Vec<String>, // "build", "upload" "publish"
-    pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
-    pub repos: Vec<String>, // list of repo names or a '' for match all
-    pub name: String, // for debug/logs only
     pub exp: i64,
+
+    // Below are optional, and not used for e.g. repo claims
+    #[serde(default)]
+    pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
+    #[serde(default)]
+    pub repos: Vec<String>, // list of repo names or a '' for match all
+    pub name: Option<String>, // for debug/logs only
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
