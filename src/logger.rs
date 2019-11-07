@@ -49,7 +49,11 @@ impl Logger {
             let rt = ((time::now() - entry_time.0).num_nanoseconds().unwrap_or(0) as f64) / 1_000_000_000.0;
 
             let token_name = if let Some(ref claims) = req.get_claims() {
-                claims.name.clone()
+                if let Some(ref name) = claims.name {
+                    name.clone()
+                } else {
+                    "-".to_string()
+                }
             } else {
                 "-".to_string()
             };

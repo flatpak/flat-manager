@@ -133,7 +133,7 @@ pub fn token_subset(
                 let new_claims = Claims {
                     sub: args.sub.clone(),
                     scope: args.scope.clone(),
-                    name: claims.name + "/" + &args.name,
+                    name: Some(claims.name.unwrap_or("".to_string()) + "/" + &args.name),
                     prefixes: { if let Some(ref prefixes) = args.prefixes { prefixes.clone() } else { claims.prefixes.clone() } },
                     repos: { if let Some(ref repos) = args.repos { repos.clone() } else { claims.repos.clone() } },
                     exp: new_exp,
