@@ -386,7 +386,7 @@ async def commit_build(session, build_url, eol, eol_rebase, wait, token):
 
         if wait:
             print("Waiting for commit job")
-            job = wait_for_job(session, job_url, token);
+            job = await wait_for_job(session, job_url, token);
 
         reparse_job_results(job)
         job["location"] = job_url
@@ -414,7 +414,7 @@ async def publish_build(session, build_url, wait, token):
 
         if wait:
             print("Waiting for publish job")
-            job = wait_for_job(session, job_url, token);
+            job = await wait_for_job(session, job_url, token);
 
         reparse_job_results(job)
         job["location"] = job_url
@@ -542,19 +542,19 @@ async def push_command(session, args):
 
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
-        commit_job = commit_build(args.build_url, args.end_of_life, args.end_of_life_rebase, args.publish or args.wait, args.token)
+        commit_job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.publish or args.wait, args.token)
 
     if args.publish:
-        publish_job = publish_build(args.build_url, args.wait, args.token)
+        publish_job = await publish_build(session, args.build_url, args.wait, args.token)
         update_job_id = publish_job.get("results", {}).get("update-repo-job", None)
         if update_job_id:
             print("Queued repo update job %d" %(update_job_id))
             update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
             if args.wait_update:
                 print("Waiting for repo update job")
-                update_job = wait_for_job (update_job_url, token);
+                update_job = await wait_for_job (session, update_job_url, token);
             else:
-                update_job = get_job(update_job_url, token)
+                update_job = await get_job(session, update_job_url, token)
             reparse_job_results(update_job)
             update_job["location"] = update_job_url
 
