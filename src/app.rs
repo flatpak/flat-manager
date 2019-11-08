@@ -106,13 +106,17 @@ mod tests {
     }
 }
 
+/* Claims are used in two forms, one for API calls, and one for
+ * general repo access, the second one is simpler and just uses scope
+ * for the allowed ids, and sub means the user doing the access (which
+ * is not verified). */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // "build", "build/N"
-    pub scope: Vec<String>, // "build", "upload" "publish"
+    pub sub: String, // "build", "build/N", or user id for repo tokens
+    pub scope: Vec<String>, // "build", "upload" "publish", or list of id prefixes for repo tokens
     pub exp: i64,
 
-    // Below are optional, and not used for e.g. repo claims
+    // Below are optional, and not used for repo tokens
     #[serde(default)]
     pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
     #[serde(default)]
@@ -374,7 +378,7 @@ fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, 
     let commit_ref = commit.metadata.get("xa.ref").ok_or (ApiError::InternalServerError(format!("No ref binding for commit {:?}", path)))?.as_string()?;
     let ref_parts: Vec<&str> = commit_ref.split('/').collect();
     if (ref_parts[0] == "app" || ref_parts[0] == "runtime") && ref_parts.len() > 2 {
-        return req.has_token_prefix(ref_parts[1])
+        return req.has_token_scope_prefix(ref_parts[1])
     }
     Ok(())
 }
