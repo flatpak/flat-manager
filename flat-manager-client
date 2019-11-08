@@ -545,7 +545,7 @@ async def push_command(session, args):
         commit_job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.publish or args.wait, args.token)
 
     if args.publish:
-        publish_job = await publish_build(session, args.build_url, args.wait, args.token)
+        publish_job = await publish_build(session, args.build_url, args.wait or args.wait_update, args.token)
         update_job_id = publish_job.get("results", {}).get("update-repo-job", None)
         if update_job_id:
             print("Queued repo update job %d" %(update_job_id))
@@ -572,7 +572,7 @@ async def commit_command(session, args):
     return job
 
 async def publish_command(session, args):
-    job = await publish_build(session, args.build_url, args.wait, args.token)
+    job = await publish_build(session, args.build_url, args.wait or args.wait_update, args.token)
     update_job_id = job.get("results", {}).get("update-repo-job", None)
     if update_job_id:
         print("Queued repo update job %d" %(update_job_id))
