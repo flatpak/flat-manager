@@ -299,6 +299,15 @@ impl Config {
     pub fn get_repoconfig(&self, name: &str) -> Result<&RepoConfig, ApiError> {
         self.repos.get(name).ok_or_else (|| ApiError::BadRequest("No such repo".to_string()))
     }
+
+    pub fn get_repoconfig_from_path(&self, path: &Path) -> Result<&RepoConfig, ApiError> {
+        for (repo, config) in self.repos.iter() {
+            if path.starts_with(repo) {
+                return Ok(config)
+            }
+        }
+        Err(ApiError::BadRequest("No such repo".to_string()))
+    }
 }
 
 
@@ -423,10 +432,12 @@ fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig
 fn handle_repo(config: Data<Config>,
                req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
-    let repo = req.match_info().query("repo");
-    let repoconfig = config.get_repoconfig(&repo)?;
+    let tailpath = canonicalize_path(tail.trim_start_matches('/'))?;
+    let repoconfig = config.get_repoconfig_from_path(&tailpath)?;
 
-    let relpath = canonicalize_path(tail.trim_start_matches('/'))?;
+    let namepath = Path::new(&repoconfig.name);
+    let relpath = tailpath.strip_prefix(&namepath)
+        .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
     let path = Path::new(&repoconfig.path).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
@@ -511,7 +522,7 @@ pub fn create_app (
                              resp
                          })
                      })
-                     .service(web::resource("/{repo}/{tail:.*}").name("repo")
+                     .service(web::resource("/{tail:.*}").name("repo")
                               .route(web::get().to(handle_repo))
                               .route(web::head().to(handle_repo))
                               .to(HttpResponse::MethodNotAllowed)
