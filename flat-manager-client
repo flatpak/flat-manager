@@ -199,12 +199,6 @@ async def missing_objects(session, build_url, token, wanted):
             missing.extend(data["missing"])
     return missing
 
-@retry(
-    stop=stop_after_attempt(6),
-    wait=wait_fixed(20),
-    retry=retry_if_exception_type(ApiError),
-    reraise=True,
-)
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
@@ -476,6 +470,12 @@ def build_url_to_api(build_url):
     path = os.path.dirname(os.path.dirname(parts.path))
     return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
 
+@retry(
+    stop=stop_after_attempt(6),
+    wait=wait_fixed(10),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def push_command(session, args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
