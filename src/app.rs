@@ -27,12 +27,6 @@ use actix_web::dev::FromParam;
 use logger::Logger;
 use ostree;
 
-fn as_base64<S>(key: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
-    where S: serde::Serializer
-{
-    serializer.serialize_str(&base64::encode(key))
-}
-
 fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where D: serde::Deserializer<'de>
 {
@@ -40,7 +34,6 @@ fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     String::deserialize(deserializer)
         .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
 }
-
 
 fn match_glob(glob: &str, s: &str) -> bool
 {
@@ -125,7 +118,7 @@ pub struct Claims {
     pub name: Option<String>, // for debug/logs only
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DeltaConfig {
     pub id: Vec<String>,
@@ -142,7 +135,7 @@ impl DeltaConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct SubsetConfig {
     pub collection_id: String,
@@ -153,7 +146,7 @@ fn default_depth() -> u32 {
     5
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RepoConfig {
     #[serde(skip)]
@@ -192,7 +185,7 @@ fn default_numcpu() -> u32 {
     num_cpus::get() as u32
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
     pub database_url: String,
@@ -203,7 +196,7 @@ pub struct Config {
     #[serde(default)]
     pub base_url: String,
     pub gpg_homedir: Option<String>,
-    #[serde(serialize_with = "as_base64", deserialize_with = "from_base64")]
+    #[serde(deserialize_with = "from_base64")]
     pub secret: Vec<u8>,
     pub repos: HashMap<String, RepoConfig>,
     pub build_repo_base: PathBuf,
