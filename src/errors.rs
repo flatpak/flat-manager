@@ -153,7 +153,7 @@ impl From<actix::MailboxError> for ApiError {
 }
 
 impl ApiError {
-    pub fn to_json(&self) -> String {
+    pub fn to_json(&self) -> serde_json::Value {
         match *self {
             ApiError::InternalServerError(ref _internal_message) => json!({
                 "status": 500,
@@ -195,7 +195,6 @@ impl ApiError {
                 "message": format!("Not enough permissions: {})", message),
             }),
         }
-        .to_string()
     }
 
     pub fn status_code(&self) -> StatusCode {
