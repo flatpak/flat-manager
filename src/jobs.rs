@@ -341,6 +341,7 @@ struct CommitJobInstance {
     pub build_id: i32,
     pub endoflife: Option<String>,
     pub endoflife_rebase: Option<String>,
+    pub token_type: Option<i32>,
 }
 
 impl CommitJobInstance {
@@ -351,6 +352,7 @@ impl CommitJobInstance {
                 build_id: commit_job.build,
                 endoflife: commit_job.endoflife,
                 endoflife_rebase: commit_job.endoflife_rebase,
+                token_type: commit_job.token_type,
             })
         } else {
             InvalidJobInstance::new(job, JobError::new("Can't parse commit job"))
@@ -405,6 +407,11 @@ impl CommitJobInstance {
                     .arg(&endoflife_rebase_arg);
             };
 
+            if let Some(token_type) = &self.token_type {
+                cmd
+                    .arg(format!("--token-type={}", token_type));
+            };
+
             cmd
                 .arg(&src_repo_arg)
                 .arg(&src_ref_arg)
@@ -451,8 +458,8 @@ impl JobInstance for CommitJobInstance {
     }
 
     fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("#{}: Handling Job Commit: build: {}, end-of-life: {}, eol-rebase: {}",
-              &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()), self.endoflife_rebase.as_ref().unwrap_or(&"".to_string()));
+        info!("#{}: Handling Job Commit: build: {}, end-of-life: {}, eol-rebase: {}, token-type: {:?}",
+              &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()), self.endoflife_rebase.as_ref().unwrap_or(&"".to_string()), self.token_type);
 
         let config = &executor.config;
 

@@ -667,6 +667,7 @@ pub fn get_commit_job(
 pub struct CommitArgs {
     endoflife: Option<String>,
     endoflife_rebase: Option<String>,
+    token_type: Option<i32>,
 }
 
 pub fn commit(
@@ -689,6 +690,7 @@ pub fn commit(
                             id: build_id,
                             endoflife: args.endoflife.clone(),
                             endoflife_rebase: args.endoflife_rebase.clone(),
+                            token_type: args.token_type,
                         })
         })
         .and_then(move |job| {
