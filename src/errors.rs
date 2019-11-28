@@ -192,7 +192,7 @@ impl ApiError {
             ApiError::NotEnoughPermissions(ref message) => json!({
                 "status": 403,
                 "error-type": "token-insufficient",
-                "message": format!("Not enough permissions: {})", message),
+                "message": format!("Not enough permissions: {}", message),
             }),
         }
     }
