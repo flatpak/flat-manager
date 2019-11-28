@@ -522,15 +522,32 @@ fn parse_commit (variant: &SubVariant) ->OstreeResult<OstreeCommit> {
     })
 }
 
+/* This is like basename, but also includes the parent dir because in
+ * ostree object and delta part filenames that is the first to letters
+ * of the ID, which we don't want to miss.
+ * Also, this is mainly used for debug/errors, so converts to string.
+ */
+fn get_dir_and_basename (path: &path::PathBuf) -> String {
+    let mut res = String::new();
+    if let Some(parent_name) =
+        path.parent()
+        .and_then(|parent| parent.file_name())
+        .and_then(|file_name| file_name.to_str())
+    {
+        res.push_str(parent_name);
+        res.push_str("/");
+    }
+    res.push_str(path.file_name().and_then(|s| s.to_str()).unwrap_or("?"));
+    res
+}
 
 pub fn load_commit_file (path: &path::PathBuf) ->OstreeResult<OstreeCommit> {
-    let basename = path.file_name().and_then(|s| s.to_str()).unwrap_or("?").to_string();
     let mut fp = fs::File::open(path)
-        .map_err(|_e| OstreeError::NoSuchCommit(basename.to_string()))?;
+        .map_err(|_e| OstreeError::NoSuchCommit(get_dir_and_basename(path)))?;
 
     let mut contents = vec![];
     fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", basename)))?;
+        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", get_dir_and_basename(path))))?;
 
     let variant = Variant::new("(a{sv}aya(say)sstayay)".to_string(), contents)?;
 
@@ -543,13 +560,12 @@ pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<Os
 }
 
 pub fn load_delta_superblock_file (path: &path::PathBuf) ->OstreeResult<OstreeDeltaSuperblock> {
-    let basename = path.file_name().and_then(|s| s.to_str()).unwrap_or("?");
     let mut fp = fs::File::open(path)
-        .map_err(|_e| OstreeError::NoSuchObject(basename.to_string()))?;
+        .map_err(|_e| OstreeError::NoSuchObject(get_dir_and_basename(path)))?;
 
     let mut contents = vec![];
     fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid delta superblock {}", basename)))?;
+        .map_err(|_e| OstreeError::InternalError(format!("Invalid delta superblock {}", get_dir_and_basename(path))))?;
 
     let ostree_superblock_fields = vec![
         // 0 - "a{sv}", - Metadata
