@@ -375,12 +375,19 @@ fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, 
         nocache: true,
     });
 
-    let commit_ref = commit.metadata.get("xa.ref").ok_or (ApiError::InternalServerError(format!("No ref binding for commit {:?}", path)))?.as_string()?;
-    let ref_parts: Vec<&str> = commit_ref.split('/').collect();
-    if (ref_parts[0] == "app" || ref_parts[0] == "runtime") && ref_parts.len() > 2 {
-        return req.has_token_scope_prefix(ref_parts[1])
+    let commit_refs = commit.metadata.get("ostree.ref-binding").ok_or (ApiError::InternalServerError(format!("No ref binding for commit {:?}", path)))?.as_string_vec()?;
+    let mut result = Ok(());
+    // If there are any normal flatpak refs, the token must match at least one:
+    for commit_ref in commit_refs {
+        let ref_parts: Vec<&str> = commit_ref.split('/').collect();
+        if (ref_parts[0] == "app" || ref_parts[0] == "runtime") && ref_parts.len() > 2 {
+            result = req.has_token_scope_prefix(ref_parts[1]);
+            if result.is_ok() {
+                break; // Early exit, we have a match
+            }
+        }
     }
-    Ok(())
+    result
 }
 
 
