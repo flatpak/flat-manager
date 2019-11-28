@@ -366,11 +366,15 @@ async def wait_for_job(session, job_url, token):
             sleep_time=60
         time.sleep(sleep_time)
 
-async def commit_build(session, build_url, eol, eol_rebase, wait, token):
+async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, token):
     print("Committing build %s" % (build_url))
-    resp = await session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json= {
-        "endoflife": eol, "endoflife_rebase": eol_rebase
-    })
+    json = {
+        "endoflife": eol,
+        "endoflife_rebase": eol_rebase
+    }
+    if token_type != None:
+        json['token_type'] = token_type
+    resp = await session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json=json)
     async with resp:
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
@@ -542,7 +546,7 @@ async def push_command(session, args):
 
     # Note, this always uses the full token, as the minimal one only has upload permissions
     if args.commit or args.publish:
-        commit_job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.publish or args.wait, args.token)
+        commit_job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.token_type, args.publish or args.wait, args.token)
 
     if args.publish:
         publish_job = await publish_build(session, args.build_url, args.wait or args.wait_update, args.token)
@@ -568,7 +572,7 @@ async def push_command(session, args):
     return data
 
 async def commit_command(session, args):
-    job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.wait, args.token)
+    job = await commit_build(session, args.build_url, args.end_of_life, args.end_of_life_rebase, args.token_type, args.wait, args.token)
     return job
 
 async def publish_command(session, args):
@@ -646,6 +650,7 @@ if __name__ == '__main__':
                              help='Create minimal token for the upload')
     push_parser.add_argument('--end-of-life', help='Set end of life')
     push_parser.add_argument('--end-of-life-rebase', help='Set new ID which will supercede the current one')
+    push_parser.add_argument('--token-type', help='Set token type', type=int)
     push_parser.set_defaults(func=push_command)
 
     commit_parser = subparsers.add_parser('commit', help='Commit build')
@@ -653,6 +658,7 @@ if __name__ == '__main__':
                              help='wait for commit to finish')
     commit_parser.add_argument('--end-of-life', help='Set end of life')
     commit_parser.add_argument('--end-of-life-rebase', help='Set new ID which will supercede the current one')
+    commit_parser.add_argument('--token-type', help='Set token type', type=int)
     commit_parser.add_argument('build_url', help='remote build url')
     commit_parser.set_defaults(func=commit_command)
 
