@@ -13,7 +13,6 @@ pub trait ClaimsValidator {
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError>;
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError>;
-    fn has_token_scope_prefix(&self, id: &str) -> Result<(), ApiError>;
 }
 
 pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
@@ -96,18 +95,6 @@ impl<S> ClaimsValidator for HttpRequest<S> {
         self.validate_claims(|claims| {
             if !id_matches_one_prefix(id, &claims.prefixes) {
                 return Err(ApiError::NotEnoughPermissions(format!("Id {} not matching prefix in token", id)));
-            }
-            Ok(())
-        })
-    }
-
-    /* This is an app id prefix match, just like has_token_prefix, but it looks at the
-     * scope key instead of prefixes, and is used for repo token checks rather than API calls.
-     */
-    fn has_token_scope_prefix(&self, id: &str) -> Result<(), ApiError> {
-        self.validate_claims(|claims| {
-            if !id_matches_one_prefix(id, &claims.scope) {
-                return Err(ApiError::NotEnoughPermissions(format!("Id {} not matching scope in token", id)));
             }
             Ok(())
         })

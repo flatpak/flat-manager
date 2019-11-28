@@ -113,10 +113,11 @@ mod tests {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String, // "build", "build/N", or user id for repo tokens
-    pub scope: Vec<String>, // "build", "upload" "publish", or list of id prefixes for repo tokens
     pub exp: i64,
 
     // Below are optional, and not used for repo tokens
+    #[serde(default)]
+    pub scope: Vec<String>, // "build", "upload" "publish"
     #[serde(default)]
     pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
     #[serde(default)]
@@ -381,7 +382,7 @@ fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, 
     for commit_ref in commit_refs {
         let ref_parts: Vec<&str> = commit_ref.split('/').collect();
         if (ref_parts[0] == "app" || ref_parts[0] == "runtime") && ref_parts.len() > 2 {
-            result = req.has_token_scope_prefix(ref_parts[1]);
+            result = req.has_token_prefix(ref_parts[1]);
             if result.is_ok() {
                 break; // Early exit, we have a match
             }
