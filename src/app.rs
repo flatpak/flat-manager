@@ -35,6 +35,15 @@ fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
         .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
 }
 
+fn from_opt_base64<'de,D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+    where D: serde::Deserializer<'de>
+{
+    use serde::de::Error;
+    String::deserialize(deserializer)
+        .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
+        .map(|s| Some(s))
+}
+
 fn match_glob(glob: &str, s: &str) -> bool
 {
     if let Some(index) = glob.find("*") {
@@ -198,6 +207,8 @@ pub struct Config {
     pub gpg_homedir: Option<String>,
     #[serde(deserialize_with = "from_base64")]
     pub secret: Vec<u8>,
+    #[serde(default, deserialize_with = "from_opt_base64")]
+    pub repo_secret: Option<Vec<u8>>,
     pub repos: HashMap<String, RepoConfig>,
     pub build_repo_base: PathBuf,
     pub build_gpg_key: Option<String>,
@@ -462,7 +473,7 @@ pub fn create_app(
         })
         .scope("/repo", |scope| {
             scope
-                .middleware(TokenParser::optional(&config.secret))
+                .middleware(TokenParser::optional(config.repo_secret.as_ref().unwrap_or(config.secret.as_ref())))
                 .middleware(RepoHeaders)
                 .resource("/{repo}/{tail:.*}", |r| {
                     r.name("repo");
