@@ -452,24 +452,24 @@ pub fn create_app(
             scope
                 .middleware(TokenParser::new(&config.secret))
                 .resource("/token_subset", |r| r.method(Method::POST).with(api::token_subset))
-                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::GET).with(api::get_job)})
-                .resource("/build", |r| { r.method(Method::POST).with(api::create_build);
-                                          r.method(Method::GET).with(api::builds) })
-                .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with(api::get_build) })
-                .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with(api::create_build_ref))
-                .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with(api::get_build_ref) })
+                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::GET).with_async(api::get_job)})
+                .resource("/build", |r| { r.method(Method::POST).with_async(api::create_build);
+                                          r.method(Method::GET).with_async(api::builds) })
+                .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with_async(api::get_build) })
+                .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with_async(api::create_build_ref))
+                .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with_async(api::get_build_ref) })
                 .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
-                .resource("/build/{id}/add_extra_ids", |r| r.method(Method::POST).with(api::add_extra_ids))
-                .resource("/build/{id}/upload", |r| r.method(Method::POST).with(api::upload))
+                .resource("/build/{id}/add_extra_ids", |r| r.method(Method::POST).with_async(api::add_extra_ids))
+                .resource("/build/{id}/upload", |r| r.method(Method::POST).with_async(api::upload))
                 .resource("/build/{id}/commit", |r| { r.name("show_commit_job");
-                                                      r.method(Method::POST).with(api::commit);
-                                                      r.method(Method::GET).with(api::get_commit_job) })
+                                                      r.method(Method::POST).with_async(api::commit);
+                                                      r.method(Method::GET).with_async(api::get_commit_job) })
                 .resource("/build/{id}/publish", |r| { r.name("show_publish_job");
-                                                      r.method(Method::POST).with(api::publish);
-                                                       r.method(Method::GET).with(api::get_publish_job) })
-                .resource("/build/{id}/purge", |r| { r.method(Method::POST).with(api::purge) })
+                                                      r.method(Method::POST).with_async(api::publish);
+                                                       r.method(Method::GET).with_async(api::get_publish_job) })
+                .resource("/build/{id}/purge", |r| { r.method(Method::POST).with_async(api::purge) })
                 .resource("/delta/worker", |r| r.route().f(api::ws_delta))
-                .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with(api::delta_upload))
+                .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with_async(api::delta_upload))
         })
         .scope("/repo", |scope| {
             scope
@@ -487,6 +487,6 @@ pub fn create_app(
             r.head().f(handle_build_repo);
             r.f(|_| HttpResponse::MethodNotAllowed())
         })
-        .resource("/status", |r| r.method(Method::GET).with(api::status))
-        .resource("/status/{id}", |r| r.method(Method::GET).with(api::job_status))
+        .resource("/status", |r| r.method(Method::GET).with_async(api::status))
+        .resource("/status/{id}", |r| r.method(Method::GET).with_async(api::job_status))
 }
