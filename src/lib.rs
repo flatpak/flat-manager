@@ -2,10 +2,15 @@
 
 extern crate actix;
 extern crate actix_net;
+extern crate actix_service;
 extern crate actix_web;
+extern crate actix_web_actors;
+extern crate actix_multipart;
+extern crate actix_files;
 extern crate askama;
 extern crate base64;
 extern crate byteorder;
+extern crate bytes;
 extern crate chrono;
 #[macro_use] extern crate diesel;
 #[macro_use] extern crate diesel_migrations;
@@ -27,6 +32,7 @@ extern crate num_cpus;
 extern crate time;
 extern crate tokio;
 extern crate tokio_process;
+extern crate tokio_signal;
 extern crate rand;
 
 mod api;
@@ -43,14 +49,13 @@ mod delayed;
 mod logger;
 
 use actix::prelude::*;
-use actix::{Actor, actors::signal};
-use actix_web::{server, server::StopServer};
+use actix_web::dev::Server;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, ManageConnection, Pool};
 use std::path;
 use std::sync::Arc;
-use std::time::Duration;
-
+use std::time::{Duration, Instant};
+use tokio_signal::unix::Signal;
 use app::Config;
 use deltas::{DeltaGenerator,StopDeltaGenerator};
 use jobs::{JobQueue, StopJobQueue};
@@ -97,105 +102,62 @@ fn start_job_queue(config: &Arc<Config>,
     jobs::start_job_executor(config.clone(), delta_generator.clone(), pool.clone())
 }
 
-fn start_service(config: &Arc<Config>,
-                 db_executor: &Addr<DbExecutor>,
-                 job_queue: &Addr<JobQueue>,
-                 delta_generator: &Addr<DeltaGenerator>) -> Addr<actix_net::server::Server> {
-    let db_executor_copy = db_executor.clone();
-    let job_queue_copy = job_queue.clone();
-    let config_copy = config.clone();
-    let delta_generator_copy = delta_generator.clone();
-    let http_server = server::new(move || {
-        app::create_app(db_executor_copy.clone(), &config_copy, job_queue_copy.clone(), &delta_generator_copy)
-    });
+fn handle_signal(sig: i32, server: &Server, job_queue: Addr<JobQueue>, delta_generator: Addr<DeltaGenerator>) -> impl Future<Item = (), Error = std::io::Error> {
+    let graceful = match sig {
+        tokio_signal::unix::SIGINT => {
+            info!("SIGINT received, exiting");
+            false
+        }
+        tokio_signal::unix::SIGTERM => {
+            info!("SIGTERM received, exiting");
+            true
+        }
+        tokio_signal::unix::SIGQUIT => {
+            info!("SIGQUIT received, exiting");
+            false
+        }
+        _ => false,
+    };
 
-    let bind_to = format!("{}:{}", config.host, config.port);
-    let server =
-        http_server
-        .bind(&bind_to)
-        .unwrap()
-        .disable_signals()
-        .start();
-
-    info!("Started http server: {}", bind_to);
-
+    info!("Stopping http server");
     server
+        .stop(graceful)
+        .then(move |_result| {
+            info!("Stopping delta generator");
+            delta_generator
+                .send(StopDeltaGenerator())
+        })
+        .then(move |_result| {
+            info!("Stopping job processing");
+            job_queue
+                .send(StopJobQueue())
+        })
+        .then( |_| {
+            info!("Exiting...");
+            tokio::timer::Delay::new(Instant::now() + Duration::from_millis(300))
+        })
+        .then( |_| {
+            System::current().stop();
+            Ok(())
+        })
 }
 
-struct HandleSignals {
-    server: Addr<actix_net::server::Server>,
-    job_queue: Addr<JobQueue>,
-    delta_generator: Addr<DeltaGenerator>,
+fn handle_signals(server: Server,
+                  job_queue: Addr<JobQueue>,
+                  delta_generator: Addr<DeltaGenerator>) {
+    let sigint = Signal::new(tokio_signal::unix::SIGINT).flatten_stream();
+    let sigterm = Signal::new(tokio_signal::unix::SIGTERM).flatten_stream();
+    let sigquit = Signal::new(tokio_signal::unix::SIGQUIT).flatten_stream();
+    let handle_signals = sigint.select(sigterm).select(sigquit)
+        .for_each(move |sig| {
+            handle_signal(sig, &server, job_queue.clone(), delta_generator.clone())
+        })
+        .map_err(|_| ());
+
+    actix::spawn(handle_signals);
 }
 
-impl Actor for HandleSignals {
-    type Context = Context<Self>;
-}
-
-impl Handler<signal::Signal> for HandleSignals {
-    type Result = ();
-
-    fn handle(&mut self, msg: signal::Signal, ctx: &mut Context<Self>) {
-        let (stop, graceful) = match msg.0 {
-            signal::SignalType::Int => {
-                info!("SIGINT received, exiting");
-                (true, false)
-            }
-            signal::SignalType::Term => {
-                info!("SIGTERM received, exiting");
-                (true, true)
-            }
-            signal::SignalType::Quit => {
-                info!("SIGQUIT received, exiting");
-                (true, false)
-            }
-            _ => (false, false),
-        };
-        if stop {
-            info!("Stopping http server");
-            ctx.spawn(
-                self.server
-                    .send(StopServer { graceful: graceful })
-                    .into_actor(self)
-                    .then(|_result, actor, _ctx| {
-                        info!("Stopping job processing");
-                        actor.delta_generator
-                            .send(StopDeltaGenerator())
-                            .into_actor(actor)
-                    })
-                    .then(|_result, actor, _ctx| {
-                        info!("Stopping job processing");
-                        actor.job_queue
-                            .send(StopJobQueue())
-                            .into_actor(actor)
-                    })
-                    .then(|_result, _actor, ctx| {
-                        info!("Stopped job processing");
-                        ctx.run_later(Duration::from_millis(300), |_, _| {
-                            System::current().stop();
-                        });
-                        actix::fut::ok(())
-                    })
-            );
-        };
-    }
-}
-
-fn handle_signals(server: &Addr<actix_net::server::Server>,
-                  job_queue: &Addr<JobQueue>,
-                  delta_generator: &Addr<DeltaGenerator>) {
-    let signal_handler = HandleSignals{
-        server: server.clone(),
-        job_queue: job_queue.clone(),
-        delta_generator: delta_generator.clone(),
-    }.start();
-
-    let signals = System::current().registry().get::<signal::ProcessSignals>();
-    signals.do_send(signal::Subscribe(signal_handler.clone().recipient()));
-}
-
-
-pub fn start(config: &Arc<Config>) -> actix::Addr<actix_net::server::Server>{
+pub fn start(config: &Arc<Config>) -> Server {
     let pool = connect_to_db(config);
 
     let delta_generator = start_delta_generator(config);
@@ -203,9 +165,15 @@ pub fn start(config: &Arc<Config>) -> actix::Addr<actix_net::server::Server>{
     let db_executor = start_db_executor(&pool);
     let job_queue = start_job_queue(config, &pool, &delta_generator);
 
-    let server = start_service(config, &db_executor, &job_queue, &delta_generator);
 
-    handle_signals(&server, &job_queue, &delta_generator);
+  let db_executor_copy = db_executor.clone();
+    let job_queue_copy = job_queue.clone();
+    let config_copy = config.clone();
+    let delta_generator_copy = delta_generator.clone();
 
-    server
+    let app = app::create_app(db_executor_copy.clone(), &config_copy, job_queue_copy.clone(), &delta_generator_copy);
+
+    handle_signals(app.clone(), job_queue, delta_generator);
+
+    app
 }

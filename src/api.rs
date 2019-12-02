@@ -1,8 +1,13 @@
-use actix_web::{dev, error, multipart, http};
-use actix_web::{HttpMessage, HttpRequest, HttpResponse, Json, Path, Result, State,};
+use actix_web::{error, http};
+use actix_web::{HttpRequest, HttpResponse, Result, ResponseError, web};
+use actix_web::web::{Json, Data, Path};
+use actix_web_actors::ws;
+use actix_multipart::Multipart;
+use actix_web::middleware::BodyEncoding;
 
 use futures::prelude::*;
 use futures::future;
+use futures::future::{Future};
 use std::cell::RefCell;
 use std::clone::Clone;
 use std::env;
@@ -23,7 +28,6 @@ use app::{AppState,Claims};
 use errors::ApiError;
 use db::*;
 use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
-use actix_web::{ResponseError, ws};
 use tokens::{self, ClaimsValidator};
 use models::DbExecutor;
 use jobs::ProcessJobs;
@@ -77,7 +81,7 @@ fn db_request<M: DbRequest> (state: &AppState,
             .from_err()
 }
 
-fn respond_with_url<T>(data: &T, req: &HttpRequest<AppState>, name: &str, elements: &[String]) -> Result<HttpResponse, ApiError> where
+fn respond_with_url<T>(data: &T, req: &HttpRequest, name: &str, elements: &[String]) -> Result<HttpResponse, ApiError> where
     T: Serialize,
 {
     match req.url_for(name, elements.clone()) {
@@ -119,8 +123,8 @@ pub fn prefix_is_subset(maybe_subset_prefix: &Option<Vec<String>>, claimed_prefi
 
 pub fn token_subset(
     args: Json<TokenSubsetArgs>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>
+    state: Data<AppState>,
+    req: HttpRequest
 ) -> HttpResponse {
     if let Some(claims) = req.get_claims() {
         let new_exp = Utc::now().timestamp().saturating_add(i64::max(args.duration, 0));
@@ -160,8 +164,8 @@ pub struct JobArgs {
 pub fn get_job(
     args: Json<JobArgs>,
     params: Path<JobPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("build", "jobs"))
         .and_then(move |_|
@@ -180,8 +184,8 @@ pub struct CreateBuildArgs {
 
 pub fn create_build(
     args: Json<CreateBuildArgs>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>
+    state: Data<AppState>,
+    req: HttpRequest
 )  -> impl Future<Item = HttpResponse, Error = ApiError> {
     let repo1 = args.repo.clone();
     let repo2 = args.repo.clone();
@@ -208,8 +212,8 @@ pub fn create_build(
 }
 
 pub fn builds(
-    state: State<AppState>,
-    req: HttpRequest<AppState>
+    state: Data<AppState>,
+    req: HttpRequest
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("build", "build"))
         .and_then(move |_| db_request (&state, ListBuilds { }))
@@ -224,8 +228,8 @@ pub struct BuildPathParams {
 
 pub fn get_build(
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build")
                   /* We allow getting a build for uploaders too, as it is similar info, and useful */
@@ -242,8 +246,8 @@ pub struct RefPathParams {
 
 pub fn get_build_ref(
     params: Path<RefPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then(move |_| db_request (&state,
@@ -264,7 +268,7 @@ pub struct MissingObjectsResponse {
     missing: Vec<String>
 }
 
-fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
+fn has_object (build_id: i32, object: &str, state: &Data<AppState>) -> bool
 {
     let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
     let build_path = state.config.build_repo_base.join(build_id.to_string()).join("upload").join(&subpath);
@@ -279,8 +283,8 @@ fn has_object (build_id: i32, object: &str, state: &State<AppState>) -> bool
 pub fn missing_objects(
     args: Json<MissingObjectsArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> HttpResponse {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
         return e.error_response();
@@ -292,11 +296,11 @@ pub fn missing_objects(
         }
     }
     HttpResponse::Ok()
-        .content_encoding(http::ContentEncoding::Gzip)
+        .encoding(http::header::ContentEncoding::Gzip)
         .json(MissingObjectsResponse { missing: missing })
 }
 
-fn validate_ref (ref_name: &String, req: &HttpRequest<AppState>) -> Result<(),ApiError>
+fn validate_ref (ref_name: &String, req: &HttpRequest) -> Result<(),ApiError>
 {
     let ref_parts: Vec<&str> = ref_name.split('/').collect();
 
@@ -326,8 +330,8 @@ pub struct CreateBuildRefArgs {
 pub fn create_build_ref (
     args: Json<CreateBuildRefArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload")
                   .and_then(|_| validate_ref(&args.ref_name, &req)))
@@ -366,8 +370,8 @@ fn validate_id (id: &String) -> Result<(),ApiError>
 pub fn add_extra_ids (
     args: Json<AddExtraIdsArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     let ids = args.ids.clone();
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload"))
@@ -455,7 +459,7 @@ fn filename_parse_delta(name: &str) -> Option<path::PathBuf> {
          .join(&v[1]))
 }
 
-fn get_upload_subpath(field: &multipart::Field<dev::Payload>,
+fn get_upload_subpath(field: &actix_multipart::Field,
                       state: &Arc<UploadState>) -> error::Result<path::PathBuf, ApiError> {
     let cd = field.content_disposition().ok_or(
         ApiError::BadRequest("No content disposition for multipart item".to_string()))?;
@@ -503,7 +507,7 @@ fn start_save(
 }
 
 fn save_file(
-    field: multipart::Field<dev::Payload>,
+    field: actix_multipart::Field,
     state: &Arc<UploadState>
 ) -> Box<dyn Future<Item = i64, Error = ApiError>> {
     let repo_subpath = match get_upload_subpath (&field, state) {
@@ -526,7 +530,7 @@ fn save_file(
                     .write_all(bytes.as_ref())
                     .map(|_| acc + bytes.len() as i64)
                     .map_err(|e| {
-                        error::MultipartError::Payload(error::PayloadError::Io(e))
+                        actix_multipart::MultipartError::Payload(error::PayloadError::Io(e))
                     });
                 future::result(rt)
             })
@@ -556,30 +560,11 @@ fn save_file(
     )
 }
 
-fn handle_multipart_item(
-    item: multipart::MultipartItem<dev::Payload>,
-    state: &Arc<UploadState>
-) -> Box<dyn Stream<Item = i64, Error = ApiError>> {
-    match item {
-        multipart::MultipartItem::Field(field) => {
-            Box::new(save_file(field, state).into_stream())
-        }
-        multipart::MultipartItem::Nested(mp) => {
-            let s = state.clone();
-            Box::new(mp
-                     .map_err(|e| {
-                         ApiError::InternalServerError(e.to_string())
-                     })
-                     .map(move |item| { handle_multipart_item (item, &s) })
-                     .flatten())
-        }
-    }
-}
-
 pub fn upload(
+    multipart: Multipart,
+    req: HttpRequest,
     params: Path<BuildPathParams>,
-    req: HttpRequest<AppState>,
-    state: State<AppState>,
+    state: Data<AppState>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload"))
         .and_then(move |_| {
@@ -591,15 +576,15 @@ pub fn upload(
             db_request (&state, LookupBuild { id: params.id })
                 .and_then (move |build| req2.has_token_repo(&build.repo))
                 .and_then (move |_ok| {
-                    Box::new(
-                        req.multipart()
-                            .map_err(|e| ApiError::InternalServerError(e.to_string()))
-                            .map(move |item| { handle_multipart_item (item, &uploadstate) })
-                            .flatten()
-                            .collect()
-                            .map(|sizes| HttpResponse::Ok().json(sizes))
-                            .from_err()
-                    )
+                    multipart
+                        .map_err(|e| ApiError::InternalServerError(e.to_string()))
+                        .map(move |field| {
+                            save_file(field, &uploadstate).into_stream()
+                        })
+                        .flatten()
+                        .collect()
+                        .map(|sizes| HttpResponse::Ok().json(sizes))
+                        .from_err()
                 })
         })
 }
@@ -607,8 +592,8 @@ pub fn upload(
 pub fn get_commit_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then(move |_|
@@ -630,8 +615,8 @@ pub struct CommitArgs {
 pub fn commit(
     args: Json<CommitArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then(move |_| {
@@ -659,8 +644,8 @@ pub fn commit(
 pub fn get_publish_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then(move |_|
@@ -679,8 +664,8 @@ pub struct PublishArgs {
 pub fn publish(
     _args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "publish"))
         .and_then(move |_| {
@@ -709,8 +694,8 @@ pub fn publish(
 
 pub fn purge(
     params: Path<BuildPathParams>,
-    state: State<AppState>,
-    req: HttpRequest<AppState>,
+    state: Data<AppState>,
+    req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then (move |_| {
@@ -769,7 +754,7 @@ fn job_status_data(job: Job) -> JobStatusData {
 
 pub fn job_status(
     params: Path<JobPathParams>,
-    state: State<AppState>
+    state: Data<AppState>
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     db_request (&state,
                 LookupJob {
@@ -790,7 +775,7 @@ struct Status {
 }
 
 pub fn status(
-    state: State<AppState>
+    state: Data<AppState>
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     db_request (&state, ListJobs { })
         .and_then(move |jobs| {
@@ -808,9 +793,10 @@ pub struct DeltaUploadParams {
 }
 
 pub fn delta_upload(
+    multipart: Multipart,
     params: Path<DeltaUploadParams>,
-    req: HttpRequest<AppState>,
-    state: State<AppState>,
+    req: HttpRequest,
+    state: Data<AppState>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("delta", "generate"))
         .and_then(move |_| futures::done(state.config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
@@ -819,22 +805,25 @@ pub fn delta_upload(
                 only_deltas: true,
                 repo_path: repoconfig.get_abs_repo_path().clone()
             });
-            req.multipart()
+            multipart
                 .map_err(|e| ApiError::InternalServerError(e.to_string()))
-                .map(move |item| { handle_multipart_item (item, &uploadstate) })
+                .map(move |field| { save_file(field, &uploadstate).into_stream() })
                 .flatten()
                 .collect()
                 .map(|sizes| HttpResponse::Ok().json(sizes))
         })
 }
 
-pub fn ws_delta(req: &HttpRequest<AppState>) -> Result<HttpResponse, actix_web::Error> {
-    let state = req.state();
+pub fn ws_delta(req: HttpRequest,
+                state: Data<AppState>,
+                stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
     if let Err(e) = req.has_token_claims("delta", "generate") {
         return Ok(e.error_response())
     }
+    let remote = req.connection_info().remote().unwrap_or("Unknown").to_string();
     ws::start(
-        req,
-        RemoteWorker::new(&state.config, &state.delta_generator),
+        RemoteWorker::new(&state.config, &state.delta_generator, remote),
+        &req,
+        stream
     )
 }
