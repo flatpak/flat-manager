@@ -11,13 +11,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
-use actix_web::ws;
+use actix_web_actors::ws;
 use serde_json;
 use rand;
 use rand::prelude::IteratorRandom;
 use std::sync::mpsc;
 
-use app::AppState;
 use delayed::DelayedResult;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
@@ -351,7 +350,7 @@ pub struct RemoteWorkerItem {
 
 #[derive(Debug)]
 pub struct RemoteWorker {
-    remote: Option<String>,
+    remote: String,
     id: Option<usize>,
     unregistered: bool,
     last_item_id: u32,
@@ -380,9 +379,9 @@ pub enum RemoteServerMessage {
 }
 
 impl RemoteWorker {
-    pub fn new(config: &Arc<Config>, generator: &Addr<DeltaGenerator>) -> Self {
+    pub fn new(config: &Arc<Config>, generator: &Addr<DeltaGenerator>, remote: String) -> Self {
         RemoteWorker {
-            remote: None,
+            remote: remote,
             id: None,
             unregistered: false,
             last_item_id: 0,
@@ -406,12 +405,12 @@ impl RemoteWorker {
         }
     }
 
-    fn msg_register(&mut self, capacity: u32, ctx: &mut ws::WebsocketContext<Self, AppState>) {
+    fn msg_register(&mut self, capacity: u32, ctx: &mut ws::WebsocketContext<Self>) {
         let addr = ctx.address();
         ctx.spawn(
             self.generator
                 .send(RegisterRemoteWorker {
-                    name: self.remote.clone().unwrap_or("Unknown".to_string()),
+                    name: self.remote.clone(),
                     addr, capacity,
                 })
                 .into_actor(self)
@@ -437,7 +436,7 @@ impl RemoteWorker {
                 }));
     }
 
-    fn msg_unregister(&mut self, ctx: &mut ws::WebsocketContext<Self, AppState>) {
+    fn msg_unregister(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
         /* This stops assigning jobs for the worker, but keeps
          * outstanding jobs running */
 
@@ -456,7 +455,7 @@ impl RemoteWorker {
         }
     }
 
-    fn msg_finished(&mut self, id: u32, errmsg: Option<String>, _ctx: &mut ws::WebsocketContext<Self, AppState>) {
+    fn msg_finished(&mut self, id: u32, errmsg: Option<String>, _ctx: &mut ws::WebsocketContext<Self>) {
         match self.outstanding.remove(&id) {
             Some(mut item) => {
                 item.delayed_result.set(match errmsg {
@@ -468,7 +467,7 @@ impl RemoteWorker {
         }
     }
 
-    fn message(&mut self, message: RemoteClientMessage, ctx: &mut ws::WebsocketContext<Self, AppState>) {
+    fn message(&mut self, message: RemoteClientMessage, ctx: &mut ws::WebsocketContext<Self>) {
         match message {
             RemoteClientMessage::Register { capacity } => self.msg_register(capacity, ctx),
             RemoteClientMessage::Unregister => self.msg_unregister(ctx),
@@ -476,7 +475,7 @@ impl RemoteWorker {
         }
     }
 
-    fn run_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self, AppState>) {
+    fn run_heartbeat(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |worker, ctx| {
             if Instant::now().duration_since(worker.last_recieved_ping) > CLIENT_TIMEOUT {
                 warn!("Delta worker heartbeat missing, disconnecting!");
@@ -518,12 +517,11 @@ impl Handler<DeltaRequest> for RemoteWorker {
 }
 
 impl Actor for RemoteWorker {
-    type Context = ws::WebsocketContext<Self, AppState>;
+    type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
         // Kick off heartbeat process
-        self.remote = ctx.request().connection_info().remote().map(|s| s.to_string());
-        info!("Remote delta worker from {} connected", self.remote.clone().unwrap_or("Unknown".to_string()));
+        info!("Remote delta worker from {} connected", self.remote);
         self.run_heartbeat(ctx);
     }
 
@@ -546,6 +544,7 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for RemoteWorker {
     fn handle(&mut self, msg: ws::Message, ctx: &mut Self::Context) {
         match msg {
             ws::Message::Ping(msg) => {
+                info!("Got ping");
                 self.last_recieved_ping = Instant::now();
                 ctx.pong(&msg);
             }
@@ -560,6 +559,8 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for RemoteWorker {
             ws::Message::Binary(_bin) => error!("Unexpected binary ws message"),
             ws::Message::Close(_) => {
                 ctx.stop();
+            },
+            ws::Message::Nop => {
             },
         }
     }

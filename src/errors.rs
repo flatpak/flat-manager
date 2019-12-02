@@ -1,7 +1,6 @@
 use actix;
-use actix_web::{error::ResponseError, HttpResponse, FutureResponse};
+use actix_web::{error::ResponseError, HttpResponse};
 use diesel::result::{Error as DieselError};
-use futures::future;
 use std::io;
 use actix_web::http::StatusCode;
 use ostree::OstreeError;
@@ -219,11 +218,5 @@ impl ResponseError for ApiError {
             error!("Responding with NotEnoughPermissions error: {}", internal_message);
         }
         HttpResponse::build(self.status_code()).json(self.to_json())
-    }
-}
-
-impl From<ApiError> for FutureResponse<HttpResponse> {
-    fn from(e: ApiError) -> Self {
-        Box::new(future::ok(e.error_response()))
     }
 }

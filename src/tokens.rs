@@ -1,9 +1,14 @@
-use actix_web::{HttpRequest, HttpResponse, Result};
-use actix_web::middleware::{Middleware, Started, Finished};
+use actix_web::{HttpRequest, Result, HttpMessage};
 use actix_web::http::header::{HeaderValue, AUTHORIZATION};
+use actix_service::{Service, Transform};
+use actix_web::dev::{ServiceRequest, ServiceResponse};
+use actix_web::error::Error;
+use futures::{Future, Poll};
+use futures::future::{ok, Either, FutureResult};
 use jwt::{decode, Validation};
+use std::rc::Rc;
 
-use app::{AppState,Claims};
+use app::Claims;
 use errors::ApiError;
 
 pub trait ClaimsValidator {
@@ -56,7 +61,7 @@ pub fn repo_matches_one_claimed(repo: &str, claimed_repos: &Vec<String>) -> bool
     claimed_repos.iter().any(|claimed_repo| repo_matches_claimed(repo, claimed_repo))
 }
 
-impl<S> ClaimsValidator for HttpRequest<S> {
+impl ClaimsValidator for HttpRequest {
     fn get_claims(&self) -> Option<Claims> {
         self.extensions().get::<Claims>().cloned()
     }
@@ -111,19 +116,12 @@ impl<S> ClaimsValidator for HttpRequest<S> {
     }
 }
 
-pub struct TokenParser {
+pub struct Inner {
     secret: Vec<u8>,
     optional: bool,
 }
 
-impl TokenParser {
-    pub fn new(secret: &[u8]) -> Self {
-        TokenParser { secret: secret.to_vec(), optional: false }
-    }
-    pub fn optional(secret: &[u8]) -> Self {
-        TokenParser { secret: secret.to_vec(), optional: true }
-    }
-
+impl Inner {
     fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ApiError> {
         // "Bearer *" length
         if header.len() < 8 {
@@ -155,34 +153,100 @@ impl TokenParser {
     }
 }
 
-impl Middleware<AppState> for TokenParser {
-    fn start(&self, req: &HttpRequest<AppState>) -> Result<Started> {
+pub struct TokenParser(Rc<Inner>);
+
+impl TokenParser {
+    pub fn new(secret: &[u8]) -> TokenParser {
+        TokenParser(Rc::new(Inner { secret: secret.to_vec(), optional: false }))
+    }
+    pub fn optional(secret: &[u8]) -> TokenParser {
+        TokenParser(Rc::new(Inner { secret: secret.to_vec(), optional: true }))
+    }
+}
+
+impl<S: 'static, B> Transform<S> for TokenParser
+where
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Request = ServiceRequest;
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = TokenParserMiddleware<S>;
+    type Future = FutureResult<Self::Transform, Self::InitError>;
+
+    fn new_transform(&self, service: S) -> Self::Future {
+        ok(TokenParserMiddleware {
+            service: service,
+            inner: self.0.clone(),
+        })
+    }
+}
+
+/// TokenParser middleware
+pub struct TokenParserMiddleware<S> {
+    service: S,
+    inner: Rc<Inner>,
+}
+
+impl<S> TokenParserMiddleware<S> {
+    fn check_token(&self, req: &ServiceRequest) -> Result<Option<Claims>, ApiError> {
         let header = match req.headers().get(AUTHORIZATION) {
             Some(h) => h,
             None => {
-                if self.optional {
-                    return Ok(Started::Done);
-                } else {
-                    return Err(ApiError::InvalidToken("No Authorization header".to_string()))?;
+                if self.inner.optional {
+                    return Ok(None);
                 }
-            },
+                return Err(ApiError::InvalidToken("No Authorization header".to_string()))
+            }
         };
-        let token = self.parse_authorization(header)?;
-        let claims = self.validate_claims(token)?;
+        let token = self.inner.parse_authorization(header)?;
+        let claims = self.inner.validate_claims(token)?;
+        Ok(Some(claims))
+    }
+}
 
-        req.extensions_mut().insert(claims);
+impl<S, B> Service for TokenParserMiddleware<S>
+where
+    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Request = ServiceRequest;
+    type Response = ServiceResponse<B>;
+    type Error = Error;
+    type Future = Either<//S::Future,
+            Box<dyn Future<Item = Self::Response, Error = Self::Error>>,
+        FutureResult<Self::Response, Self::Error>>;
 
-        Ok(Started::Done)
+    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
+        self.service.poll_ready()
     }
 
-    fn finish(&self, req: &HttpRequest<AppState>, resp: &HttpResponse) -> Finished {
-        if resp.status() == 401 || resp.status() == 403 {
-            if let Some(ref claims) = req.get_claims() {
-                info!("Presented: {:?}", claims);
-            }
+
+    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+        let maybe_claims = match self.check_token(&req) {
+            Err(e) =>  return Either::B(ok(req.error_response(e))),
+            Ok(c) => c
+        };
+
+        let c = maybe_claims.clone();
+
+        if let Some(claims) = maybe_claims {
+            req.extensions_mut().insert(claims);
         }
 
-        Finished::Done
+        Either::A(Box::new(self.service.call(req)
+                           .and_then(move |resp|  {
+                               if resp.status() == 401 || resp.status() == 403 {
+                                   if let Some(ref claims) = c {
+                                       info!("Presented claims: {:?}", claims);
+                                   }
+                               }
+                               Ok(resp)
+                           })
+        ))
     }
-
 }

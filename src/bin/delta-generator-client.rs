@@ -1,6 +1,10 @@
 extern crate flatmanager;
 extern crate actix;
 extern crate actix_web;
+extern crate actix_http;
+extern crate actix_web_actors;
+extern crate actix_codec;
+extern crate awc;
 extern crate dotenv;
 extern crate env_logger;
 extern crate futures;
@@ -15,10 +19,15 @@ extern crate futures_fs;
 extern crate futures_locks;
 
 use actix::*;
+use actix_codec::Framed;
 use actix_web::http::header;
 use actix_web::http;
-use actix_web::client;
-use actix_web::ws::{Client, ClientWriter, Message, ProtocolError};
+use awc::{
+    error::WsProtocolError,
+    ws::{Codec, Frame, Message},
+    Client,
+};
+use actix::io::{SinkWrite, WriteHandler};
 use dotenv::dotenv;
 use std::path::{Path,PathBuf};
 use std::env;
@@ -26,10 +35,9 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::time::{Instant, Duration};
-use futures::Future;
 use mpart_async::MultipartRequest;
-use futures::Stream;
-use futures::future;
+use futures::{Stream, Future};
+use futures::stream::SplitSink;
 use futures_fs::FsPool;
 
 use flatmanager::{RemoteClientMessage,RemoteServerMessage};
@@ -92,7 +100,8 @@ impl Manager {
     fn connect(&mut self, ctx: &mut Context<Self>) {
         info!("Connecting to server at {}...", self.url);
         ctx.spawn(
-            Client::new(&format!("{}/api/v1/delta/worker", self.url))
+            Client::new()
+                .ws(&format!("{}/api/v1/delta/worker", self.url))
                 .header(header::AUTHORIZATION, format!("Bearer {}", self.token))
                 .connect()
                 .into_actor(self)
@@ -101,18 +110,20 @@ impl Manager {
                     manager.retry(ctx);
                     ()
                 })
-                .map(|(reader, writer), manager, ctx| {
+                .map(|(_response, framed), manager, ctx| {
+                    info!("Connected");
                     let addr = ctx.address();
                     let capacity = manager.capacity;
                     let repo = manager.repo.clone();
                     let url = manager.url.clone();
                     let token = manager.token.clone();
                     let fs_pool = manager.fs_pool.clone();
+                    let (sink, stream) = framed.split();
                     manager.client = Some(DeltaClient::create(move |ctx| {
-                        DeltaClient::add_stream(reader, ctx);
+                        DeltaClient::add_stream(stream, ctx);
                         DeltaClient {
                             fs_pool: fs_pool,
-                            writer: writer,
+                            writer: SinkWrite::new(sink, ctx),
                             manager: addr,
                             url: url,
                             token: token,
@@ -121,8 +132,7 @@ impl Manager {
                             repo_lock: futures_locks::RwLock::new(1),
                             last_recieved_pong: Instant::now(),
                         }
-                    }));
-                    ()
+                    }))
                 }));
     }
 }
@@ -151,9 +161,10 @@ impl Handler<ClientClosed> for Manager {
     }
 }
 
-struct DeltaClient {
+struct DeltaClient
+{
     fs_pool: FsPool,
-    writer: ClientWriter,
+    writer: SinkWrite<SplitSink<Framed<awc::BoxedSocket, Codec>>>,
     manager: Addr<Manager>,
     url: String,
     token: String,
@@ -186,7 +197,7 @@ fn pull_and_generate_delta_async(repo_path: &PathBuf,
     let repo_path2 = repo_path.clone();
     let delta_clone = delta.clone();
     Box::new(
-        /* We do 5 retries, because pull is sometimes not super stable */
+        // We do 5 retries, because pull is sometimes not super stable
         ostree::pull_delta_async(5, &repo_path, &url, &delta_clone)
             .and_then(move |_| ostree::generate_delta_async(&repo_path2, &delta_clone))
             .from_err()
@@ -207,7 +218,7 @@ fn add_delta_parts(fs_pool: &FsPool,
             let filename = path.file_name().unwrap();
             let deltafilename = format!("{}.{}.delta", delta.to_name().unwrap(), filename.to_string_lossy());
             mpart.add_stream("content", &deltafilename,"application/octet-stream",
-                             fs_pool.read(path.clone(), Default::default()));
+                             fs_pool.read(path.clone(), futures_fs::ReadOptions::default().buffer_size(UPLOAD_BUFFER_CAPACITY_BYTES)))
         }
     }
     Ok(())
@@ -219,50 +230,51 @@ pub fn upload_delta(fs_pool: &FsPool,
                     token: &String,
                     repo: &String,
                     repo_path: &PathBuf,
-                    delta: &ostree::Delta) -> Box<dyn Future<Item=(), Error=DeltaGenerationError>> {
+                    delta: &ostree::Delta) -> impl Future<Item=(), Error=DeltaGenerationError> {
     let url = format!("{}/api/v1/delta/upload/{}", base_url, repo);
     let token = token.clone();
 
     let mut mpart = MultipartRequest::default();
 
     info!("Uploading delta {}", delta.to_name().unwrap_or("??".to_string()));
-    if let Err(e) = add_delta_parts(fs_pool, repo_path, delta, &mut mpart) {
-        return Box::new(future::err(e))
-    }
-
-    Box::new(
-        client::ClientRequest::build()
-            .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={}", mpart.get_boundary()))
-            .header(header::AUTHORIZATION, format!("Bearer {}", token))
-            .write_buffer_capacity(UPLOAD_BUFFER_CAPACITY_BYTES)
-            .timeout(UPLOAD_TIMEOUT)
-            .uri(&url)
-            .method(http::Method::POST)
-            .body(actix_web::Body::Streaming(Box::new(mpart.from_err())))
-            .unwrap()
-            .send()
-            .then(|r| {
-                match r {
-                    Ok(response) => {
-                        if response.status().is_success() {
-                            Ok(())
-                        } else {
-                            error!("Unexpected upload response: {:?}", response);
-                            Err(DeltaGenerationError::new(&format!("Delta upload failed with error {}", response.status())))
-                        }
-                    },
-                    Err(e) => {
-                        error!("Unexpected upload error: {:?}", e);
-                        Err(DeltaGenerationError::new(&format!("Delta upload failed with error {}", e)))
-                    },
-                }
-            }))
+    futures::done(add_delta_parts(fs_pool, repo_path, delta, &mut mpart))
+        .and_then( move |_| {
+            Client::new()
+                .post(&url)
+                .header(header::CONTENT_TYPE, format!("multipart/form-data; boundary={}", mpart.get_boundary()))
+                .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                .timeout(UPLOAD_TIMEOUT)
+                .method(http::Method::POST)
+                .send_body(actix_http::body::BodyStream::new(mpart))
+                .then(|r| {
+                    match r {
+                        Ok(response) => {
+                            if response.status().is_success() {
+                                Ok(())
+                            } else {
+                                error!("Unexpected upload response: {:?}", response);
+                                Err(DeltaGenerationError::new(&format!("Delta upload failed with error {}", response.status())))
+                            }
+                        },
+                        Err(e) => {
+                            error!("Unexpected upload error: {:?}", e);
+                            Err(DeltaGenerationError::new(&format!("Delta upload failed with error {}", e)))
+                        },
+                    }
+                })
+        })
 }
 
 impl DeltaClient {
     fn run_heartbeat(&self, ctx: &mut Context<Self>) {
         ctx.run_interval(HEARTBEAT_INTERVAL, |client, ctx| {
-            client.writer.ping("");
+            info!("Pinging server");
+            if let Err(e) = client.writer.write(Message::Ping(String::new())) {
+                warn!("Failed to ping server: {:?}, disconnecting", e);
+                client.close();
+                ctx.stop();
+                return
+            }
             if Instant::now().duration_since(client.last_recieved_pong) > SERVER_TIMEOUT {
                 warn!("Server heartbeat missing, disconnecting!");
                 client.close();
@@ -272,21 +284,25 @@ impl DeltaClient {
     }
 
     fn register(&mut self) {
-        self.writer.text(json!(
+        if let Err(e) = self.writer.write(Message::Text(json!(
             RemoteClientMessage::Register {
                 capacity: self.capacity,
             }
-        ).to_string());
+        ).to_string())) {
+            warn!("Failed to register with server: {:?}", e);
+        }
     }
 
     fn finished(&mut self, id: u32, errmsg: Option<String>) {
         info!("Sending finished for request {}", id);
-        self.writer.text(json!(
+        if let Err(e) = self.writer.write(Message::Text(json!(
             RemoteClientMessage::Finished {
                 id: id,
                 errmsg: errmsg.clone(),
             }
-        ).to_string());
+        ).to_string())) {
+            warn!("Failed to call finished: {:?}", e);
+        }
     }
 
     fn prune_repo(&mut self, ctx: &mut Context<Self>) {
@@ -363,16 +379,19 @@ impl DeltaClient {
     }
 }
 
-impl StreamHandler<Message, ProtocolError> for DeltaClient {
-    fn handle(&mut self, msg: Message, ctx: &mut Context<Self>) {
+impl StreamHandler<Frame, WsProtocolError> for DeltaClient {
+    fn handle(&mut self, msg: Frame, ctx: &mut Context<Self>) {
         match msg {
-            Message::Text(text) => {
-                match serde_json::from_str::<RemoteServerMessage>(&text) {
-                    Ok(message) => self.message(message, ctx),
+            Frame::Text(Some(bytes)) => {
+                match std::str::from_utf8(&bytes) {
+                    Ok(text) => match serde_json::from_str::<RemoteServerMessage>(text) {
+                        Ok(message) => self.message(message, ctx),
+                        Err(e) => error!("Got invalid websocket message: {}", e),
+                    },
                     Err(e) => error!("Got invalid websocket message: {}", e),
                 }
             },
-            Message::Pong(_) => {
+            Frame::Pong(_) => {
                 self.last_recieved_pong = Instant::now();
             },
             _ => (),
@@ -389,6 +408,9 @@ impl StreamHandler<Message, ProtocolError> for DeltaClient {
     }
 }
 
+impl WriteHandler<WsProtocolError> for DeltaClient
+{
+}
 
 fn main() {
     env::set_var("RUST_LOG", "info");

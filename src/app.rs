@@ -1,8 +1,12 @@
 use actix::prelude::*;
-use actix_web::{self, App, http::Method, HttpRequest, HttpResponse,
-                fs::NamedFile, error::ErrorNotFound};
+use actix_web::{self, http, web, middleware, App, HttpRequest, HttpResponse, HttpServer,
+                error::ErrorNotFound};
+use actix_web::dev::Server;
+use actix_files::NamedFile;
 use actix_web::http::header::{CACHE_CONTROL, HeaderValue};
-use actix_web::middleware::{Middleware, Response};
+use actix_web::web::Data;
+use actix_web::Responder;
+use actix_service::{Service};
 use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
@@ -23,7 +27,6 @@ use api;
 use deltas::DeltaGenerator;
 use tokens::{TokenParser, ClaimsValidator};
 use jobs::{JobQueue};
-use actix_web::dev::FromParam;
 use logger::Logger;
 use ostree;
 
@@ -315,27 +318,26 @@ pub struct AppState {
     pub delta_generator: Addr<DeltaGenerator>,
 }
 
-fn handle_build_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
-    let tail: String = req.match_info().query("tail")?;
-    let id: String = req.match_info().query("id")?;
-    let state = req.state();
+fn handle_build_repo(state: Data<AppState>,
+                     req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
+    let tail = req.match_info().query("tail");
+    let id = req.match_info().query("id");
 
-    // Strip out any "../.." or other unsafe things
-    let relpath = PathBuf::from_param(tail.trim_start_matches('/'))?;
-    // The id won't have slashes, but it could have ".." or some other unsafe thing
-    let safe_id = PathBuf::from_param(&id)?;
-    let path = Path::new(&state.config.build_repo_base).join(&safe_id).join(&relpath);
+    // Actix strips out .. and ., but not multiple slashes
+    let relpath = tail.trim_start_matches('/');
+    let path = Path::new(&state.config.build_repo_base).join(&id).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
+
     NamedFile::open(path).or_else(|_e| {
-        let fallback_path = Path::new(&state.config.build_repo_base).join(&safe_id).join("parent").join(&relpath);
+        let fallback_path = Path::new(&state.config.build_repo_base).join(&id).join("parent").join(&relpath);
         if fallback_path.is_dir() {
             Err(ErrorNotFound("Ignoring directory"))
         } else {
-            Ok(NamedFile::open(fallback_path)?)
+            NamedFile::open(fallback_path).map_err(|e| e.into())
         }
-    })
+    })?.respond_to(&req)
 }
 
 fn get_commit_for_file(path: &PathBuf) -> Option<ostree::OstreeCommit> {
@@ -353,24 +355,23 @@ fn get_commit_for_file(path: &PathBuf) -> Option<ostree::OstreeCommit> {
     return None;
 }
 
-struct RepoHeaders;
 struct RepoHeadersData {
     nocache: bool,
 }
 
-impl Middleware<AppState> for RepoHeaders {
-    fn response(&self, req: &HttpRequest<AppState>, mut resp: HttpResponse) -> actix_web::Result<Response> {
-        if let Some(data) = req.extensions().get::<RepoHeadersData>() {
-            if data.nocache {
-                resp.headers_mut().insert(CACHE_CONTROL,
-                                          HeaderValue::from_static("no-store"));
-            }
-        }
-        Ok(Response::Done(resp))
+fn apply_extra_headers (resp: &mut actix_web::dev::ServiceResponse){
+    let mut nocache = false;
+    if let Some(data) = resp.request().extensions().get::<RepoHeadersData>() {
+        nocache = data.nocache;
     }
+    if nocache {
+        resp.headers_mut().insert(CACHE_CONTROL,
+                                  HeaderValue::from_static("no-store"));
+    }
+
 }
 
-fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, repoconfig: &RepoConfig, path: &PathBuf) -> Result<(), ApiError> {
+fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig: &RepoConfig, path: &PathBuf) -> Result<(), ApiError> {
     let token_type = commit.metadata.get("xa.token-type").map(|v| v.as_i32().unwrap_or(0)).unwrap_or(repoconfig.default_token_type);
     if !repoconfig.require_auth_for_token_types.contains(&token_type) {
         return Ok(());
@@ -395,50 +396,46 @@ fn verify_repo_token(req: &HttpRequest<AppState>, commit: ostree::OstreeCommit, 
     result
 }
 
-
-fn handle_repo(req: &HttpRequest<AppState>) -> actix_web::Result<NamedFile> {
-    let tail: String = req.match_info().query("tail")?;
-    let repo: String = req.match_info().query("repo")?;
-    let state = req.state();
+fn handle_repo(state: Data<AppState>,
+               req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
+    let tail = req.match_info().query("tail");
+    let repo = req.match_info().query("repo");
     let repoconfig = state.config.get_repoconfig(&repo)?;
-    // Strip out any "../.." or other unsafe things
-    let relpath = PathBuf::from_param(tail.trim_start_matches('/'))?;
+
+    // Actix strips out .. and ., but not multiple slashes
+    let relpath = tail.trim_start_matches('/');
     let path = Path::new(&repoconfig.path).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
 
     if let Some(commit) = get_commit_for_file (&path) {
-        let repo : String = req.match_info().query("repo")?;
-        let state = req.state();
+        let repo = req.match_info().query("repo");
         let repoconfig = state.config.get_repoconfig(&repo)?;
-        verify_repo_token(req, commit, repoconfig, &path)?;
+        verify_repo_token(&req, commit, repoconfig, &path)?;
     }
 
-    match NamedFile::open(path) {
-        Ok(file) => Ok(file),
-        Err(e) => {
-            // Was this a delta, if so check the deltas queued for deletion
-            if relpath.starts_with("deltas") {
-                let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
-                if tmp_path.is_dir() {
-                    Err(ErrorNotFound("Ignoring directory"))
-                } else {
-                    Ok(NamedFile::open(tmp_path)?)
-                }
+    NamedFile::open(path).or_else(|e| {
+        // Was this a delta, if so check the deltas queued for deletion
+        if relpath.starts_with("deltas") {
+            let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
+            if tmp_path.is_dir() {
+                Err(ErrorNotFound("Ignoring directory"))
             } else {
-                Err(e)?
+                NamedFile::open(tmp_path).map_err(|e| e.into())
             }
-        },
-    }
+        } else {
+            Err(e).map_err(|e| e.into())
+        }
+    })?.respond_to(&req)
 }
 
-pub fn create_app(
+pub fn create_app (
     db: Addr<DbExecutor>,
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
     delta_generator: &Addr<DeltaGenerator>,
-) -> App<AppState> {
+) -> Server {
     let state = AppState {
         db: db.clone(),
         job_queue: job_queue.clone(),
@@ -446,47 +443,81 @@ pub fn create_app(
         delta_generator: delta_generator.clone(),
     };
 
-    App::with_state(state)
-        .middleware(Logger::default())
-        .scope("/api/v1", |scope| {
-            scope
-                .middleware(TokenParser::new(&config.secret))
-                .resource("/token_subset", |r| r.method(Method::POST).with(api::token_subset))
-                .resource("/job/{id}", |r| { r.name("show_job"); r.method(Method::GET).with_async(api::get_job)})
-                .resource("/build", |r| { r.method(Method::POST).with_async(api::create_build);
-                                          r.method(Method::GET).with_async(api::builds) })
-                .resource("/build/{id}", |r| { r.name("show_build"); r.method(Method::GET).with_async(api::get_build) })
-                .resource("/build/{id}/build_ref", |r| r.method(Method::POST).with_async(api::create_build_ref))
-                .resource("/build/{id}/build_ref/{ref_id}", |r| { r.name("show_build_ref"); r.method(Method::GET).with_async(api::get_build_ref) })
-                .resource("/build/{id}/missing_objects", |r| r.method(Method::GET).with(api::missing_objects))
-                .resource("/build/{id}/add_extra_ids", |r| r.method(Method::POST).with_async(api::add_extra_ids))
-                .resource("/build/{id}/upload", |r| r.method(Method::POST).with_async(api::upload))
-                .resource("/build/{id}/commit", |r| { r.name("show_commit_job");
-                                                      r.method(Method::POST).with_async(api::commit);
-                                                      r.method(Method::GET).with_async(api::get_commit_job) })
-                .resource("/build/{id}/publish", |r| { r.name("show_publish_job");
-                                                      r.method(Method::POST).with_async(api::publish);
-                                                       r.method(Method::GET).with_async(api::get_publish_job) })
-                .resource("/build/{id}/purge", |r| { r.method(Method::POST).with_async(api::purge) })
-                .resource("/delta/worker", |r| r.route().f(api::ws_delta))
-                .resource("/delta/upload/{repo}", |r| r.method(Method::POST).with_async(api::delta_upload))
-        })
-        .scope("/repo", |scope| {
-            scope
-                .middleware(TokenParser::optional(config.repo_secret.as_ref().unwrap_or(config.secret.as_ref())))
-                .middleware(RepoHeaders)
-                .resource("/{repo}/{tail:.*}", |r| {
-                    r.name("repo");
-                    r.get().f(handle_repo);
-                    r.head().f(handle_repo);
-                    r.f(|_| HttpResponse::MethodNotAllowed())
-                })
-        })
-        .resource("/build-repo/{id}/{tail:.*}", |r| {
-            r.get().f(handle_build_repo);
-            r.head().f(handle_build_repo);
-            r.f(|_| HttpResponse::MethodNotAllowed())
-        })
-        .resource("/status", |r| r.method(Method::GET).with_async(api::status))
-        .resource("/status/{id}", |r| r.method(Method::GET).with_async(api::job_status))
+    let secret = config.secret.clone();
+    let repo_secret = config.repo_secret.as_ref().unwrap_or(config.secret.as_ref()).clone();
+    let http_server = HttpServer::new(move || {
+        App::new()
+            .data(state.clone())
+            .wrap(Logger::default())
+            .wrap(middleware::Compress::new(http::header::ContentEncoding::Identity))
+            .service(web::scope("/api/v1")
+                     .wrap(TokenParser::new(&secret))
+                     .service(web::resource("/token_subset")
+                              .route(web::post().to(api::token_subset)))
+                     .service(web::resource("/job/{id}").name("show_job")
+                              .route(web::get().to_async(api::get_job)))
+                     .service(web::resource("/build")
+                              .route(web::post().to_async(api::create_build))
+                              .route(web::get().to_async(api::builds)))
+                     .service(web::resource("/build/{id}").name("show_build")
+                              .route(web::get().to_async(api::get_build)))
+                     .service(web::resource("/build/{id}/build_ref")
+                              .route(web::post().to_async(api::create_build_ref)))
+                     .service(web::resource("/build/{id}/build_ref/{ref_id}").name("show_build_ref")
+                              .route(web::get().to_async(api::get_build_ref)))
+                     .service(web::resource("/build/{id}/missing_objects")
+                              .data(web::JsonConfig::default().limit(1024*1024*10))
+                              .route(web::get().to(api::missing_objects)))
+                     .service(web::resource("/build/{id}/add_extra_ids")
+                              .route(web::post().to_async(api::add_extra_ids)))
+                     .service(web::resource("/build/{id}/upload")
+                              .route(web::post().to_async(api::upload)))
+                     .service(web::resource("/build/{id}/commit").name("show_commit_job")
+                              .route(web::post().to_async(api::commit))
+                              .route(web::get().to_async(api::get_commit_job)))
+                     .service(web::resource("/build/{id}/publish").name("show_publish_job")
+                              .route(web::post().to_async(api::publish))
+                              .route(web::get().to_async(api::get_publish_job)))
+                     .service(web::resource("/build/{id}/purge")
+                              .route(web::post().to_async(api::purge)))
+                     .service(web::resource("/delta/worker")
+                              .route(web::get().to(api::ws_delta)))
+                     .service(web::resource("/delta/upload/{repo}")
+                              .route(web::post().to_async(api::delta_upload)))
+            )
+            .service(web::scope("/repo")
+                     .wrap(TokenParser::optional(&repo_secret))
+                     .wrap_fn(|req, srv| {
+                         srv.call(req).map(|mut resp| {
+                             apply_extra_headers (&mut resp);
+                             resp
+                         })
+                     })
+                     .service(web::resource("/{repo}/{tail:.*}").name("repo")
+                              .route(web::get().to(handle_repo))
+                              .route(web::head().to(handle_repo))
+                              .to(HttpResponse::MethodNotAllowed)
+                     ))
+            .service(web::resource("/build-repo/{id}/{tail:.*}")
+                     .route(web::get().to(handle_build_repo))
+                     .route(web::head().to(handle_build_repo))
+                     .to(HttpResponse::MethodNotAllowed)
+            )
+            .service(web::resource("/status")
+                     .route(web::get().to_async(api::status)))
+            .service(web::resource("/status/{id}")
+                     .route(web::get().to_async(api::job_status)))
+    });
+
+    let bind_to = format!("{}:{}", config.host, config.port);
+    let server =
+        http_server
+        .bind(&bind_to)
+        .unwrap()
+        .disable_signals()
+        .start();
+
+    info!("Started http server: {}", bind_to);
+
+    server
 }
