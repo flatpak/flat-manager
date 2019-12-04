@@ -7,7 +7,6 @@ use actix_web::http::header::{CACHE_CONTROL, HeaderValue};
 use actix_web::web::Data;
 use actix_web::Responder;
 use actix_service::{Service};
-use models::DbExecutor;
 use std::path::PathBuf;
 use std::path::Path;
 use std::ffi::OsStr;
@@ -29,6 +28,8 @@ use tokens::{TokenParser, ClaimsValidator};
 use jobs::{JobQueue};
 use logger::Logger;
 use ostree;
+use Pool;
+use db::Db;
 
 fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where D: serde::Deserializer<'de>
@@ -312,7 +313,6 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub db: Addr<DbExecutor>,
     pub config: Arc<Config>,
     pub job_queue: Addr<JobQueue>,
     pub delta_generator: Addr<DeltaGenerator>,
@@ -431,13 +431,12 @@ fn handle_repo(state: Data<AppState>,
 }
 
 pub fn create_app (
-    db: Addr<DbExecutor>,
+    pool: Pool,
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
     delta_generator: &Addr<DeltaGenerator>,
 ) -> Server {
     let state = AppState {
-        db: db.clone(),
         job_queue: job_queue.clone(),
         config: config.clone(),
         delta_generator: delta_generator.clone(),
@@ -448,6 +447,7 @@ pub fn create_app (
     let http_server = HttpServer::new(move || {
         App::new()
             .data(state.clone())
+            .data(Db(pool.clone()))
             .wrap(Logger::default())
             .wrap(middleware::Compress::new(http::header::ContentEncoding::Identity))
             .service(web::scope("/api/v1")

@@ -2,7 +2,6 @@ use actix::prelude::*;
 use actix::{Actor, SyncContext};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, Pool};
 use diesel::result::{Error as DieselError};
 use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel;
@@ -26,6 +25,7 @@ use std::sync::mpsc;
 
 use ostree;
 use app::{RepoConfig, Config};
+use Pool;
 use errors::{JobError, JobResult};
 use models::{NewJob, Job, JobDependency, JobKind, CommitJob, PublishJob, UpdateRepoJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
 use deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
@@ -242,7 +242,7 @@ pub struct JobExecutor {
     pub repo: Option<String>,
     pub config: Arc<Config>,
     pub delta_generator: Addr<DeltaGenerator>,
-    pub pool: Pool<ConnectionManager<PgConnection>>,
+    pub pool: Pool,
 }
 
 impl Actor for JobExecutor {
@@ -1230,7 +1230,7 @@ impl Handler<StopJobQueue> for JobQueue {
 fn start_executor(repo: &Option<String>,
                   config: &Arc<Config>,
                   delta_generator: &Addr<DeltaGenerator>,
-                  pool: &Pool<ConnectionManager<PgConnection>>) -> RefCell<ExecutorInfo>
+                  pool: &Pool) -> RefCell<ExecutorInfo>
 {
     let config_copy = config.clone();
     let delta_generator_copy = delta_generator.clone();
@@ -1251,7 +1251,7 @@ fn start_executor(repo: &Option<String>,
 
 pub fn start_job_executor(config: Arc<Config>,
                           delta_generator: Addr<DeltaGenerator>,
-                          pool: Pool<ConnectionManager<PgConnection>>) -> Addr<JobQueue> {
+                          pool: Pool) -> Addr<JobQueue> {
     let mut executors = HashMap::new();
     executors.insert(None,
                      start_executor(&None, &config, &delta_generator, &pool));
@@ -1266,7 +1266,7 @@ pub fn start_job_executor(config: Arc<Config>,
     }.start()
 }
 
-pub fn cleanup_started_jobs(pool: &Pool<ConnectionManager<PgConnection>>) -> Result<(), diesel::result::Error> {
+pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
     let conn = &pool.get().unwrap();
     {
         use schema::builds::dsl::*;

@@ -51,7 +51,7 @@ mod logger;
 use actix::prelude::*;
 use actix_web::dev::Server;
 use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager, ManageConnection, Pool};
+use diesel::r2d2::{ConnectionManager, ManageConnection};
 use std::path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -59,10 +59,11 @@ use tokio_signal::unix::Signal;
 use app::Config;
 use deltas::{DeltaGenerator,StopDeltaGenerator};
 use jobs::{JobQueue, StopJobQueue};
-use models::DbExecutor;
 
 pub use deltas::{RemoteClientMessage,RemoteServerMessage};
 pub use errors::{DeltaGenerationError};
+
+type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
     let config_data = app::load_config(&path).expect(&format!("Failed to read config file {:?}", &path));
@@ -71,7 +72,7 @@ pub fn load_config(path: &path::Path) -> Arc<Config> {
 
 embed_migrations!();
 
-fn connect_to_db(config: &Arc<Config>) -> Pool<ConnectionManager<PgConnection>> {
+fn connect_to_db(config: &Arc<Config>) -> r2d2::Pool<ConnectionManager<PgConnection>> {
     let manager = ConnectionManager::<PgConnection>::new(config.database_url.clone());
 
     {
@@ -79,24 +80,17 @@ fn connect_to_db(config: &Arc<Config>) -> Pool<ConnectionManager<PgConnection>> 
         embedded_migrations::run_with_output(&conn, &mut std::io::stdout()).unwrap();
     }
 
-    let pool = r2d2::Pool::builder()
+    r2d2::Pool::builder()
         .build(manager)
-        .expect("Failed to create pool.");
-
-    pool
+        .expect("Failed to create pool.")
 }
 
 fn start_delta_generator(config: &Arc<Config>) -> Addr<DeltaGenerator> {
     deltas::start_delta_generator(config.clone())
 }
 
-fn start_db_executor(pool: &Pool<ConnectionManager<PgConnection>>) -> Addr<DbExecutor> {
-    let pool_copy = pool.clone();
-    SyncArbiter::start(3, move || DbExecutor(pool_copy.clone()))
-}
-
 fn start_job_queue(config: &Arc<Config>,
-                   pool: &Pool<ConnectionManager<PgConnection>>,
+                   pool: &Pool,
                    delta_generator: &Addr<DeltaGenerator>) -> Addr<JobQueue> {
     jobs::cleanup_started_jobs(&pool).expect("Failed to cleanup started jobs");
     jobs::start_job_executor(config.clone(), delta_generator.clone(), pool.clone())
@@ -162,16 +156,14 @@ pub fn start(config: &Arc<Config>) -> Server {
 
     let delta_generator = start_delta_generator(config);
 
-    let db_executor = start_db_executor(&pool);
     let job_queue = start_job_queue(config, &pool, &delta_generator);
 
 
-  let db_executor_copy = db_executor.clone();
     let job_queue_copy = job_queue.clone();
     let config_copy = config.clone();
     let delta_generator_copy = delta_generator.clone();
 
-    let app = app::create_app(db_executor_copy.clone(), &config_copy, job_queue_copy.clone(), &delta_generator_copy);
+    let app = app::create_app(pool, &config_copy, job_queue_copy.clone(), &delta_generator_copy);
 
     handle_signals(app.clone(), job_queue, delta_generator);
 

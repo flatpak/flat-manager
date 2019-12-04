@@ -4,6 +4,7 @@ use diesel::result::{Error as DieselError};
 use std::io;
 use actix_web::http::StatusCode;
 use ostree::OstreeError;
+use actix_web::error::BlockingError;
 
 #[derive(Fail, Debug, Clone)]
 pub enum DeltaGenerationError {
@@ -72,6 +73,23 @@ impl From<OstreeError> for ApiError {
             _ => {
                 ApiError::InternalServerError(e.to_string())
             }
+        }
+    }
+}
+
+impl From<BlockingError<ApiError>> for ApiError {
+    fn from(e: BlockingError<ApiError>) -> Self {
+        match e {
+            BlockingError::Error(e) => e,
+            BlockingError::Canceled => ApiError::InternalServerError("Blocking operation cancelled".to_string())
+        }
+    }
+}
+
+impl From<r2d2::Error> for ApiError {
+    fn from(e: r2d2::Error) -> Self {
+        match e {
+            _ => ApiError::InternalServerError(format!("Database error: {}", e.to_string()))
         }
     }
 }
