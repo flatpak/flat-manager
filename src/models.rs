@@ -1,16 +1,7 @@
-use actix::{Actor, SyncContext};
-use diesel::pg::PgConnection;
-use diesel::r2d2::{ConnectionManager, Pool};
 use std::{mem,time};
 
 use chrono;
 use schema::{ builds, build_refs, jobs, job_dependencies };
-
-pub struct DbExecutor(pub Pool<ConnectionManager<PgConnection>>);
-
-impl Actor for DbExecutor {
-    type Context = SyncContext<Self>;
-}
 
 #[derive(Deserialize, Insertable, Debug)]
 #[table_name = "builds"]
@@ -204,6 +195,16 @@ pub struct Job {
     pub log: String,
     pub start_after: Option<time::SystemTime>,
     pub repo: Option<String>,
+}
+
+impl Job {
+    // Ideally we'd do this via a SUBSTRING query, but at least do it behind the API
+    pub fn apply_log_offset(mut self: Self, log_offset: Option<usize>) -> Self {
+        if let Some(log_offset) = log_offset {
+            self.log = self.log.split_off(std::cmp::min(log_offset, self.log.len()))
+        }
+        self
+    }
 }
 
 #[derive(Insertable, Debug, Queryable, Identifiable, Associations)]

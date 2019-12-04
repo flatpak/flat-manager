@@ -29,7 +29,6 @@ use errors::ApiError;
 use db::*;
 use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
 use tokens::{self, ClaimsValidator};
-use models::DbExecutor;
 use jobs::ProcessJobs;
 use askama::Template;
 use deltas::RemoteWorker;
@@ -62,23 +61,6 @@ min-free-space-size=500MB
                            },
                            parent_repo_absolute_path.display()).as_bytes())?;
     Ok(())
-}
-
-fn db_request<M: DbRequest> (state: &AppState,
-                             msg: M) ->
-    impl Future<Item = <M as DbRequest>::DbType, Error = ApiError>
-    where
-    DbExecutor: actix::Handler<DbRequestWrapper<M>>
-{
-        state
-            .db
-            .send(DbRequestWrapper::<M> (msg))
-            .from_err()
-            .and_then(move |res| match res {
-                Ok(ok_res) =>  return future::ok(ok_res),
-                Err(db_err) => future::err(db_err)
-            })
-            .from_err()
 }
 
 fn respond_with_url<T>(data: &T, req: &HttpRequest, name: &str, elements: &[String]) -> Result<HttpResponse, ApiError> where
@@ -150,7 +132,7 @@ pub fn token_subset(
     ApiError::NotEnoughPermissions("No token presented".to_string()).error_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize,Debug)]
 pub struct JobPathParams {
     id: i32,
 }
@@ -164,16 +146,11 @@ pub struct JobArgs {
 pub fn get_job(
     args: Json<JobArgs>,
     params: Path<JobPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("build", "jobs"))
-        .and_then(move |_|
-                  db_request (&state,
-                              LookupJob {
-                                  id: params.id,
-                                  log_offset: args.log_offset,
-                              }))
+        .and_then(move |_|  db.lookup_job(params.id, args.log_offset))
         .and_then(|job| Ok(HttpResponse::Ok().json(job)))
 }
 
@@ -184,6 +161,7 @@ pub struct CreateBuildArgs {
 
 pub fn create_build(
     args: Json<CreateBuildArgs>,
+    db: Data<Db>,
     state: Data<AppState>,
     req: HttpRequest
 )  -> impl Future<Item = HttpResponse, Error = ApiError> {
@@ -194,10 +172,11 @@ pub fn create_build(
         .and_then(move |_| futures::done(req.has_token_repo(&repo1))
                   .and_then(move |_| futures::done(config.get_repoconfig(&repo2).map(|rc| rc.clone()))) // Ensure the repo exists
                   .and_then(move |repoconfig| {
-                      db_request (&state,
-                                  NewBuild {
-                                      repo: args.repo.clone(),
-                                  })
+                      db
+                          .new_build (
+                              NewBuild {
+                                  repo: args.repo.clone(),
+                              })
                           .and_then(move |build| {
                               let build_repo_path = state.config.build_repo_base.join(build.id.to_string());
                               let upload_path = build_repo_path.join("upload");
@@ -212,11 +191,11 @@ pub fn create_build(
 }
 
 pub fn builds(
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("build", "build"))
-        .and_then(move |_| db_request (&state, ListBuilds { }))
+        .and_then(move |_| db.list_builds())
         .and_then(move |builds| Ok(HttpResponse::Ok().json(builds)))
 }
 
@@ -228,13 +207,13 @@ pub struct BuildPathParams {
 
 pub fn get_build(
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build")
                   /* We allow getting a build for uploaders too, as it is similar info, and useful */
                   .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), "upload")))
-        .and_then(move |_| db_request (&state, LookupBuild { id: params.id }))
+        .and_then(move |_| db.lookup_build(params.id))
         .and_then(|build| Ok(HttpResponse::Ok().json(build)))
 }
 
@@ -246,15 +225,11 @@ pub struct RefPathParams {
 
 pub fn get_build_ref(
     params: Path<RefPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
-        .and_then(move |_| db_request (&state,
-                                       LookupBuildRef {
-                                           id: params.id,
-                                           ref_id: params.ref_id,
-                                       }))
+        .and_then(move |_| db.lookup_build_ref(params.id, params.ref_id))
         .and_then(|build_ref| Ok(HttpResponse::Ok().json(build_ref)))
 }
 
@@ -330,22 +305,23 @@ pub struct CreateBuildRefArgs {
 pub fn create_build_ref (
     args: Json<CreateBuildRefArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload")
                   .and_then(|_| validate_ref(&args.ref_name, &req)))
-        .and_then(|_| {
+        .and_then(move |_| {
             let build_id = params.id;
-            db_request (&state, LookupBuild { id: params.id })
+            db
+                .lookup_build(params.id)
                 .and_then (move |build| futures::done(req.has_token_repo(&build.repo))
                            .and_then (move |_ok| {
-                               db_request (&state,
-                                           NewBuildRef {
-                                               build_id: build_id,
-                                               ref_name: args.ref_name.clone(),
-                                               commit: args.commit.clone(),
-                                           })
+                               db.new_build_ref (
+                                   NewBuildRef {
+                                       build_id: build_id,
+                                       ref_name: args.ref_name.clone(),
+                                       commit: args.commit.clone(),
+                                   })
                            })
                            .and_then(move |buildref| respond_with_url(&buildref, &req, "show_build_ref",
                                                                       &[params.id.to_string(), buildref.id.to_string()]))
@@ -370,7 +346,7 @@ fn validate_id (id: &String) -> Result<(),ApiError>
 pub fn add_extra_ids (
     args: Json<AddExtraIdsArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     let ids = args.ids.clone();
@@ -379,18 +355,13 @@ pub fn add_extra_ids (
         .and_then(move |_| {
             let req2 = req.clone();
             let build_id = params.id;
-            db_request (&state, LookupBuild { id: params.id })
+            db
+                .lookup_build(params.id)
                 .and_then (move |build| {
                     /* Validate token */
                     req2.has_token_repo(&build.repo)
                 })
-                .and_then (move |_ok| {
-                    db_request (&state,
-                                AddExtraIds {
-                                    build_id: build_id,
-                                    ids: args.ids.clone(),
-                                })
-                })
+                .and_then (move |_ok| db.add_extra_ids(build_id, args.ids.clone()))
                 .and_then(move |build| respond_with_url(&build, &req, "show_build",
                                                         &[build_id.to_string()]))
         })
@@ -564,6 +535,7 @@ pub fn upload(
     multipart: Multipart,
     req: HttpRequest,
     params: Path<BuildPathParams>,
+    db: Data<Db>,
     state: Data<AppState>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload"))
@@ -573,7 +545,8 @@ pub fn upload(
                 repo_path: state.config.build_repo_base.join(params.id.to_string()).join("upload")
             });
             let req2 = req.clone();
-            db_request (&state, LookupBuild { id: params.id })
+            db
+                .lookup_build(params.id)
                 .and_then (move |build| req2.has_token_repo(&build.repo))
                 .and_then (move |_ok| {
                     multipart
@@ -592,16 +565,11 @@ pub fn upload(
 pub fn get_commit_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
-        .and_then(move |_|
-                  db_request (&state,
-                              LookupCommitJob {
-                                  build_id: params.id,
-                                  log_offset: args.log_offset,
-                              }))
+        .and_then(move |_|  db.lookup_commit_job(params.id, args.log_offset))
         .and_then(|job| Ok(HttpResponse::Ok().json(job)))
 }
 
@@ -616,6 +584,7 @@ pub fn commit(
     args: Json<CommitArgs>,
     params: Path<BuildPathParams>,
     state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
@@ -623,16 +592,14 @@ pub fn commit(
             let job_queue = state.job_queue.clone();
             let req2 = req.clone();
             let build_id = params.id;
-            db_request (&state, LookupBuild { id: build_id })
+            db
+                .lookup_build (build_id)
                 .and_then (move |build| req2.has_token_repo(&build.repo))
                 .and_then (move |_ok| {
-                    db_request (&state,
-                                StartCommitJob {
-                                    id: build_id,
-                                    endoflife: args.endoflife.clone(),
-                                    endoflife_rebase: args.endoflife_rebase.clone(),
-                                    token_type: args.token_type,
-                                })
+                    db.start_commit_job(build_id,
+                                        args.endoflife.clone(),
+                                        args.endoflife_rebase.clone(),
+                                        args.token_type)
                 })
                 .and_then(move |job| {
                     job_queue.do_send(ProcessJobs(None));
@@ -644,16 +611,11 @@ pub fn commit(
 pub fn get_publish_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
-        .and_then(move |_|
-            db_request (&state,
-                        LookupPublishJob {
-                            build_id: params.id,
-                            log_offset: args.log_offset,
-                        }))
+        .and_then(move |_|  db.lookup_publish_job(params.id, args.log_offset))
         .and_then(|job| Ok(HttpResponse::Ok().json(job)))
 }
 
@@ -665,6 +627,7 @@ pub fn publish(
     _args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
     state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "publish"))
@@ -673,17 +636,14 @@ pub fn publish(
             let build_id = params.id;
             let req2 = req.clone();
 
-            db_request (&state, LookupBuild { id: build_id })
+            db
+                .lookup_build(build_id)
                 .and_then (move |build| {
                     req2.has_token_repo(&build.repo)?;
                     Ok(build)
                 })
                 .and_then (move |build| {
-                    db_request (&state,
-                                StartPublishJob {
-                                    id: build_id,
-                                    repo: build.repo.clone(),
-                                })
+                    db.start_publish_job(build_id, build.repo.clone())
                         .and_then(move |job| {
                             job_queue.do_send(ProcessJobs(Some(build.repo)));
                             respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
@@ -695,6 +655,7 @@ pub fn publish(
 pub fn purge(
     params: Path<BuildPathParams>,
     state: Data<AppState>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
@@ -702,25 +663,18 @@ pub fn purge(
             let build_repo_path = state.config.build_repo_base.join(params.id.to_string());
             let build_id = params.id;
             let req2 = req.clone();
-            let state2 = state.clone();
-            db_request (&state, LookupBuild { id: build_id })
+            let db2 = db.clone();
+            db
+                .lookup_build (build_id)
                 .and_then (move |build| req2.has_token_repo(&build.repo))
-                .and_then (move |_ok| {
-                    db_request (&state,
-                                InitPurge {
-                                    id: build_id,
-                                })
-                })
+                .and_then (move |_ok| db.init_purge(build_id))
                 .and_then(move |_ok| {
                     let res = fs::remove_dir_all(&build_repo_path);
-                    db_request (&state2,
-                                FinishPurge {
-                                    id: build_id,
-                                    error: match res {
-                                        Ok(()) => None,
-                                        Err(e) => Some(e.to_string()),
-                                    },
-                                })
+                    db2.finish_purge (build_id,
+                                     match res {
+                                         Ok(()) => None,
+                                         Err(e) => Some(e.to_string()),
+                                     })
                 })
                 .and_then(move |build| {
                     respond_with_url(&build, &req, "show_build", &[build_id.to_string()])
@@ -754,13 +708,10 @@ fn job_status_data(job: Job) -> JobStatusData {
 
 pub fn job_status(
     params: Path<JobPathParams>,
-    state: Data<AppState>
+    db: Data<Db>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    db_request (&state,
-                LookupJob {
-                    id: params.id,
-                    log_offset: None,
-                })
+    db
+        .lookup_job(params.id, None)
         .and_then(move |job| {
             let s = job_status_data(job).render().unwrap();
             Ok(HttpResponse::Ok().content_type("text/html").body(s))
@@ -775,9 +726,10 @@ struct Status {
 }
 
 pub fn status(
-    state: Data<AppState>
+    db: Data<Db>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    db_request (&state, ListJobs { })
+    db
+        .list_active_jobs()
         .and_then(move |jobs| {
             let s = Status {
                 jobs: jobs.into_iter().map(job_status_data).collect(),
