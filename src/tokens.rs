@@ -77,10 +77,10 @@ impl<S> ClaimsValidator for HttpRequest<S> {
                 //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"
                 //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
                 if !sub_has_prefix(required_sub, &claims.sub) {
-                    return Err(ApiError::NotEnoughPermissions("Not matching sub in token".to_string()))
+                    return Err(ApiError::NotEnoughPermissions(format!("Not matching sub '{}' in token", required_sub)))
                 }
                 if !claims.scope.contains(&required_scope.to_string()) {
-                    return Err(ApiError::NotEnoughPermissions("Not matching scope in token".to_string()))
+                    return Err(ApiError::NotEnoughPermissions(format!("Not matching scope '{}' in token", required_scope)))
                 }
                 Ok(())
             })
