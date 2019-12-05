@@ -158,12 +158,7 @@ pub fn start(config: &Arc<Config>) -> Server {
 
     let job_queue = start_job_queue(config, &pool, &delta_generator);
 
-
-    let job_queue_copy = job_queue.clone();
-    let config_copy = config.clone();
-    let delta_generator_copy = delta_generator.clone();
-
-    let app = app::create_app(pool, &config_copy, job_queue_copy.clone(), &delta_generator_copy);
+    let app = app::create_app(pool, config, job_queue.clone(), delta_generator.clone());
 
     handle_signals(app.clone(), job_queue, delta_generator);
 

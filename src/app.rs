@@ -311,11 +311,6 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     Ok(config_data)
 }
 
-#[derive(Clone)]
-pub struct AppState {
-    pub delta_generator: Addr<DeltaGenerator>,
-}
-
 fn handle_build_repo(config: Data<Arc<Config>>,
                      req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
@@ -432,20 +427,16 @@ pub fn create_app (
     pool: Pool,
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
-    delta_generator: &Addr<DeltaGenerator>,
+    delta_generator: Addr<DeltaGenerator>,
 ) -> Server {
-    let state = AppState {
-        delta_generator: delta_generator.clone(),
-    };
-
     let c = config.clone();
     let secret = config.secret.clone();
     let repo_secret = config.repo_secret.as_ref().unwrap_or(config.secret.as_ref()).clone();
     let http_server = HttpServer::new(move || {
         App::new()
             .data(job_queue.clone())
+            .data(delta_generator.clone())
             .data(c.clone())
-            .data(state.clone())
             .data(Db(pool.clone()))
             .wrap(Logger::default())
             .wrap(middleware::Compress::new(http::header::ContentEncoding::Identity))
