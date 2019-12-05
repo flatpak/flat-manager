@@ -24,14 +24,14 @@ use chrono::{Utc};
 use jwt;
 use serde::Serialize;
 
-use app::{AppState,Claims,Config};
+use app::{Claims,Config};
 use errors::ApiError;
 use db::*;
 use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
 use tokens::{self, ClaimsValidator};
 use jobs::{ProcessJobs, JobQueue};
 use askama::Template;
-use deltas::RemoteWorker;
+use deltas::{DeltaGenerator,RemoteWorker};
 
 fn init_ostree_repo(repo_path: &path::PathBuf, parent_repo_path: &path::PathBuf, build_id: i32, opt_collection_id: &Option<String>) -> io::Result<()> {
     let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
@@ -767,14 +767,14 @@ pub fn delta_upload(
 
 pub fn ws_delta(req: HttpRequest,
                 config: Data<Arc<Config>>,
-                state: Data<AppState>,
+                delta_generator: Data<Addr<DeltaGenerator>>,
                 stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
     if let Err(e) = req.has_token_claims("delta", "generate") {
         return Ok(e.error_response())
     }
     let remote = req.connection_info().remote().unwrap_or("Unknown").to_string();
     ws::start(
-        RemoteWorker::new(&config, &state.delta_generator, remote),
+        RemoteWorker::new(&config, &delta_generator, remote),
         &req,
         stream
     )
