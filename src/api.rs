@@ -1,3 +1,4 @@
+use actix::prelude::*;
 use actix_web::{error, http};
 use actix_web::{HttpRequest, HttpResponse, Result, ResponseError, web};
 use actix_web::web::{Json, Data, Path};
@@ -5,7 +6,6 @@ use actix_web_actors::ws;
 use actix_multipart::Multipart;
 use actix_web::middleware::BodyEncoding;
 
-use futures::prelude::*;
 use futures::future;
 use futures::future::{Future};
 use std::cell::RefCell;
@@ -29,7 +29,7 @@ use errors::ApiError;
 use db::*;
 use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
 use tokens::{self, ClaimsValidator};
-use jobs::ProcessJobs;
+use jobs::{ProcessJobs, JobQueue};
 use askama::Template;
 use deltas::RemoteWorker;
 
@@ -584,13 +584,12 @@ pub struct CommitArgs {
 pub fn commit(
     args: Json<CommitArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    job_queue: Data<Addr<JobQueue>>,
     db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then(move |_| {
-            let job_queue = state.job_queue.clone();
             let req2 = req.clone();
             let build_id = params.id;
             db
@@ -627,13 +626,12 @@ pub struct PublishArgs {
 pub fn publish(
     _args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    job_queue: Data<Addr<JobQueue>>,
     db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "publish"))
         .and_then(move |_| {
-            let job_queue = state.job_queue.clone();
             let build_id = params.id;
             let req2 = req.clone();
 
