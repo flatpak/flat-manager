@@ -1,6 +1,7 @@
 use actix::prelude::*;
 use actix::Actor;
 use actix::dev::ToEnvelope;
+use actix_web::web::Data;
 use app::Config;
 use errors::{DeltaGenerationError};
 use futures::Future;
@@ -355,7 +356,7 @@ pub struct RemoteWorker {
     unregistered: bool,
     last_item_id: u32,
     outstanding: HashMap<u32, RemoteWorkerItem>,
-    config: Arc<Config>,
+    config: Data<Config>,
     last_recieved_ping: Instant,
     generator: Addr<DeltaGenerator>,
 }
@@ -379,7 +380,7 @@ pub enum RemoteServerMessage {
 }
 
 impl RemoteWorker {
-    pub fn new(config: &Arc<Config>, generator: &Addr<DeltaGenerator>, remote: String) -> Self {
+    pub fn new(config: &Data<Config>, generator: &Addr<DeltaGenerator>, remote: String) -> Self {
         RemoteWorker {
             remote: remote,
             id: None,
