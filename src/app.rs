@@ -1,6 +1,6 @@
 use actix::prelude::*;
-use actix_web::{self, http, web, middleware, App, HttpRequest, HttpResponse, HttpServer,
-                error::ErrorNotFound};
+use actix_web::{self, http, web, middleware, App, HttpRequest, HttpResponse, HttpServer};
+use actix_web::error::{ErrorNotFound,ErrorBadRequest};
 use actix_web::dev::Server;
 use actix_files::NamedFile;
 use actix_web::http::header::{CACHE_CONTROL, HeaderValue};
@@ -30,6 +30,35 @@ use logger::Logger;
 use ostree;
 use Pool;
 use db::Db;
+
+// Ensure we strip out .. and other risky things to avoid escaping out of the base dir
+fn canonicalize_path(path: &str) -> Result<PathBuf, actix_web::Error> {
+    let mut buf = PathBuf::new();
+
+    for segment in path.split('/') {
+        if segment == ".." {
+            buf.pop();
+        } else if segment.starts_with('.') {
+            return Err(ErrorBadRequest("Path segments starts with ."));
+        } else if segment.starts_with('*') {
+            return Err(ErrorBadRequest("Path segments starts with *"));
+        } else if segment.ends_with(':') {
+            return Err(ErrorBadRequest("Path segments ends with :"));
+        } else if segment.ends_with('>') {
+            return Err(ErrorBadRequest("Path segments ends with >"));
+        } else if segment.ends_with('<') {
+            return Err(ErrorBadRequest("Path segments end with <"));
+        } else if segment.is_empty() {
+            continue;
+        } else if cfg!(windows) && segment.contains('\\') {
+            return Err(ErrorBadRequest("Path segments contains with \\"));
+        } else {
+            buf.push(segment)
+        }
+    }
+
+    Ok(buf)
+}
 
 fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
     where D: serde::Deserializer<'de>
@@ -316,8 +345,7 @@ fn handle_build_repo(config: Data<Config>,
     let tail = req.match_info().query("tail");
     let id = req.match_info().query("id");
 
-    // Actix strips out .. and ., but not multiple slashes
-    let relpath = tail.trim_start_matches('/');
+    let relpath = canonicalize_path(tail.trim_start_matches('/'))?;
     let path = Path::new(&config.build_repo_base).join(&id).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
@@ -395,8 +423,7 @@ fn handle_repo(config: Data<Config>,
     let repo = req.match_info().query("repo");
     let repoconfig = config.get_repoconfig(&repo)?;
 
-    // Actix strips out .. and ., but not multiple slashes
-    let relpath = tail.trim_start_matches('/');
+    let relpath = canonicalize_path(tail.trim_start_matches('/'))?;
     let path = Path::new(&repoconfig.path).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
