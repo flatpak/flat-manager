@@ -311,7 +311,7 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     Ok(config_data)
 }
 
-fn handle_build_repo(config: Data<Arc<Config>>,
+fn handle_build_repo(config: Data<Config>,
                      req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
     let id = req.match_info().query("id");
@@ -389,7 +389,7 @@ fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig
     result
 }
 
-fn handle_repo(config: Data<Arc<Config>>,
+fn handle_repo(config: Data<Config>,
                req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
     let repo = req.match_info().query("repo");
@@ -436,7 +436,7 @@ pub fn create_app (
         App::new()
             .data(job_queue.clone())
             .data(delta_generator.clone())
-            .data(c.clone())
+            .register_data(Data::new((*c).clone()))
             .data(Db(pool.clone()))
             .wrap(Logger::default())
             .wrap(middleware::Compress::new(http::header::ContentEncoding::Identity))

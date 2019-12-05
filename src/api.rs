@@ -105,7 +105,7 @@ pub fn prefix_is_subset(maybe_subset_prefix: &Option<Vec<String>>, claimed_prefi
 
 pub fn token_subset(
     args: Json<TokenSubsetArgs>,
-    config: Data<Arc<Config>>,
+    config: Data<Config>,
     req: HttpRequest
 ) -> HttpResponse {
     if let Some(claims) = req.get_claims() {
@@ -162,7 +162,7 @@ pub struct CreateBuildArgs {
 pub fn create_build(
     args: Json<CreateBuildArgs>,
     db: Data<Db>,
-    config: Data<Arc<Config>>,
+    config: Data<Config>,
     req: HttpRequest
 )  -> impl Future<Item = HttpResponse, Error = ApiError> {
     let repo1 = args.repo.clone();
@@ -244,7 +244,7 @@ pub struct MissingObjectsResponse {
 
 fn has_object (build_id: i32,
                object: &str,
-               config: &Arc<Config>) -> bool
+               config: &Data<Config>) -> bool
 {
     let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
     let build_path = config.build_repo_base.join(build_id.to_string()).join("upload").join(&subpath);
@@ -259,7 +259,7 @@ fn has_object (build_id: i32,
 pub fn missing_objects(
     args: Json<MissingObjectsArgs>,
     params: Path<BuildPathParams>,
-    config: Data<Arc<Config>>,
+    config: Data<Config>,
     req: HttpRequest,
 ) -> HttpResponse {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
@@ -537,7 +537,7 @@ pub fn upload(
     req: HttpRequest,
     params: Path<BuildPathParams>,
     db: Data<Db>,
-    config: Data<Arc<Config>>,
+    config: Data<Config>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload"))
         .and_then(move |_| {
@@ -654,7 +654,7 @@ pub fn publish(
 pub fn purge(
     params: Path<BuildPathParams>,
     db: Data<Db>,
-    config: Data<Arc<Config>>,
+    config: Data<Config>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
@@ -747,7 +747,7 @@ pub fn delta_upload(
     multipart: Multipart,
     params: Path<DeltaUploadParams>,
     req: HttpRequest,
-    config: Data<Arc<Config>>,
+    config: Data<Config>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("delta", "generate"))
         .and_then(move |_| futures::done(config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
@@ -766,7 +766,7 @@ pub fn delta_upload(
 }
 
 pub fn ws_delta(req: HttpRequest,
-                config: Data<Arc<Config>>,
+                config: Data<Config>,
                 delta_generator: Data<Addr<DeltaGenerator>>,
                 stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
     if let Err(e) = req.has_token_claims("delta", "generate") {
