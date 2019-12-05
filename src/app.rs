@@ -313,25 +313,24 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub config: Arc<Config>,
     pub job_queue: Addr<JobQueue>,
     pub delta_generator: Addr<DeltaGenerator>,
 }
 
-fn handle_build_repo(state: Data<AppState>,
+fn handle_build_repo(config: Data<Arc<Config>>,
                      req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
     let id = req.match_info().query("id");
 
     // Actix strips out .. and ., but not multiple slashes
     let relpath = tail.trim_start_matches('/');
-    let path = Path::new(&state.config.build_repo_base).join(&id).join(&relpath);
+    let path = Path::new(&config.build_repo_base).join(&id).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
 
     NamedFile::open(path).or_else(|_e| {
-        let fallback_path = Path::new(&state.config.build_repo_base).join(&id).join("parent").join(&relpath);
+        let fallback_path = Path::new(&config.build_repo_base).join(&id).join("parent").join(&relpath);
         if fallback_path.is_dir() {
             Err(ErrorNotFound("Ignoring directory"))
         } else {
@@ -396,11 +395,11 @@ fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig
     result
 }
 
-fn handle_repo(state: Data<AppState>,
+fn handle_repo(config: Data<Arc<Config>>,
                req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
     let repo = req.match_info().query("repo");
-    let repoconfig = state.config.get_repoconfig(&repo)?;
+    let repoconfig = config.get_repoconfig(&repo)?;
 
     // Actix strips out .. and ., but not multiple slashes
     let relpath = tail.trim_start_matches('/');
@@ -411,7 +410,7 @@ fn handle_repo(state: Data<AppState>,
 
     if let Some(commit) = get_commit_for_file (&path) {
         let repo = req.match_info().query("repo");
-        let repoconfig = state.config.get_repoconfig(&repo)?;
+        let repoconfig = config.get_repoconfig(&repo)?;
         verify_repo_token(&req, commit, repoconfig, &path)?;
     }
 
@@ -438,14 +437,15 @@ pub fn create_app (
 ) -> Server {
     let state = AppState {
         job_queue: job_queue.clone(),
-        config: config.clone(),
         delta_generator: delta_generator.clone(),
     };
 
+    let c = config.clone();
     let secret = config.secret.clone();
     let repo_secret = config.repo_secret.as_ref().unwrap_or(config.secret.as_ref()).clone();
     let http_server = HttpServer::new(move || {
         App::new()
+            .data(c.clone())
             .data(state.clone())
             .data(Db(pool.clone()))
             .wrap(Logger::default())

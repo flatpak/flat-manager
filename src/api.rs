@@ -24,7 +24,7 @@ use chrono::{Utc};
 use jwt;
 use serde::Serialize;
 
-use app::{AppState,Claims};
+use app::{AppState,Claims,Config};
 use errors::ApiError;
 use db::*;
 use models::{Job,JobStatus, JobKind,NewBuild,NewBuildRef};
@@ -105,7 +105,7 @@ pub fn prefix_is_subset(maybe_subset_prefix: &Option<Vec<String>>, claimed_prefi
 
 pub fn token_subset(
     args: Json<TokenSubsetArgs>,
-    state: Data<AppState>,
+    config: Data<Arc<Config>>,
     req: HttpRequest
 ) -> HttpResponse {
     if let Some(claims) = req.get_claims() {
@@ -123,7 +123,7 @@ pub fn token_subset(
                     repos: { if let Some(ref repos) = args.repos { repos.clone() } else { claims.repos.clone() } },
                     exp: new_exp,
                 };
-                return match jwt::encode(&jwt::Header::default(), &new_claims, &state.config.secret) {
+                return match jwt::encode(&jwt::Header::default(), &new_claims, &config.secret) {
                     Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse{ token: token }),
                     Err(e) => ApiError::InternalServerError(e.to_string()).error_response()
                 }
@@ -162,32 +162,31 @@ pub struct CreateBuildArgs {
 pub fn create_build(
     args: Json<CreateBuildArgs>,
     db: Data<Db>,
-    state: Data<AppState>,
+    config: Data<Arc<Config>>,
     req: HttpRequest
 )  -> impl Future<Item = HttpResponse, Error = ApiError> {
     let repo1 = args.repo.clone();
     let repo2 = args.repo.clone();
-    let config = state.config.clone();
     futures::done(req.has_token_claims("build", "build"))
         .and_then(move |_| futures::done(req.has_token_repo(&repo1))
-                  .and_then(move |_| futures::done(config.get_repoconfig(&repo2).map(|rc| rc.clone()))) // Ensure the repo exists
-                  .and_then(move |repoconfig| {
-                      db
-                          .new_build (
-                              NewBuild {
-                                  repo: args.repo.clone(),
-                              })
-                          .and_then(move |build| {
-                              let build_repo_path = state.config.build_repo_base.join(build.id.to_string());
-                              let upload_path = build_repo_path.join("upload");
+                  .and_then(move |_| futures::done(config.get_repoconfig(&repo2).map(|rc| rc.clone())) // Ensure the repo exists
+                            .and_then(move |repoconfig| {
+                                db
+                                    .new_build (
+                                        NewBuild {
+                                            repo: args.repo.clone(),
+                                        })
+                                    .and_then(move |build| {
+                                        let build_repo_path = config.build_repo_base.join(build.id.to_string());
+                                        let upload_path = build_repo_path.join("upload");
 
-                              init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
-                              init_ostree_repo (&upload_path, &repoconfig.path, build.id, &None)?;
+                                        init_ostree_repo (&build_repo_path, &repoconfig.path, build.id, &repoconfig.collection_id)?;
+                                        init_ostree_repo (&upload_path, &repoconfig.path, build.id, &None)?;
 
-                              respond_with_url(&build, &req, "show_build", &[build.id.to_string()])
-                          })
-                  })
-        )
+                                        respond_with_url(&build, &req, "show_build", &[build.id.to_string()])
+                                    })
+                            })
+                  ))
 }
 
 pub fn builds(
@@ -243,14 +242,16 @@ pub struct MissingObjectsResponse {
     missing: Vec<String>
 }
 
-fn has_object (build_id: i32, object: &str, state: &Data<AppState>) -> bool
+fn has_object (build_id: i32,
+               object: &str,
+               config: &Arc<Config>) -> bool
 {
     let subpath: path::PathBuf = ["objects", &object[..2], &object[2..]].iter().collect();
-    let build_path = state.config.build_repo_base.join(build_id.to_string()).join("upload").join(&subpath);
+    let build_path = config.build_repo_base.join(build_id.to_string()).join("upload").join(&subpath);
     if build_path.exists() {
         true
     } else {
-        let parent_path = state.config.build_repo_base.join(build_id.to_string()).join("parent").join(&subpath);
+        let parent_path = config.build_repo_base.join(build_id.to_string()).join("parent").join(&subpath);
         parent_path.exists()
     }
 }
@@ -258,7 +259,7 @@ fn has_object (build_id: i32, object: &str, state: &Data<AppState>) -> bool
 pub fn missing_objects(
     args: Json<MissingObjectsArgs>,
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
+    config: Data<Arc<Config>>,
     req: HttpRequest,
 ) -> HttpResponse {
     if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
@@ -266,7 +267,7 @@ pub fn missing_objects(
     }
     let mut missing = vec![];
     for object in &args.wanted {
-        if ! has_object (params.id, object, &state) {
+        if ! has_object (params.id, object, &config) {
             missing.push(object.to_string());
         }
     }
@@ -536,13 +537,13 @@ pub fn upload(
     req: HttpRequest,
     params: Path<BuildPathParams>,
     db: Data<Db>,
-    state: Data<AppState>,
+    config: Data<Arc<Config>>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "upload"))
         .and_then(move |_| {
             let uploadstate = Arc::new(UploadState {
                 only_deltas: false,
-                repo_path: state.config.build_repo_base.join(params.id.to_string()).join("upload")
+                repo_path: config.build_repo_base.join(params.id.to_string()).join("upload")
             });
             let req2 = req.clone();
             db
@@ -654,13 +655,13 @@ pub fn publish(
 
 pub fn purge(
     params: Path<BuildPathParams>,
-    state: Data<AppState>,
     db: Data<Db>,
+    config: Data<Arc<Config>>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims(&format!("build/{}", params.id), "build"))
         .and_then (move |_| {
-            let build_repo_path = state.config.build_repo_base.join(params.id.to_string());
+            let build_repo_path = config.build_repo_base.join(params.id.to_string());
             let build_id = params.id;
             let req2 = req.clone();
             let db2 = db.clone();
@@ -748,10 +749,10 @@ pub fn delta_upload(
     multipart: Multipart,
     params: Path<DeltaUploadParams>,
     req: HttpRequest,
-    state: Data<AppState>,
+    config: Data<Arc<Config>>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("delta", "generate"))
-        .and_then(move |_| futures::done(state.config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
+        .and_then(move |_| futures::done(config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
         .and_then(move |repoconfig| {
             let uploadstate = Arc::new(UploadState {
                 only_deltas: true,
@@ -767,6 +768,7 @@ pub fn delta_upload(
 }
 
 pub fn ws_delta(req: HttpRequest,
+                config: Data<Arc<Config>>,
                 state: Data<AppState>,
                 stream: web::Payload) -> Result<HttpResponse, actix_web::Error> {
     if let Err(e) = req.has_token_claims("delta", "generate") {
@@ -774,7 +776,7 @@ pub fn ws_delta(req: HttpRequest,
     }
     let remote = req.connection_info().remote().unwrap_or("Unknown").to_string();
     ws::start(
-        RemoteWorker::new(&state.config, &state.delta_generator, remote),
+        RemoteWorker::new(&config, &state.delta_generator, remote),
         &req,
         stream
     )
