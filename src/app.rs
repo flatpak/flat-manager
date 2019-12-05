@@ -313,7 +313,6 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub job_queue: Addr<JobQueue>,
     pub delta_generator: Addr<DeltaGenerator>,
 }
 
@@ -436,7 +435,6 @@ pub fn create_app (
     delta_generator: &Addr<DeltaGenerator>,
 ) -> Server {
     let state = AppState {
-        job_queue: job_queue.clone(),
         delta_generator: delta_generator.clone(),
     };
 
@@ -445,6 +443,7 @@ pub fn create_app (
     let repo_secret = config.repo_secret.as_ref().unwrap_or(config.secret.as_ref()).clone();
     let http_server = HttpServer::new(move || {
         App::new()
+            .data(job_queue.clone())
             .data(c.clone())
             .data(state.clone())
             .data(Db(pool.clone()))
