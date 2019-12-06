@@ -346,7 +346,8 @@ fn handle_build_repo(config: Data<Config>,
     let id = req.match_info().query("id");
 
     let relpath = canonicalize_path(tail.trim_start_matches('/'))?;
-    let path = Path::new(&config.build_repo_base).join(&id).join(&relpath);
+    let realid = canonicalize_path(id)?;
+    let path = Path::new(&config.build_repo_base).join(&realid).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
