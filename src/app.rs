@@ -37,7 +37,9 @@ fn canonicalize_path(path: &str) -> Result<PathBuf, actix_web::Error> {
 
     for segment in path.split('/') {
         if segment == ".." {
-            buf.pop();
+            if !buf.pop() {
+                return Err(ErrorBadRequest("Path segments goes outside parent"));
+            }
         } else if segment.starts_with('.') {
             return Err(ErrorBadRequest("Path segments starts with ."));
         } else if segment.starts_with('*') {
