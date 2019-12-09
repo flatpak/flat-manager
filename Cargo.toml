@@ -16,7 +16,7 @@ actix = "0.8"
 actix-codec = "0.1.2"
 actix-files = "0.1"
 actix-http = "0.2"
-actix-multipart = "0.1"
+actix-multipart = "0.1.5"
 actix-net = "0.2"
 actix-service = "0.4"
 actix-web = "1.0"
@@ -53,7 +53,3 @@ tokio = "0.1"
 tokio-process = "0.2"
 tokio-signal = "0.2"
 walkdir = "2"
-
-[patch.crates-io]
-# Work around bug: https://github.com/actix/actix-web/pull/1189
-actix-multipart = { git = 'https://github.com/alexlarsson/actix-web/', branch = 'fix-multipart-boundary' }
