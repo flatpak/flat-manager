@@ -209,6 +209,7 @@ pub struct RepoConfig {
     pub gpg_key_content: Option<String>,
     pub base_url: Option<String>,
     pub runtime_repo_url: Option<String>,
+    #[serde(default)]
     pub subsets: HashMap<String, SubsetConfig>,
     pub post_publish_script: Option<String>,
     #[serde(default)]
