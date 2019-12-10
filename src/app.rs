@@ -433,8 +433,6 @@ fn handle_repo(config: Data<Config>,
     }
 
     if let Some(commit) = get_commit_for_file (&path) {
-        let repo = req.match_info().query("repo");
-        let repoconfig = config.get_repoconfig(&repo)?;
         verify_repo_token(&req, commit, repoconfig, &path)?;
     }
 
