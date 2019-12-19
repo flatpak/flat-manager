@@ -565,6 +565,10 @@ impl PublishJobInstance {
             .arg(&src_repo_arg)
             .arg(&repoconfig.path);
 
+        for build_ref in build_refs.iter() {
+            cmd.arg(&build_ref.ref_name);
+        }
+
         job_log_and_info(self.job_id, conn,
                          &format!("Importing build to repo {}", repoconfig.name));
         do_command(cmd)?;
