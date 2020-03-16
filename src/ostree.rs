@@ -195,6 +195,10 @@ impl Variant {
         return self.root().parse_as_i32();
     }
 
+    pub fn as_i32_le(&self) -> OstreeResult<i32> {
+        return self.root().parse_as_i32_le();
+    }
+
     pub fn as_bytes<'a>(&'a self) ->  &'a [u8] {
         return self.root().parse_as_bytes();
     }
@@ -439,6 +443,13 @@ impl<'a> SubVariant<'a> {
             return Err(OstreeError::InternalError(format!("Variant type '{}' not a i32", self.type_string)));
         }
         Ok(NativeEndian::read_i32(self.data))
+    }
+
+    fn parse_as_i32_le(&self) -> OstreeResult<i32> {
+        if self.type_string != "i" {
+            return Err(OstreeError::InternalError(format!("Variant type '{}' not a i32", self.type_string)));
+        }
+        Ok(LittleEndian::read_i32(self.data))
     }
 }
 

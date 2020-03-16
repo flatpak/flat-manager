@@ -405,7 +405,7 @@ fn apply_extra_headers (resp: &mut actix_web::dev::ServiceResponse){
 }
 
 fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig: &RepoConfig, path: &PathBuf) -> Result<(), ApiError> {
-    let token_type = commit.metadata.get("xa.token-type").map(|v| v.as_i32().unwrap_or(0)).unwrap_or(repoconfig.default_token_type);
+    let token_type = commit.metadata.get("xa.token-type").map(|v| v.as_i32_le().unwrap_or(0)).unwrap_or(repoconfig.default_token_type);
     if !repoconfig.require_auth_for_token_types.contains(&token_type) {
         return Ok(());
     }
