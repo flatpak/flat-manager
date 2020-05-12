@@ -778,6 +778,7 @@ pub fn calc_deltas_for_ref (repo_path: &path::PathBuf, ref_name: &str, depth: u3
         return res;
     }
     let to_commit = to_commit_res.unwrap();
+    res.push(Delta::new(None, &to_commit));
 
     let mut from_commit : Option<String> = None;
     for _i in 0..depth {
