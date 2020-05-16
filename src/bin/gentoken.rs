@@ -11,7 +11,7 @@ use std::io;
 use std::io::prelude::*;
 use std::fs;
 use std::process;
-use jwt::{encode, Header};
+use jwt::{encode, Header, EncodingKey};
 use chrono::{Utc, Duration};
 
 use argparse::{ArgumentParser, StoreTrue, Store, StoreOption, List};
@@ -114,10 +114,10 @@ fn main() {
         process::exit(1)
     }
 
-    let bytes: Vec<u8> = if base64 {
-        base64::decode(secret_contents.trim()).unwrap()
+    let key = if base64 {
+        EncodingKey::from_base64_secret(secret_contents.trim()).unwrap()
     } else {
-        secret_contents.trim().as_bytes().to_vec()
+        EncodingKey::from_secret(secret_contents.trim().as_bytes())
     };
 
     let claims = Claims {
@@ -133,6 +133,6 @@ fn main() {
         println!("Token: {}", serde_json::to_string(&claims).unwrap());
     }
 
-    let token = encode(&Header::default(), &claims, &bytes).unwrap();
+    let token = encode(&Header::default(), &claims, &key).unwrap();
     println!("{}", token);
 }

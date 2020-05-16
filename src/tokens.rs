@@ -5,7 +5,7 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::error::Error;
 use futures::{Future, Poll};
 use futures::future::{ok, Either, FutureResult};
-use jwt::{decode, Validation};
+use jwt::{decode, Validation, DecodingKey};
 use std::rc::Rc;
 
 use app::Claims;
@@ -144,7 +144,7 @@ impl Inner {
             ..Validation::default()
         };
 
-        let token_data = match decode::<Claims>(&token, &self.secret, &validation) {
+        let token_data = match decode::<Claims>(&token, &DecodingKey::from_secret(self.secret.as_ref()), &validation) {
             Ok(c) => c,
             Err(_err) => return Err(ApiError::InvalidToken("Invalid token claims".to_string())),
         };

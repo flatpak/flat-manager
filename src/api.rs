@@ -123,7 +123,7 @@ pub fn token_subset(
                     repos: { if let Some(ref repos) = args.repos { repos.clone() } else { claims.repos.clone() } },
                     exp: new_exp,
                 };
-                return match jwt::encode(&jwt::Header::default(), &new_claims, &config.secret) {
+                return match jwt::encode(&jwt::Header::default(), &new_claims, &jwt::EncodingKey::from_secret(config.secret.as_ref())) {
                     Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse{ token: token }),
                     Err(e) => ApiError::InternalServerError(e.to_string()).error_response()
                 }
