@@ -51,7 +51,7 @@ class UsageException(Exception):
 
 class ApiError(Exception):
     def __init__(self, response, body):
-        self.url = response.url
+        self.url = str(response.url)
         self.status = response.status
 
         try:
