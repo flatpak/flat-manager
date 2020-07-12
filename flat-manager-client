@@ -69,7 +69,7 @@ class ApiError(Exception):
 
     def __str__(self):
         return "Api call to %s failed with status %d, details: %s" % (self.url, self.status, self.body)
-        return json.dumps(self.repr(), indent=4)
+
 
 # This is similar to the regular payload, but opens the file lazily
 class AsyncNamedFilePart(aiohttp.payload.Payload):
