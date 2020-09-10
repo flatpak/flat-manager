@@ -945,11 +945,11 @@ impl JobInstance for UpdateRepoJobInstance {
         self.generate_deltas(&missing_deltas, repoconfig, conn)?;
         self.retire_deltas(&unwanted_deltas, repoconfig, conn)?;
 
+        self.extract_appstream(repoconfig, conn)?;
+
         self.update_summary(config, repoconfig, conn)?;
 
         self.run_post_publish(repoconfig, conn)?;
-
-        self.extract_appstream(repoconfig, conn)?;
 
         Ok(json!({ }))
     }
