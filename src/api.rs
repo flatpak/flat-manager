@@ -293,7 +293,7 @@ fn validate_ref (ref_name: &String, req: &HttpRequest) -> Result<(),ApiError>
             }
             req.has_token_prefix(ref_parts[1])
         },
-        _  => Err(ApiError::BadRequest(format!("Invalid ref_name {}", ref_name))),
+        _  => Ok(()), // Err(ApiError::BadRequest(format!("Invalid ref_name {}", ref_name))),
     }
 }
 
