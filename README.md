@@ -145,6 +145,12 @@ are described in the ClaimsScope enum in `app.rs`.
 The client takes tokens via either the `--token` argument or in the
 `REPO_TOKEN` environment variable.
 
+For a production setup, you will also want to generate a token
+for `delta-generator`. This can be done by following the above
+command with these arguments:
+
+    echo -n "secret" | base64 | cargo run --bin gentoken -- --base64 --secret-file - --name delta-generator --sub delta --scope generate
+
 ## Running
 
 To start the server, run:
