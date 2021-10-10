@@ -199,6 +199,10 @@ async def missing_objects(session, build_url, token, wanted):
             missing.extend(data["missing"])
     return missing
 
+@retry(
+    wait=wait_fixed(10),
+    retry=retry_if_exception_type(aiohttp.ClientConnectionError)
+)
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
