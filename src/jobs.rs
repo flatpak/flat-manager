@@ -270,6 +270,8 @@ fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
 
 fn do_command(mut cmd: Command) -> JobResult<()>
 {
+    info!("Running command: {:?}", &cmd);
+
     let output =
         unsafe {
             cmd
