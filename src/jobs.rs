@@ -361,6 +361,12 @@ impl CommitJobInstance {
         }
     }
 
+    fn get_main_build_ref_name (build_refs: &Vec<models::BuildRef>) -> &str {
+        return &build_refs.iter().min_by_key(|build_ref| {
+            build_ref.ref_name.split('/').nth(1).unwrap().len()
+        }).unwrap().ref_name
+    }
+
     fn do_commit_build_refs (&self,
                              build_refs: &Vec<models::BuildRef>,
                              config: &Config,
@@ -375,11 +381,8 @@ impl CommitJobInstance {
         let mut commits = HashMap::new();
 
         let endoflife_rebase_arg = if let Some(endoflife_rebase) = &self.endoflife_rebase {
-            if let Some(app_ref) = build_refs.iter().filter(|app_ref| app_ref.ref_name.starts_with("app/")).nth(0) {
-                Some(format!("--end-of-life-rebase={}={}", app_ref.ref_name.split('/').nth(1).unwrap(), endoflife_rebase))
-            } else {
-                None
-            }
+            let old_prefix = CommitJobInstance::get_main_build_ref_name(build_refs).split('/').nth(1).unwrap();
+            Some(format!("--end-of-life-rebase={}={}", old_prefix, endoflife_rebase))
         } else {
             None
         };
