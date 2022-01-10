@@ -95,7 +95,6 @@ impl<A: Actor> WorkerInfo<A> {
 
 #[derive(Debug)]
 pub struct DeltaGenerator {
-    config: Arc<Config>,
     outstanding: VecDeque<QueuedRequest>,
     local_worker: Rc<WorkerInfo<LocalWorker>>,
     remote_workers: Vec<Rc<WorkerInfo<RemoteWorker>>>,
@@ -326,7 +325,6 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
     }.start();
 
     let generator = DeltaGenerator {
-        config: config,
         outstanding: VecDeque::new(),
         local_worker: Rc::new(WorkerInfo {
             name: "local".to_string(),
@@ -344,7 +342,6 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
 #[derive(Debug)]
 pub struct RemoteWorkerItem {
     id: u32,
-    request: DeltaRequest,
     delayed_result: DelayedResult<(),DeltaGenerationError>,
 }
 
@@ -398,10 +395,9 @@ impl RemoteWorker {
         self.last_item_id
     }
 
-    fn new_item(&mut self, msg: &DeltaRequest) -> RemoteWorkerItem {
+    fn new_item(&mut self) -> RemoteWorkerItem {
         RemoteWorkerItem {
             id: self.allocate_item_id(),
-            request: msg.clone(),
             delayed_result: DelayedResult::new(),
         }
     }
@@ -502,7 +498,7 @@ impl Handler<DeltaRequest> for RemoteWorker {
             repoconfig.get_base_url(&self.config)
         };
 
-        let item = self.new_item(&msg);
+        let item = self.new_item();
 
         ctx.text(json!(RemoteServerMessage::RequestDelta {
             url: url,
