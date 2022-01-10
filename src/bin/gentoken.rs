@@ -1,20 +1,20 @@
 extern crate jsonwebtoken as jwt;
 #[macro_use]
 extern crate serde_derive;
+extern crate argparse;
 extern crate base64;
 extern crate chrono;
-extern crate argparse;
 extern crate serde;
 extern crate serde_json;
 
+use chrono::{Duration, Utc};
+use jwt::{encode, EncodingKey, Header};
+use std::fs;
 use std::io;
 use std::io::prelude::*;
-use std::fs;
 use std::process;
-use jwt::{encode, Header, EncodingKey};
-use chrono::{Utc, Duration};
 
-use argparse::{ArgumentParser, StoreTrue, Store, StoreOption, List};
+use argparse::{ArgumentParser, List, Store, StoreOption, StoreTrue};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {
@@ -53,42 +53,52 @@ fn main() {
         let mut ap = ArgumentParser::new();
         ap.set_description("Generate token for flat-manager.");
         ap.refer(&mut verbose)
-            .add_option(&["-v", "--verbose"], StoreTrue,
-                        "Be verbose");
+            .add_option(&["-v", "--verbose"], StoreTrue, "Be verbose");
         ap.refer(&mut name)
-            .add_option(&["--name"], Store,
-                        "Name for the token");
+            .add_option(&["--name"], Store, "Name for the token");
         ap.refer(&mut sub)
-            .add_option(&["--sub"], Store,
-                        "Subject (default: build)");
-        ap.refer(&mut scope)
-            .add_option(&["--scope"], List,
-                        "Add scope (default if none: [build, upload, publish, jobs]");
-        ap.refer(&mut prefixes)
-            .add_option(&["--prefix"], List,
-                        "Add ref prefix (default if none: ['']");
+            .add_option(&["--sub"], Store, "Subject (default: build)");
+        ap.refer(&mut scope).add_option(
+            &["--scope"],
+            List,
+            "Add scope (default if none: [build, upload, publish, jobs]",
+        );
+        ap.refer(&mut prefixes).add_option(
+            &["--prefix"],
+            List,
+            "Add ref prefix (default if none: ['']",
+        );
         ap.refer(&mut repos)
-            .add_option(&["--repo"], List,
-                        "Add repo (default if none: ['']");
+            .add_option(&["--repo"], List, "Add repo (default if none: ['']");
         ap.refer(&mut base64)
-            .add_option(&["--base64"], StoreTrue,
-                        "The secret is base64 encoded");
-        ap.refer(&mut secret)
-            .add_option(&["--secret"], StoreOption,
-                        "Secret used to encode the token");
-        ap.refer(&mut secret_file)
-            .add_option(&["--secret-file"], StoreOption,
-                        "Load secret from file (or - for stdin)");
-        ap.refer(&mut duration)
-            .add_option(&["--duration"], Store,
-                        "Duration for key in seconds (default 1 year)");
+            .add_option(&["--base64"], StoreTrue, "The secret is base64 encoded");
+        ap.refer(&mut secret).add_option(
+            &["--secret"],
+            StoreOption,
+            "Secret used to encode the token",
+        );
+        ap.refer(&mut secret_file).add_option(
+            &["--secret-file"],
+            StoreOption,
+            "Load secret from file (or - for stdin)",
+        );
+        ap.refer(&mut duration).add_option(
+            &["--duration"],
+            Store,
+            "Duration for key in seconds (default 1 year)",
+        );
         ap.parse_args_or_exit();
     }
 
     let secret_contents;
 
     if scope.len() == 0 {
-        scope = vec!["build".to_string(), "upload".to_string(), "publish".to_string(), "jobs".to_string()];
+        scope = vec![
+            "build".to_string(),
+            "upload".to_string(),
+            "publish".to_string(),
+            "jobs".to_string(),
+        ];
     }
 
     if prefixes.len() == 0 {

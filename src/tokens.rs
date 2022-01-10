@@ -1,11 +1,11 @@
-use actix_web::{HttpRequest, Result, HttpMessage};
-use actix_web::http::header::{HeaderValue, AUTHORIZATION};
 use actix_service::{Service, Transform};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::error::Error;
-use futures::{Future, Poll};
+use actix_web::http::header::{HeaderValue, AUTHORIZATION};
+use actix_web::{HttpMessage, HttpRequest, Result};
 use futures::future::{ok, Either, FutureResult};
-use jwt::{decode, Validation, DecodingKey};
+use futures::{Future, Poll};
+use jwt::{decode, DecodingKey, Validation};
 use std::rc::Rc;
 
 use app::Claims;
@@ -14,7 +14,8 @@ use errors::ApiError;
 pub trait ClaimsValidator {
     fn get_claims(&self) -> Option<Claims>;
     fn validate_claims<Func>(&self, func: Func) -> Result<(), ApiError>
-        where Func: Fn(&Claims) -> Result<(), ApiError>;
+    where
+        Func: Fn(&Claims) -> Result<(), ApiError>;
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError>;
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError>;
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError>;
@@ -27,7 +28,7 @@ pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
     if required_sub.starts_with(claimed_sub) {
         let rest = &required_sub[claimed_sub.len()..];
         if rest.len() == 0 || rest.starts_with("/") {
-            return true
+            return true;
         }
     };
     false
@@ -35,12 +36,12 @@ pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
 
 pub fn id_matches_prefix(id: &str, prefix: &str) -> bool {
     if prefix == "" {
-        return true
+        return true;
     }
     if id.starts_with(prefix) {
         let rest = &id[prefix.len()..];
         if rest.len() == 0 || rest.starts_with(".") {
-            return true
+            return true;
         }
     };
     false
@@ -52,13 +53,15 @@ pub fn id_matches_one_prefix(id: &str, prefixes: &Vec<String>) -> bool {
 
 pub fn repo_matches_claimed(repo: &str, claimed_repo: &str) -> bool {
     if claimed_repo == "" {
-        return true
+        return true;
     }
     repo == claimed_repo
 }
 
 pub fn repo_matches_one_claimed(repo: &str, claimed_repos: &Vec<String>) -> bool {
-    claimed_repos.iter().any(|claimed_repo| repo_matches_claimed(repo, claimed_repo))
+    claimed_repos
+        .iter()
+        .any(|claimed_repo| repo_matches_claimed(repo, claimed_repo))
 }
 
 impl ClaimsValidator for HttpRequest {
@@ -67,28 +70,37 @@ impl ClaimsValidator for HttpRequest {
     }
 
     fn validate_claims<Func>(&self, func: Func) -> Result<(), ApiError>
-        where Func: Fn(&Claims) -> Result<(), ApiError> {
+    where
+        Func: Fn(&Claims) -> Result<(), ApiError>,
+    {
         if let Some(claims) = self.extensions().get::<Claims>() {
             func(claims)
         } else {
-            Err(ApiError::NotEnoughPermissions("No token specified".to_string()))
+            Err(ApiError::NotEnoughPermissions(
+                "No token specified".to_string(),
+            ))
         }
     }
 
     fn has_token_claims(&self, required_sub: &str, required_scope: &str) -> Result<(), ApiError> {
-        self.validate_claims(
-            |claims| {
-                // Matches using a path-prefix style comparison:
-                //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"
-                //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
-                if !sub_has_prefix(required_sub, &claims.sub) {
-                    return Err(ApiError::NotEnoughPermissions(format!("Not matching sub '{}' in token", required_sub)))
-                }
-                if !claims.scope.contains(&required_scope.to_string()) {
-                    return Err(ApiError::NotEnoughPermissions(format!("Not matching scope '{}' in token", required_scope)))
-                }
-                Ok(())
-            })
+        self.validate_claims(|claims| {
+            // Matches using a path-prefix style comparison:
+            //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"
+            //  claim.sub == "build/N" should only matchs required_sub == "build/N[/...]"
+            if !sub_has_prefix(required_sub, &claims.sub) {
+                return Err(ApiError::NotEnoughPermissions(format!(
+                    "Not matching sub '{}' in token",
+                    required_sub
+                )));
+            }
+            if !claims.scope.contains(&required_scope.to_string()) {
+                return Err(ApiError::NotEnoughPermissions(format!(
+                    "Not matching scope '{}' in token",
+                    required_scope
+                )));
+            }
+            Ok(())
+        })
     }
 
     /* A token prefix is something like org.my.App, and should allow
@@ -99,20 +111,24 @@ impl ClaimsValidator for HttpRequest {
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
         self.validate_claims(|claims| {
             if !id_matches_one_prefix(id, &claims.prefixes) {
-                return Err(ApiError::NotEnoughPermissions(format!("Id {} not matching prefix in token", id)));
+                return Err(ApiError::NotEnoughPermissions(format!(
+                    "Id {} not matching prefix in token",
+                    id
+                )));
             }
             Ok(())
         })
     }
 
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError> {
-        self.validate_claims(
-            |claims| {
-                if !repo_matches_one_claimed(&repo.to_string(), &claims.repos) {
-                    return Err(ApiError::NotEnoughPermissions("Not matching repo in token".to_string()))
-                }
-                Ok(())
-            })
+        self.validate_claims(|claims| {
+            if !repo_matches_one_claimed(&repo.to_string(), &claims.repos) {
+                return Err(ApiError::NotEnoughPermissions(
+                    "Not matching repo in token".to_string(),
+                ));
+            }
+            Ok(())
+        })
     }
 }
 
@@ -125,16 +141,29 @@ impl Inner {
     fn parse_authorization(&self, header: &HeaderValue) -> Result<String, ApiError> {
         // "Bearer *" length
         if header.len() < 8 {
-            return Err(ApiError::InvalidToken("Header length too short".to_string()));
+            return Err(ApiError::InvalidToken(
+                "Header length too short".to_string(),
+            ));
         }
 
-        let mut parts = header.to_str().or(Err(ApiError::InvalidToken("Cannot convert header to string".to_string())))?.splitn(2, ' ');
+        let mut parts = header
+            .to_str()
+            .or(Err(ApiError::InvalidToken(
+                "Cannot convert header to string".to_string(),
+            )))?
+            .splitn(2, ' ');
         match parts.next() {
             Some(scheme) if scheme == "Bearer" => (),
-            _ => return Err(ApiError::InvalidToken("Token scheme is not Bearer".to_string())),
+            _ => {
+                return Err(ApiError::InvalidToken(
+                    "Token scheme is not Bearer".to_string(),
+                ))
+            }
         }
 
-        let token = parts.next().ok_or(ApiError::InvalidToken("No token value in header".to_string()))?;
+        let token = parts.next().ok_or(ApiError::InvalidToken(
+            "No token value in header".to_string(),
+        ))?;
 
         Ok(token.to_string())
     }
@@ -144,7 +173,11 @@ impl Inner {
             ..Validation::default()
         };
 
-        let token_data = match decode::<Claims>(&token, &DecodingKey::from_secret(self.secret.as_ref()), &validation) {
+        let token_data = match decode::<Claims>(
+            &token,
+            &DecodingKey::from_secret(self.secret.as_ref()),
+            &validation,
+        ) {
             Ok(c) => c,
             Err(_err) => return Err(ApiError::InvalidToken("Invalid token claims".to_string())),
         };
@@ -157,10 +190,16 @@ pub struct TokenParser(Rc<Inner>);
 
 impl TokenParser {
     pub fn new(secret: &[u8]) -> TokenParser {
-        TokenParser(Rc::new(Inner { secret: secret.to_vec(), optional: false }))
+        TokenParser(Rc::new(Inner {
+            secret: secret.to_vec(),
+            optional: false,
+        }))
     }
     pub fn optional(secret: &[u8]) -> TokenParser {
-        TokenParser(Rc::new(Inner { secret: secret.to_vec(), optional: true }))
+        TokenParser(Rc::new(Inner {
+            secret: secret.to_vec(),
+            optional: true,
+        }))
     }
 }
 
@@ -199,7 +238,9 @@ impl<S> TokenParserMiddleware<S> {
                 if self.inner.optional {
                     return Ok(None);
                 }
-                return Err(ApiError::InvalidToken("No Authorization header".to_string()))
+                return Err(ApiError::InvalidToken(
+                    "No Authorization header".to_string(),
+                ));
             }
         };
         let token = self.inner.parse_authorization(header)?;
@@ -217,19 +258,20 @@ where
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = Error;
-    type Future = Either<//S::Future,
-            Box<dyn Future<Item = Self::Response, Error = Self::Error>>,
-        FutureResult<Self::Response, Self::Error>>;
+    type Future = Either<
+        //S::Future,
+        Box<dyn Future<Item = Self::Response, Error = Self::Error>>,
+        FutureResult<Self::Response, Self::Error>,
+    >;
 
     fn poll_ready(&mut self) -> Poll<(), Self::Error> {
         self.service.poll_ready()
     }
 
-
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
         let maybe_claims = match self.check_token(&req) {
-            Err(e) =>  return Either::B(ok(req.error_response(e))),
-            Ok(c) => c
+            Err(e) => return Either::B(ok(req.error_response(e))),
+            Ok(c) => c,
         };
 
         let c = maybe_claims.clone();
@@ -238,15 +280,13 @@ where
             req.extensions_mut().insert(claims);
         }
 
-        Either::A(Box::new(self.service.call(req)
-                           .and_then(move |resp|  {
-                               if resp.status() == 401 || resp.status() == 403 {
-                                   if let Some(ref claims) = c {
-                                       info!("Presented claims: {:?}", claims);
-                                   }
-                               }
-                               Ok(resp)
-                           })
-        ))
+        Either::A(Box::new(self.service.call(req).and_then(move |resp| {
+            if resp.status() == 401 || resp.status() == 403 {
+                if let Some(ref claims) = c {
+                    info!("Presented claims: {:?}", claims);
+                }
+            }
+            Ok(resp)
+        })))
     }
 }

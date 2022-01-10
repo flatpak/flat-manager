@@ -1,72 +1,79 @@
 #![allow(proc_macro_derive_resolution_fallback)]
 
 extern crate actix;
+extern crate actix_files;
+extern crate actix_multipart;
 extern crate actix_net;
 extern crate actix_service;
 extern crate actix_web;
 extern crate actix_web_actors;
-extern crate actix_multipart;
-extern crate actix_files;
 extern crate askama;
 extern crate base64;
 extern crate byteorder;
 extern crate bytes;
 extern crate chrono;
-#[macro_use] extern crate diesel;
-#[macro_use] extern crate diesel_migrations;
+#[macro_use]
+extern crate diesel;
+#[macro_use]
+extern crate diesel_migrations;
 extern crate env_logger;
-#[macro_use] extern crate failure;
+#[macro_use]
+extern crate failure;
 extern crate futures;
 extern crate r2d2;
 extern crate serde;
-#[macro_use] extern crate serde_json;
-#[macro_use] extern crate serde_derive;
-extern crate tempfile;
+#[macro_use]
+extern crate serde_json;
+#[macro_use]
+extern crate serde_derive;
 extern crate jsonwebtoken as jwt;
-#[macro_use] extern crate log;
-extern crate libc;
-extern crate walkdir;
-extern crate hex;
+extern crate tempfile;
+#[macro_use]
+extern crate log;
 extern crate filetime;
+extern crate hex;
+extern crate libc;
 extern crate num_cpus;
+extern crate rand;
 extern crate time;
 extern crate tokio;
 extern crate tokio_process;
 extern crate tokio_signal;
-extern crate rand;
+extern crate walkdir;
 
 mod api;
 mod app;
 mod db;
+mod delayed;
+mod deltas;
 pub mod errors;
+mod jobs;
+mod logger;
 mod models;
+pub mod ostree;
 mod schema;
 mod tokens;
-mod jobs;
-pub mod ostree;
-mod deltas;
-mod delayed;
-mod logger;
 
 use actix::prelude::*;
 use actix_web::dev::Server;
+use app::Config;
+use deltas::{DeltaGenerator, StopDeltaGenerator};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, ManageConnection};
+use jobs::{JobQueue, StopJobQueue};
 use std::path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_signal::unix::Signal;
-use app::Config;
-use deltas::{DeltaGenerator,StopDeltaGenerator};
-use jobs::{JobQueue, StopJobQueue};
 
-pub use deltas::{RemoteClientMessage,RemoteServerMessage};
-pub use errors::{DeltaGenerationError};
+pub use deltas::{RemoteClientMessage, RemoteServerMessage};
+pub use errors::DeltaGenerationError;
 
 type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
-    let config_data = app::load_config(&path).expect(&format!("Failed to read config file {:?}", &path));
+    let config_data =
+        app::load_config(&path).expect(&format!("Failed to read config file {:?}", &path));
     Arc::new(config_data)
 }
 
@@ -89,14 +96,21 @@ fn start_delta_generator(config: &Arc<Config>) -> Addr<DeltaGenerator> {
     deltas::start_delta_generator(config.clone())
 }
 
-fn start_job_queue(config: &Arc<Config>,
-                   pool: &Pool,
-                   delta_generator: &Addr<DeltaGenerator>) -> Addr<JobQueue> {
+fn start_job_queue(
+    config: &Arc<Config>,
+    pool: &Pool,
+    delta_generator: &Addr<DeltaGenerator>,
+) -> Addr<JobQueue> {
     jobs::cleanup_started_jobs(&pool).expect("Failed to cleanup started jobs");
     jobs::start_job_executor(config.clone(), delta_generator.clone(), pool.clone())
 }
 
-fn handle_signal(sig: i32, server: &Server, job_queue: Addr<JobQueue>, delta_generator: Addr<DeltaGenerator>) -> impl Future<Item = (), Error = std::io::Error> {
+fn handle_signal(
+    sig: i32,
+    server: &Server,
+    job_queue: Addr<JobQueue>,
+    delta_generator: Addr<DeltaGenerator>,
+) -> impl Future<Item = (), Error = std::io::Error> {
     let graceful = match sig {
         tokio_signal::unix::SIGINT => {
             info!("SIGINT received, exiting");
@@ -118,31 +132,33 @@ fn handle_signal(sig: i32, server: &Server, job_queue: Addr<JobQueue>, delta_gen
         .stop(graceful)
         .then(move |_result| {
             info!("Stopping delta generator");
-            delta_generator
-                .send(StopDeltaGenerator())
+            delta_generator.send(StopDeltaGenerator())
         })
         .then(move |_result| {
             info!("Stopping job processing");
-            job_queue
-                .send(StopJobQueue())
+            job_queue.send(StopJobQueue())
         })
-        .then( |_| {
+        .then(|_| {
             info!("Exiting...");
             tokio::timer::Delay::new(Instant::now() + Duration::from_millis(300))
         })
-        .then( |_| {
+        .then(|_| {
             System::current().stop();
             Ok(())
         })
 }
 
-fn handle_signals(server: Server,
-                  job_queue: Addr<JobQueue>,
-                  delta_generator: Addr<DeltaGenerator>) {
+fn handle_signals(
+    server: Server,
+    job_queue: Addr<JobQueue>,
+    delta_generator: Addr<DeltaGenerator>,
+) {
     let sigint = Signal::new(tokio_signal::unix::SIGINT).flatten_stream();
     let sigterm = Signal::new(tokio_signal::unix::SIGTERM).flatten_stream();
     let sigquit = Signal::new(tokio_signal::unix::SIGQUIT).flatten_stream();
-    let handle_signals = sigint.select(sigterm).select(sigquit)
+    let handle_signals = sigint
+        .select(sigterm)
+        .select(sigquit)
         .for_each(move |sig| {
             handle_signal(sig, &server, job_queue.clone(), delta_generator.clone())
         })

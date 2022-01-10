@@ -54,10 +54,4 @@ table! {
 joinable!(build_refs -> builds (build_id));
 joinable!(published_refs -> builds (build_id));
 
-allow_tables_to_appear_in_same_query!(
-    build_refs,
-    builds,
-    job_dependencies,
-    jobs,
-    published_refs,
-);
+allow_tables_to_appear_in_same_query!(build_refs, builds, job_dependencies, jobs, published_refs,);

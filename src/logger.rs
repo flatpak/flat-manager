@@ -1,14 +1,14 @@
 //! Request logging middleware
-use time;
 use actix_service::{Service, Transform};
-use actix_web::dev::{BodySize, MessageBody, ResponseBody,ServiceRequest, ServiceResponse};
+use actix_web::dev::{BodySize, MessageBody, ResponseBody, ServiceRequest, ServiceResponse};
 use actix_web::error::Error;
 use actix_web::http::StatusCode;
-use std::rc::Rc;
-use futures::{Async, Future, Poll};
-use futures::future::{ok, FutureResult};
-use std::marker::PhantomData;
 use bytes::Bytes;
+use futures::future::{ok, FutureResult};
+use futures::{Async, Future, Poll};
+use std::marker::PhantomData;
+use std::rc::Rc;
+use time;
 
 use tokens::ClaimsValidator;
 
@@ -27,29 +27,28 @@ struct ResponseData {
     size: usize,
 }
 
-pub struct Inner {
-}
+pub struct Inner {}
 
 impl Inner {
     fn log(&self, req: &RequestData, resp: &ResponseData) {
         let rt = ((time::now() - req.time).num_nanoseconds().unwrap_or(0) as f64) / 1_000_000_000.0;
 
-        info!("{} \"{}\" {} {} {} {} {:.6}",
-              req.remote_ip,
-              req.request_line,
-              resp.token_name,
-              resp.status.as_u16(),
-              resp.size,
-              req.user_agent,
-              rt);
+        info!(
+            "{} \"{}\" {} {} {} {} {:.6}",
+            req.remote_ip,
+            req.request_line,
+            resp.token_name,
+            resp.status.as_u16(),
+            resp.size,
+            req.user_agent,
+            rt
+        );
     }
 }
 
-
 impl Logger {
     pub fn default() -> Logger {
-        Logger(Rc::new(Inner {
-        }))
+        Logger(Rc::new(Inner {}))
     }
 }
 
@@ -99,16 +98,15 @@ where
         let remote_ip = req.connection_info().remote().unwrap_or("-").to_string();
 
         let request_line = if req.query_string().is_empty() {
-            format!("{} {} {:?}",
-                    req.method(),
-                    req.path(),
-                    req.version())
+            format!("{} {} {:?}", req.method(), req.path(), req.version())
         } else {
-            format!("{} {}?{} {:?}",
-                    req.method(),
-                    req.path(),
-                    req.query_string(),
-                    req.version())
+            format!(
+                "{} {}?{} {:?}",
+                req.method(),
+                req.path(),
+                req.query_string(),
+                req.version()
+            )
         };
 
         let user_agent = if let Some(val) = req.headers().get("User-Agent") {
@@ -119,12 +117,13 @@ where
             }
         } else {
             "-"
-        }.to_string();
+        }
+        .to_string();
 
         LoggerResponse {
             fut: self.service.call(req),
             inner: self.inner.clone(),
-            request_data: Some( RequestData {
+            request_data: Some(RequestData {
                 time: now,
                 remote_ip: remote_ip,
                 request_line: request_line,
@@ -163,13 +162,12 @@ where
             }
         }
 
-        let token_name =
-            if let Some(ref claims) = res.request().get_claims() {
-                if let Some(ref name) = claims.name {
-                    name.clone()
-                } else {
-                    "-".to_string()
-                }
+        let token_name = if let Some(ref claims) = res.request().get_claims() {
+            if let Some(ref name) = claims.name {
+                name.clone()
+            } else {
+                "-".to_string()
+            }
         } else {
             "-".to_string()
         };

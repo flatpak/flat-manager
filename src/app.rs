@@ -1,35 +1,35 @@
 use actix::prelude::*;
-use actix_web::{self, http, web, middleware, App, HttpRequest, HttpResponse, HttpServer};
-use actix_web::error::{ErrorNotFound,ErrorBadRequest};
-use actix_web::dev::Server;
 use actix_files::NamedFile;
-use actix_web::http::header::{CACHE_CONTROL, HeaderValue};
+use actix_service::Service;
+use actix_web::dev::Server;
+use actix_web::error::{ErrorBadRequest, ErrorNotFound};
+use actix_web::http::header::{HeaderValue, CACHE_CONTROL};
 use actix_web::web::Data;
 use actix_web::Responder;
-use actix_service::{Service};
-use std::path::PathBuf;
-use std::path::Path;
-use std::ffi::OsStr;
-use std::sync::Arc;
-use std::collections::HashMap;
-use std::io;
-use std;
-use std::process::{Command};
-use serde;
-use serde_json;
-use serde::Deserialize;
+use actix_web::{self, http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
 use base64;
 use num_cpus;
+use serde;
+use serde::Deserialize;
+use serde_json;
+use std;
+use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::io;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::Arc;
 
-use errors::ApiError;
 use api;
+use db::Db;
 use deltas::DeltaGenerator;
-use tokens::{TokenParser, ClaimsValidator};
-use jobs::{JobQueue};
+use errors::ApiError;
+use jobs::JobQueue;
 use logger::Logger;
 use ostree;
+use tokens::{ClaimsValidator, TokenParser};
 use Pool;
-use db::Db;
 
 // Ensure we strip out .. and other risky things to avoid escaping out of the base dir
 fn canonicalize_path(path: &str) -> Result<PathBuf, actix_web::Error> {
@@ -62,16 +62,18 @@ fn canonicalize_path(path: &str) -> Result<PathBuf, actix_web::Error> {
     Ok(buf)
 }
 
-fn from_base64<'de,D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-    where D: serde::Deserializer<'de>
+fn from_base64<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
 {
     use serde::de::Error;
     String::deserialize(deserializer)
         .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
 }
 
-fn from_opt_base64<'de,D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
-    where D: serde::Deserializer<'de>
+fn from_opt_base64<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
 {
     use serde::de::Error;
     String::deserialize(deserializer)
@@ -79,8 +81,7 @@ fn from_opt_base64<'de,D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
         .map(|s| Some(s))
 }
 
-fn match_glob(glob: &str, s: &str) -> bool
-{
+fn match_glob(glob: &str, s: &str) -> bool {
     if let Some(index) = glob.find("*") {
         let (glob_start, glob_rest) = glob.split_at(index);
         if !s.starts_with(glob_start) {
@@ -97,20 +98,20 @@ fn match_glob(glob: &str, s: &str) -> bool
 
         /* Consume at least one, fail if none */
         if s_chars.next() == None {
-            return false
+            return false;
         }
 
         loop {
             if match_glob(glob_after_star, s_chars.as_str()) {
-                return true
+                return true;
             }
             if s_chars.next() == None {
-                break
+                break;
             }
         }
-        return false
+        return false;
     } else {
-        return glob == s
+        return glob == s;
     }
 }
 
@@ -173,9 +174,12 @@ pub struct DeltaConfig {
 
 impl DeltaConfig {
     pub fn matches_ref(&self, id: &str, arch: &str) -> bool {
-        self.id.iter().any(|id_glob| match_glob(id_glob, id)) &&
-            (self.arch.is_empty() ||
-             self.arch.iter().any(|arch_glob| match_glob(arch_glob, arch)))
+        self.id.iter().any(|id_glob| match_glob(id_glob, id))
+            && (self.arch.is_empty()
+                || self
+                    .arch
+                    .iter()
+                    .any(|arch_glob| match_glob(arch_glob, arch)))
     }
 }
 
@@ -266,7 +270,7 @@ impl RepoConfig {
     pub fn get_base_url(&self, config: &Config) -> String {
         match &self.base_url {
             Some(base_url) => base_url.clone(),
-            None => format!("{}/repo/{}", config.base_url, self.name)
+            None => format!("{}/repo/{}", config.base_url, self.name),
         }
     }
 
@@ -278,13 +282,13 @@ impl RepoConfig {
         } else if ref_name.starts_with("appstream2/") {
             self.appstream_delta_depth /* This updates often, so lets have some more */
         } else if ref_name.starts_with("app/") || ref_name.starts_with("runtime/") {
-            let parts : Vec<&str> = ref_name.split("/").collect();
+            let parts: Vec<&str> = ref_name.split("/").collect();
             if parts.len() == 4 {
                 let id = parts[1];
                 let arch = parts[2];
                 for dc in &self.deltas {
                     if dc.matches_ref(id, arch) {
-                        return dc.depth
+                        return dc.depth;
                     }
                 }
             };
@@ -297,30 +301,32 @@ impl RepoConfig {
 
 impl Config {
     pub fn get_repoconfig(&self, name: &str) -> Result<&RepoConfig, ApiError> {
-        self.repos.get(name).ok_or_else (|| ApiError::BadRequest("No such repo".to_string()))
+        self.repos
+            .get(name)
+            .ok_or_else(|| ApiError::BadRequest("No such repo".to_string()))
     }
 
     pub fn get_repoconfig_from_path(&self, path: &Path) -> Result<&RepoConfig, ApiError> {
         for (repo, config) in self.repos.iter() {
             if path.starts_with(repo) {
-                return Ok(config)
+                return Ok(config);
             }
         }
         Err(ApiError::BadRequest("No such repo".to_string()))
     }
 }
 
-
-fn load_gpg_key (maybe_gpg_homedir: &Option<String>, maybe_gpg_key: &Option<String>) -> io::Result<Option<String>> {
+fn load_gpg_key(
+    maybe_gpg_homedir: &Option<String>,
+    maybe_gpg_key: &Option<String>,
+) -> io::Result<Option<String>> {
     match maybe_gpg_key {
         Some(gpg_key) => {
             let mut cmd = Command::new("gpg2");
             if let Some(gpg_homedir) = maybe_gpg_homedir {
                 cmd.arg(&format!("--homedir={}", gpg_homedir));
             }
-            cmd
-                .arg("--export")
-                .arg(gpg_key);
+            cmd.arg("--export").arg(gpg_key);
 
             let output = cmd.output()?;
             if output.status.success() {
@@ -328,20 +334,22 @@ fn load_gpg_key (maybe_gpg_homedir: &Option<String>, maybe_gpg_key: &Option<Stri
             } else {
                 Err(io::Error::new(io::ErrorKind::Other, "gpg2 --export failed"))
             }
-        },
+        }
         None => Ok(None),
     }
 }
 
-
 pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     let config_contents = std::fs::read_to_string(path)?;
-    let mut config_data: Config = serde_json::from_str(&config_contents).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    let mut config_data: Config = serde_json::from_str(&config_contents)
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
-    config_data.build_gpg_key_content = load_gpg_key (&config_data.gpg_homedir, &config_data.build_gpg_key)?;
+    config_data.build_gpg_key_content =
+        load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     for (reponame, repoconfig) in &mut config_data.repos {
         repoconfig.name = reponame.clone();
-        repoconfig.gpg_key_content = load_gpg_key (&config_data.gpg_homedir, &config_data.build_gpg_key)?;
+        repoconfig.gpg_key_content =
+            load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     }
 
     if config_data.base_url == "" {
@@ -351,37 +359,46 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     Ok(config_data)
 }
 
-fn handle_build_repo(config: Data<Config>,
-                     req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
+fn handle_build_repo(
+    config: Data<Config>,
+    req: HttpRequest,
+) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
     let id = req.match_info().query("id");
 
     let relpath = canonicalize_path(tail.trim_start_matches('/'))?;
     let realid = canonicalize_path(id)?;
-    let path = Path::new(&config.build_repo_base).join(&realid).join(&relpath);
+    let path = Path::new(&config.build_repo_base)
+        .join(&realid)
+        .join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
 
-    NamedFile::open(path).or_else(|_e| {
-        let fallback_path = Path::new(&config.build_repo_base).join(&id).join("parent").join(&relpath);
-        if fallback_path.is_dir() {
-            Err(ErrorNotFound("Ignoring directory"))
-        } else {
-            NamedFile::open(fallback_path).map_err(|e| e.into())
-        }
-    })?.respond_to(&req)
+    NamedFile::open(path)
+        .or_else(|_e| {
+            let fallback_path = Path::new(&config.build_repo_base)
+                .join(&id)
+                .join("parent")
+                .join(&relpath);
+            if fallback_path.is_dir() {
+                Err(ErrorNotFound("Ignoring directory"))
+            } else {
+                NamedFile::open(fallback_path).map_err(|e| e.into())
+            }
+        })?
+        .respond_to(&req)
 }
 
 fn get_commit_for_file(path: &PathBuf) -> Option<ostree::OstreeCommit> {
     if path.file_name() == Some(OsStr::new("superblock")) {
-        if let Ok(superblock) = ostree::load_delta_superblock_file (&path) {
+        if let Ok(superblock) = ostree::load_delta_superblock_file(&path) {
             return Some(superblock.commit);
         }
     }
 
     if path.extension() == Some(OsStr::new("commit")) {
-        if let Ok(commit) = ostree::load_commit_file (&path) {
+        if let Ok(commit) = ostree::load_commit_file(&path) {
             return Some(commit);
         }
     }
@@ -392,29 +409,46 @@ struct RepoHeadersData {
     nocache: bool,
 }
 
-fn apply_extra_headers (resp: &mut actix_web::dev::ServiceResponse){
+fn apply_extra_headers(resp: &mut actix_web::dev::ServiceResponse) {
     let mut nocache = false;
     if let Some(data) = resp.request().extensions().get::<RepoHeadersData>() {
         nocache = data.nocache;
     }
     if nocache {
-        resp.headers_mut().insert(CACHE_CONTROL,
-                                  HeaderValue::from_static("no-store"));
+        resp.headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
-
 }
 
-fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig: &RepoConfig, path: &PathBuf) -> Result<(), ApiError> {
-    let token_type = commit.metadata.get("xa.token-type").map(|v| v.as_i32_le().unwrap_or(0)).unwrap_or(repoconfig.default_token_type);
-    if !repoconfig.require_auth_for_token_types.contains(&token_type) {
+fn verify_repo_token(
+    req: &HttpRequest,
+    commit: ostree::OstreeCommit,
+    repoconfig: &RepoConfig,
+    path: &PathBuf,
+) -> Result<(), ApiError> {
+    let token_type = commit
+        .metadata
+        .get("xa.token-type")
+        .map(|v| v.as_i32_le().unwrap_or(0))
+        .unwrap_or(repoconfig.default_token_type);
+    if !repoconfig
+        .require_auth_for_token_types
+        .contains(&token_type)
+    {
         return Ok(());
     }
 
-    req.extensions_mut().insert(RepoHeadersData {
-        nocache: true,
-    });
+    req.extensions_mut()
+        .insert(RepoHeadersData { nocache: true });
 
-    let commit_refs = commit.metadata.get("ostree.ref-binding").ok_or (ApiError::InternalServerError(format!("No ref binding for commit {:?}", path)))?.as_string_vec()?;
+    let commit_refs = commit
+        .metadata
+        .get("ostree.ref-binding")
+        .ok_or(ApiError::InternalServerError(format!(
+            "No ref binding for commit {:?}",
+            path
+        )))?
+        .as_string_vec()?;
     let mut result = Ok(());
     // If there are any normal flatpak refs, the token must match at least one:
     for commit_ref in commit_refs {
@@ -429,40 +463,42 @@ fn verify_repo_token(req: &HttpRequest, commit: ostree::OstreeCommit, repoconfig
     result
 }
 
-fn handle_repo(config: Data<Config>,
-               req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
+fn handle_repo(config: Data<Config>, req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
     let tail = req.match_info().query("tail");
     let tailpath = canonicalize_path(tail.trim_start_matches('/'))?;
     let repoconfig = config.get_repoconfig_from_path(&tailpath)?;
 
     let namepath = Path::new(&repoconfig.name);
-    let relpath = tailpath.strip_prefix(&namepath)
+    let relpath = tailpath
+        .strip_prefix(&namepath)
         .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
     let path = Path::new(&repoconfig.path).join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
 
-    if let Some(commit) = get_commit_for_file (&path) {
+    if let Some(commit) = get_commit_for_file(&path) {
         verify_repo_token(&req, commit, repoconfig, &path)?;
     }
 
-    NamedFile::open(path).or_else(|e| {
-        // Was this a delta, if so check the deltas queued for deletion
-        if relpath.starts_with("deltas") {
-            let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
-            if tmp_path.is_dir() {
-                Err(ErrorNotFound("Ignoring directory"))
+    NamedFile::open(path)
+        .or_else(|e| {
+            // Was this a delta, if so check the deltas queued for deletion
+            if relpath.starts_with("deltas") {
+                let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
+                if tmp_path.is_dir() {
+                    Err(ErrorNotFound("Ignoring directory"))
+                } else {
+                    NamedFile::open(tmp_path).map_err(|e| e.into())
+                }
             } else {
-                NamedFile::open(tmp_path).map_err(|e| e.into())
+                Err(e).map_err(|e| e.into())
             }
-        } else {
-            Err(e).map_err(|e| e.into())
-        }
-    })?.respond_to(&req)
+        })?
+        .respond_to(&req)
 }
 
-pub fn create_app (
+pub fn create_app(
     pool: Pool,
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
@@ -470,7 +506,11 @@ pub fn create_app (
 ) -> Server {
     let c = config.clone();
     let secret = config.secret.clone();
-    let repo_secret = config.repo_secret.as_ref().unwrap_or(config.secret.as_ref()).clone();
+    let repo_secret = config
+        .repo_secret
+        .as_ref()
+        .unwrap_or(config.secret.as_ref())
+        .clone();
     let http_server = HttpServer::new(move || {
         App::new()
             .data(job_queue.clone())
@@ -478,69 +518,102 @@ pub fn create_app (
             .register_data(Data::new((*c).clone()))
             .data(Db(pool.clone()))
             .wrap(Logger::default())
-            .wrap(middleware::Compress::new(http::header::ContentEncoding::Identity))
-            .service(web::scope("/api/v1")
-                     .wrap(TokenParser::new(&secret))
-                     .service(web::resource("/token_subset")
-                              .route(web::post().to(api::token_subset)))
-                     .service(web::resource("/job/{id}").name("show_job")
-                              .route(web::get().to_async(api::get_job)))
-                     .service(web::resource("/build")
-                              .route(web::post().to_async(api::create_build))
-                              .route(web::get().to_async(api::builds)))
-                     .service(web::resource("/build/{id}").name("show_build")
-                              .route(web::get().to_async(api::get_build)))
-                     .service(web::resource("/build/{id}/build_ref")
-                              .route(web::post().to_async(api::create_build_ref)))
-                     .service(web::resource("/build/{id}/build_ref/{ref_id}").name("show_build_ref")
-                              .route(web::get().to_async(api::get_build_ref)))
-                     .service(web::resource("/build/{id}/missing_objects")
-                              .data(web::JsonConfig::default().limit(1024*1024*10))
-                              .route(web::get().to(api::missing_objects)))
-                     .service(web::resource("/build/{id}/add_extra_ids")
-                              .route(web::post().to_async(api::add_extra_ids)))
-                     .service(web::resource("/build/{id}/upload")
-                              .route(web::post().to_async(api::upload)))
-                     .service(web::resource("/build/{id}/commit").name("show_commit_job")
-                              .route(web::post().to_async(api::commit))
-                              .route(web::get().to_async(api::get_commit_job)))
-                     .service(web::resource("/build/{id}/publish").name("show_publish_job")
-                              .route(web::post().to_async(api::publish))
-                              .route(web::get().to_async(api::get_publish_job)))
-                     .service(web::resource("/build/{id}/purge")
-                              .route(web::post().to_async(api::purge)))
-                     .service(web::resource("/delta/worker")
-                              .route(web::get().to(api::ws_delta)))
-                     .service(web::resource("/delta/upload/{repo}")
-                              .route(web::post().to_async(api::delta_upload)))
+            .wrap(middleware::Compress::new(
+                http::header::ContentEncoding::Identity,
+            ))
+            .service(
+                web::scope("/api/v1")
+                    .wrap(TokenParser::new(&secret))
+                    .service(
+                        web::resource("/token_subset").route(web::post().to(api::token_subset)),
+                    )
+                    .service(
+                        web::resource("/job/{id}")
+                            .name("show_job")
+                            .route(web::get().to_async(api::get_job)),
+                    )
+                    .service(
+                        web::resource("/build")
+                            .route(web::post().to_async(api::create_build))
+                            .route(web::get().to_async(api::builds)),
+                    )
+                    .service(
+                        web::resource("/build/{id}")
+                            .name("show_build")
+                            .route(web::get().to_async(api::get_build)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/build_ref")
+                            .route(web::post().to_async(api::create_build_ref)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/build_ref/{ref_id}")
+                            .name("show_build_ref")
+                            .route(web::get().to_async(api::get_build_ref)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/missing_objects")
+                            .data(web::JsonConfig::default().limit(1024 * 1024 * 10))
+                            .route(web::get().to(api::missing_objects)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/add_extra_ids")
+                            .route(web::post().to_async(api::add_extra_ids)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/upload")
+                            .route(web::post().to_async(api::upload)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/commit")
+                            .name("show_commit_job")
+                            .route(web::post().to_async(api::commit))
+                            .route(web::get().to_async(api::get_commit_job)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/publish")
+                            .name("show_publish_job")
+                            .route(web::post().to_async(api::publish))
+                            .route(web::get().to_async(api::get_publish_job)),
+                    )
+                    .service(
+                        web::resource("/build/{id}/purge").route(web::post().to_async(api::purge)),
+                    )
+                    .service(web::resource("/delta/worker").route(web::get().to(api::ws_delta)))
+                    .service(
+                        web::resource("/delta/upload/{repo}")
+                            .route(web::post().to_async(api::delta_upload)),
+                    ),
             )
-            .service(web::scope("/repo")
-                     .wrap(TokenParser::optional(&repo_secret))
-                     .wrap_fn(|req, srv| {
-                         srv.call(req).map(|mut resp| {
-                             apply_extra_headers (&mut resp);
-                             resp
-                         })
-                     })
-                     .service(web::resource("/{tail:.*}").name("repo")
-                              .route(web::get().to(handle_repo))
-                              .route(web::head().to(handle_repo))
-                              .to(HttpResponse::MethodNotAllowed)
-                     ))
-            .service(web::resource("/build-repo/{id}/{tail:.*}")
-                     .route(web::get().to(handle_build_repo))
-                     .route(web::head().to(handle_build_repo))
-                     .to(HttpResponse::MethodNotAllowed)
+            .service(
+                web::scope("/repo")
+                    .wrap(TokenParser::optional(&repo_secret))
+                    .wrap_fn(|req, srv| {
+                        srv.call(req).map(|mut resp| {
+                            apply_extra_headers(&mut resp);
+                            resp
+                        })
+                    })
+                    .service(
+                        web::resource("/{tail:.*}")
+                            .name("repo")
+                            .route(web::get().to(handle_repo))
+                            .route(web::head().to(handle_repo))
+                            .to(HttpResponse::MethodNotAllowed),
+                    ),
             )
-            .service(web::resource("/status")
-                     .route(web::get().to_async(api::status)))
-            .service(web::resource("/status/{id}")
-                     .route(web::get().to_async(api::job_status)))
+            .service(
+                web::resource("/build-repo/{id}/{tail:.*}")
+                    .route(web::get().to(handle_build_repo))
+                    .route(web::head().to(handle_build_repo))
+                    .to(HttpResponse::MethodNotAllowed),
+            )
+            .service(web::resource("/status").route(web::get().to_async(api::status)))
+            .service(web::resource("/status/{id}").route(web::get().to_async(api::job_status)))
     });
 
     let bind_to = format!("{}:{}", config.host, config.port);
-    let server =
-        http_server
+    let server = http_server
         .bind(&bind_to)
         .unwrap()
         .disable_signals()
