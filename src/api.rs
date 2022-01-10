@@ -34,8 +34,8 @@ use models::{Job, JobKind, JobStatus, NewBuild, NewBuildRef};
 use tokens::{self, ClaimsValidator};
 
 fn init_ostree_repo(
-    repo_path: &path::PathBuf,
-    parent_repo_path: &path::PathBuf,
+    repo_path: &path::Path,
+    parent_repo_path: &path::Path,
     build_id: i32,
     opt_collection_id: &Option<String>,
 ) -> io::Result<()> {
@@ -86,7 +86,7 @@ fn respond_with_url<T>(
 where
     T: Serialize,
 {
-    match req.url_for(name, elements.clone()) {
+    match req.url_for(name, elements) {
         Ok(url) => Ok(HttpResponse::Ok()
             .header(http::header::LOCATION, url.to_string())
             .json(data)),
@@ -114,10 +114,7 @@ pub struct TokenSubsetResponse {
     token: String,
 }
 
-pub fn repos_is_subset(
-    maybe_subset_repos: &Option<Vec<String>>,
-    claimed_repos: &Vec<String>,
-) -> bool {
+pub fn repos_is_subset(maybe_subset_repos: &Option<Vec<String>>, claimed_repos: &[String]) -> bool {
     match maybe_subset_repos {
         Some(subset_repos) => subset_repos
             .iter()
@@ -128,12 +125,12 @@ pub fn repos_is_subset(
 
 pub fn prefix_is_subset(
     maybe_subset_prefix: &Option<Vec<String>>,
-    claimed_prefixes: &Vec<String>,
+    claimed_prefixes: &[String],
 ) -> bool {
     match maybe_subset_prefix {
         Some(subset_prefix) => subset_prefix
             .iter()
-            .all(|s| tokens::id_matches_one_prefix(s, &claimed_prefixes)),
+            .all(|s| tokens::id_matches_one_prefix(s, claimed_prefixes)),
         None => true,
     }
 }
@@ -156,7 +153,7 @@ pub fn token_subset(
             let new_claims = Claims {
                 sub: args.sub.clone(),
                 scope: args.scope.clone(),
-                name: Some(claims.name.unwrap_or("".to_string()) + "/" + &args.name),
+                name: Some(claims.name.unwrap_or_else(|| "".to_string()) + "/" + &args.name),
                 prefixes: {
                     if let Some(ref prefixes) = args.prefixes {
                         prefixes.clone()
@@ -168,7 +165,7 @@ pub fn token_subset(
                     if let Some(ref repos) = args.repos {
                         repos.clone()
                     } else {
-                        claims.repos.clone()
+                        claims.repos
                     }
                 },
                 exp: new_exp,
@@ -178,7 +175,7 @@ pub fn token_subset(
                 &new_claims,
                 &jwt::EncodingKey::from_secret(config.secret.as_ref()),
             ) {
-                Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse { token: token }),
+                Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse { token }),
                 Err(e) => ApiError::InternalServerError(e.to_string()).error_response(),
             };
         }
@@ -337,10 +334,10 @@ pub fn missing_objects(
     }
     HttpResponse::Ok()
         .encoding(http::header::ContentEncoding::Gzip)
-        .json(MissingObjectsResponse { missing: missing })
+        .json(MissingObjectsResponse { missing })
 }
 
-fn validate_ref(ref_name: &String, req: &HttpRequest) -> Result<(), ApiError> {
+fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
     let ref_parts: Vec<&str> = ref_name.split('/').collect();
 
     match ref_parts[0] {
@@ -392,7 +389,7 @@ pub fn create_build_ref(
             futures::done(req.has_token_repo(&build.repo))
                 .and_then(move |_ok| {
                     db.new_build_ref(NewBuildRef {
-                        build_id: build_id,
+                        build_id,
                         ref_name: args.ref_name.clone(),
                         commit: args.commit.clone(),
                     })
@@ -414,10 +411,10 @@ pub struct AddExtraIdsArgs {
     ids: Vec<String>,
 }
 
-fn validate_id(id: &String) -> Result<(), ApiError> {
+fn validate_id(id: &str) -> Result<(), ApiError> {
     if !id
         .split('.')
-        .all(|element| element.len() > 0 && element.chars().all(|ch| ch.is_alphanumeric()))
+        .all(|element| !element.is_empty() && element.chars().all(|ch| ch.is_alphanumeric()))
     {
         Err(ApiError::BadRequest(format!("Invalid extra id {}", id)))
     } else {
@@ -450,11 +447,11 @@ pub fn add_extra_ids(
 }
 
 fn is_all_lower_hexdigits(s: &str) -> bool {
-    !s.contains(|c: char| !(c.is_digit(16) && !c.is_uppercase()))
+    !s.contains(|c: char| !c.is_digit(16) || c.is_uppercase())
 }
 
 fn filename_parse_object(filename: &str) -> Option<path::PathBuf> {
-    let v: Vec<&str> = filename.split(".").collect();
+    let v: Vec<&str> = filename.split('.').collect();
 
     if v.len() != 2 {
         return None;
@@ -487,7 +484,7 @@ fn is_all_digits(s: &str) -> bool {
  * sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.0.delta
  */
 fn filename_parse_delta(name: &str) -> Option<path::PathBuf> {
-    let v: Vec<&str> = name.split(".").collect();
+    let v: Vec<&str> = name.split('.').collect();
 
     if v.len() != 3 {
         return None;
@@ -517,12 +514,12 @@ fn get_upload_subpath(
     field: &actix_multipart::Field,
     state: &Arc<UploadState>,
 ) -> error::Result<path::PathBuf, ApiError> {
-    let cd = field.content_disposition().ok_or(ApiError::BadRequest(
-        "No content disposition for multipart item".to_string(),
-    ))?;
-    let filename = cd.get_filename().ok_or(ApiError::BadRequest(
-        "No filename for multipart item".to_string(),
-    ))?;
+    let cd = field.content_disposition().ok_or_else(|| {
+        ApiError::BadRequest("No content disposition for multipart item".to_string())
+    })?;
+    let filename = cd
+        .get_filename()
+        .ok_or_else(|| ApiError::BadRequest("No filename for multipart item".to_string()))?;
     // We verify the format below, but just to make sure we never allow anything like a path
     if filename.contains('/') {
         return Err(ApiError::BadRequest("Invalid upload filename".to_string()));
@@ -547,7 +544,7 @@ struct UploadState {
 }
 
 fn start_save(
-    subpath: &path::PathBuf,
+    subpath: &path::Path,
     state: &Arc<UploadState>,
 ) -> Result<(NamedTempFile, path::PathBuf)> {
     let absolute_path = state.repo_path.join(subpath);
@@ -793,7 +790,7 @@ fn job_status_data(job: Job) -> JobStatusData {
         status: JobStatus::from_db(job.status)
             .map_or("Unknown".to_string(), |s| format!("{:?}", s)),
         contents: job.contents,
-        results: job.results.unwrap_or("".to_string()),
+        results: job.results.unwrap_or_default(),
         log: job.log,
         finished: job.status >= JobStatus::Ended as i16,
     }
@@ -844,7 +841,7 @@ pub fn delta_upload(
         .and_then(move |repoconfig| {
             let uploadstate = Arc::new(UploadState {
                 only_deltas: true,
-                repo_path: repoconfig.get_abs_repo_path().clone(),
+                repo_path: repoconfig.get_abs_repo_path(),
             });
             multipart
                 .map_err(|e| ApiError::InternalServerError(e.to_string()))

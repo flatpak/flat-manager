@@ -125,9 +125,9 @@ where
             inner: self.inner.clone(),
             request_data: Some(RequestData {
                 time: now,
-                remote_ip: remote_ip,
-                request_line: request_line,
-                user_agent: user_agent,
+                remote_ip,
+                request_line,
+                user_agent,
             }),
             _t: PhantomData,
         }
@@ -173,7 +173,7 @@ where
         };
 
         let response_data = ResponseData {
-            token_name: token_name,
+            token_name,
             status: res.response().head().status,
             size: 0,
         };
@@ -183,7 +183,7 @@ where
                 body,
                 inner: self.inner.clone(),
                 request_data: self.request_data.take().unwrap(),
-                response_data: response_data,
+                response_data,
             })
         })))
     }

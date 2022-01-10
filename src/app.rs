@@ -78,11 +78,11 @@ where
     use serde::de::Error;
     String::deserialize(deserializer)
         .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
-        .map(|s| Some(s))
+        .map(Some)
 }
 
 fn match_glob(glob: &str, s: &str) -> bool {
-    if let Some(index) = glob.find("*") {
+    if let Some(index) = glob.find('*') {
         let (glob_start, glob_rest) = glob.split_at(index);
         if !s.starts_with(glob_start) {
             return false;
@@ -109,9 +109,9 @@ fn match_glob(glob: &str, s: &str) -> bool {
                 break;
             }
         }
-        return false;
+        false
     } else {
-        return glob == s;
+        glob == s
     }
 }
 
@@ -282,7 +282,7 @@ impl RepoConfig {
         } else if ref_name.starts_with("appstream2/") {
             self.appstream_delta_depth /* This updates often, so lets have some more */
         } else if ref_name.starts_with("app/") || ref_name.starts_with("runtime/") {
-            let parts: Vec<&str> = ref_name.split("/").collect();
+            let parts: Vec<&str> = ref_name.split('/').collect();
             if parts.len() == 4 {
                 let id = parts[1];
                 let arch = parts[2];
@@ -352,7 +352,7 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
             load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     }
 
-    if config_data.base_url == "" {
+    if config_data.base_url.is_empty() {
         config_data.base_url = format!("http://{}:{}", config_data.host, config_data.port)
     }
 
@@ -390,19 +390,19 @@ fn handle_build_repo(
         .respond_to(&req)
 }
 
-fn get_commit_for_file(path: &PathBuf) -> Option<ostree::OstreeCommit> {
+fn get_commit_for_file(path: &Path) -> Option<ostree::OstreeCommit> {
     if path.file_name() == Some(OsStr::new("superblock")) {
-        if let Ok(superblock) = ostree::load_delta_superblock_file(&path) {
+        if let Ok(superblock) = ostree::load_delta_superblock_file(path) {
             return Some(superblock.commit);
         }
     }
 
     if path.extension() == Some(OsStr::new("commit")) {
-        if let Ok(commit) = ostree::load_commit_file(&path) {
+        if let Ok(commit) = ostree::load_commit_file(path) {
             return Some(commit);
         }
     }
-    return None;
+    None
 }
 
 struct RepoHeadersData {
@@ -424,7 +424,7 @@ fn verify_repo_token(
     req: &HttpRequest,
     commit: ostree::OstreeCommit,
     repoconfig: &RepoConfig,
-    path: &PathBuf,
+    path: &Path,
 ) -> Result<(), ApiError> {
     let token_type = commit
         .metadata
@@ -444,10 +444,9 @@ fn verify_repo_token(
     let commit_refs = commit
         .metadata
         .get("ostree.ref-binding")
-        .ok_or(ApiError::InternalServerError(format!(
-            "No ref binding for commit {:?}",
-            path
-        )))?
+        .ok_or_else(|| {
+            ApiError::InternalServerError(format!("No ref binding for commit {:?}", path))
+        })?
         .as_string_vec()?;
     let mut result = Ok(());
     // If there are any normal flatpak refs, the token must match at least one:
@@ -509,7 +508,7 @@ pub fn create_app(
     let repo_secret = config
         .repo_secret
         .as_ref()
-        .unwrap_or(config.secret.as_ref())
+        .unwrap_or_else(|| config.secret.as_ref())
         .clone();
     let http_server = HttpServer::new(move || {
         App::new()

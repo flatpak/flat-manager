@@ -29,9 +29,9 @@ pub struct DeltaRequest {
     pub delta: ostree::Delta,
 }
 
-impl DeltaRequest {
-    fn to_string(&self) -> String {
-        format!("{}/{}", self.repo, self.delta.to_string())
+impl std::fmt::Display for DeltaRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{}/{}", self.repo, self.delta)
     }
 }
 
@@ -60,7 +60,7 @@ impl QueuedRequest {
         let delayed = DelayedResult::new();
         QueuedRequest {
             request: request.clone(),
-            delayed_result: delayed.clone(),
+            delayed_result: delayed,
         }
     }
 }
@@ -110,9 +110,9 @@ impl DeltaGenerator {
         self.next_worker_id += 1;
         self.remote_workers.push(Rc::new(WorkerInfo {
             name: name.to_string(),
-            id: id,
+            id,
             available: Cell::new(available),
-            addr: addr,
+            addr,
         }));
         info!("New delta worker {} registred as #{} ", name, id);
         id
@@ -234,7 +234,7 @@ impl Handler<DeltaRequestSync> for DeltaGenerator {
     fn handle(&mut self, msg: DeltaRequestSync, ctx: &mut Self::Context) -> Self::Result {
         let request = msg.delta_request.clone();
         let delta = request.delta.clone();
-        let tx = msg.tx.clone();
+        let tx = msg.tx;
         let r = self.handle_request(request, ctx);
         ctx.spawn(Box::new(
             r.then(move |r| {
@@ -340,11 +340,7 @@ impl Handler<DeltaRequest> for LocalWorker {
 
 pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
     let n_threads = config.local_delta_threads;
-    let config_copy = config.clone();
-    let local_worker = LocalWorker {
-        config: config_copy.clone(),
-    }
-    .start();
+    let local_worker = LocalWorker { config }.start();
 
     let generator = DeltaGenerator {
         outstanding: VecDeque::new(),
@@ -399,7 +395,7 @@ pub enum RemoteServerMessage {
 impl RemoteWorker {
     pub fn new(config: &Data<Config>, generator: &Addr<DeltaGenerator>, remote: String) -> Self {
         RemoteWorker {
-            remote: remote,
+            remote,
             id: None,
             unregistered: false,
             last_item_id: 0,
@@ -504,7 +500,6 @@ impl RemoteWorker {
             if Instant::now().duration_since(worker.last_recieved_ping) > CLIENT_TIMEOUT {
                 warn!("Delta worker heartbeat missing, disconnecting!");
                 ctx.stop();
-                return;
             }
         });
     }
@@ -534,7 +529,7 @@ impl Handler<DeltaRequest> for RemoteWorker {
 
         ctx.text(
             json!(RemoteServerMessage::RequestDelta {
-                url: url,
+                url,
                 id: item.id,
                 repo: msg.repo,
                 delta: msg.delta,

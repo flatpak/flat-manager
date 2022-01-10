@@ -66,7 +66,7 @@ use Pool;
  ************************************************************************/
 
 fn generate_flatpakref(
-    ref_name: &String,
+    ref_name: &str,
     maybe_build_id: Option<i32>,
     config: &Config,
     repoconfig: &RepoConfig,
@@ -88,17 +88,14 @@ fn generate_flatpakref(
             format!("{}/build-repo/{}", config.base_url, build_id),
             &config.build_gpg_key_content,
         ),
-        None => (
-            repoconfig.get_base_url(&config),
-            &repoconfig.gpg_key_content,
-        ),
+        None => (repoconfig.get_base_url(config), &repoconfig.gpg_key_content),
     };
 
     let title = if let Some(build_id) = maybe_build_id {
         format!("{} build nr {}", parts[1], build_id)
     } else {
         let reponame = match &repoconfig.suggested_repo_name {
-            Some(suggested_name) => &suggested_name,
+            Some(suggested_name) => suggested_name,
             None => &repoconfig.name,
         };
         format!("{} from {}", app_id, reponame)
@@ -234,7 +231,7 @@ fn queue_update_job(
                 diesel::insert_into(schema::job_dependencies::table)
                     .values(JobDependency {
                         job_id: update_job.id,
-                        depends_on: depends_on,
+                        depends_on,
                     })
                     .execute(conn)?;
             }
@@ -336,10 +333,11 @@ struct InvalidJobInstance {
 }
 
 impl InvalidJobInstance {
+    #[allow(clippy::new_ret_no_self)]
     fn new(job: Job, error: JobError) -> Box<dyn JobInstance> {
         Box::new(InvalidJobInstance {
             job_id: job.id,
-            error: error,
+            error,
         })
     }
 }
@@ -368,6 +366,7 @@ struct CommitJobInstance {
 }
 
 impl CommitJobInstance {
+    #[allow(clippy::new_ret_no_self)]
     fn new(job: Job) -> Box<dyn JobInstance> {
         if let Ok(commit_job) = serde_json::from_str::<CommitJob>(&job.contents) {
             Box::new(CommitJobInstance {
@@ -384,7 +383,7 @@ impl CommitJobInstance {
 
     fn do_commit_build_refs(
         &self,
-        build_refs: &Vec<models::BuildRef>,
+        build_refs: &[models::BuildRef],
         config: &Config,
         repoconfig: &RepoConfig,
         conn: &PgConnection,
@@ -398,19 +397,16 @@ impl CommitJobInstance {
         let mut commits = HashMap::new();
 
         let endoflife_rebase_arg = if let Some(endoflife_rebase) = &self.endoflife_rebase {
-            if let Some(app_ref) = build_refs
+            build_refs
                 .iter()
-                .filter(|app_ref| app_ref.ref_name.starts_with("app/"))
-                .nth(0)
-            {
-                Some(format!(
-                    "--end-of-life-rebase={}={}",
-                    app_ref.ref_name.split('/').nth(1).unwrap(),
-                    endoflife_rebase
-                ))
-            } else {
-                None
-            }
+                .find(|app_ref| app_ref.ref_name.starts_with("app/"))
+                .map(|app_ref| {
+                    format!(
+                        "--end-of-life-rebase={}={}",
+                        app_ref.ref_name.split('/').nth(1).unwrap(),
+                        endoflife_rebase
+                    )
+                })
         } else {
             None
         };
@@ -513,23 +509,20 @@ impl JobInstance for CommitJobInstance {
         let build_data = builds::table
             .filter(builds::id.eq(self.build_id))
             .get_result::<models::Build>(conn)
-            .or_else(|_e| Err(JobError::new("Can't load build")))?;
+            .map_err(|_e| JobError::new("Can't load build"))?;
 
         // Get repo config
-        let repoconfig = config.get_repoconfig(&build_data.repo).or_else(|_e| {
-            Err(JobError::new(&format!(
-                "Can't find repo {}",
-                &build_data.repo
-            )))
-        })?;
+        let repoconfig = config
+            .get_repoconfig(&build_data.repo)
+            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &build_data.repo)))?;
 
         // Get the uploaded refs from db
         let build_refs = build_refs::table
             .filter(build_refs::build_id.eq(self.build_id))
             .get_results::<models::BuildRef>(conn)
-            .or_else(|_e| Err(JobError::new("Can't load build refs")))?;
+            .map_err(|_e| JobError::new("Can't load build refs"))?;
 
-        if build_refs.len() == 0 {
+        if build_refs.is_empty() {
             return Err(JobError::new("No refs in build"));
         }
 
@@ -575,6 +568,7 @@ struct PublishJobInstance {
 }
 
 impl PublishJobInstance {
+    #[allow(clippy::new_ret_no_self)]
     fn new(job: Job) -> Box<dyn JobInstance> {
         if let Ok(publish_job) = serde_json::from_str::<PublishJob>(&job.contents) {
             Box::new(PublishJobInstance {
@@ -589,7 +583,7 @@ impl PublishJobInstance {
     fn do_publish(
         &self,
         build: &models::Build,
-        build_refs: &Vec<models::BuildRef>,
+        build_refs: &[models::BuildRef],
         config: &Config,
         repoconfig: &RepoConfig,
         conn: &PgConnection,
@@ -729,22 +723,19 @@ impl JobInstance for PublishJobInstance {
         let build_data = builds::table
             .filter(builds::id.eq(self.build_id))
             .get_result::<models::Build>(conn)
-            .or_else(|_e| Err(JobError::new("Can't load build")))?;
+            .map_err(|_e| JobError::new("Can't load build"))?;
 
         // Get repo config
-        let repoconfig = config.get_repoconfig(&build_data.repo).or_else(|_e| {
-            Err(JobError::new(&format!(
-                "Can't find repo {}",
-                &build_data.repo
-            )))
-        })?;
+        let repoconfig = config
+            .get_repoconfig(&build_data.repo)
+            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &build_data.repo)))?;
 
         // Get the uploaded refs from db
         let build_refs = build_refs::table
             .filter(build_refs::build_id.eq(self.build_id))
             .get_results::<models::BuildRef>(conn)
-            .or_else(|_e| Err(JobError::new("Can't load build refs")))?;
-        if build_refs.len() == 0 {
+            .map_err(|_e| JobError::new("Can't load build refs"))?;
+        if build_refs.is_empty() {
             return Err(JobError::new("No refs in build"));
         }
 
@@ -793,10 +784,11 @@ struct UpdateRepoJobInstance {
 }
 
 impl UpdateRepoJobInstance {
+    #[allow(clippy::new_ret_no_self)]
     fn new(job: Job, delta_generator: Addr<DeltaGenerator>) -> Box<dyn JobInstance> {
         if let Ok(update_repo_job) = serde_json::from_str::<UpdateRepoJob>(&job.contents) {
             Box::new(UpdateRepoJobInstance {
-                delta_generator: delta_generator,
+                delta_generator,
                 job_id: job.id,
                 repo: update_repo_job.repo,
             })
@@ -1001,7 +993,7 @@ impl UpdateRepoJobInstance {
         let appstream_dir = repo_path.join("appstream");
         let appstream_refs = ostree::list_refs(&repoconfig.path, "appstream");
         for appstream_ref in appstream_refs {
-            let arch = appstream_ref.split("/").nth(1).unwrap();
+            let arch = appstream_ref.split('/').nth(1).unwrap();
             let mut cmd = Command::new("ostree");
             cmd.arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
                 .arg("checkout")
@@ -1039,7 +1031,7 @@ impl JobInstance for UpdateRepoJobInstance {
         let config = &executor.config;
         let repoconfig = config
             .get_repoconfig(&self.repo)
-            .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &self.repo))))?;
+            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &self.repo)))?;
 
         self.update_appstream(config, repoconfig, conn)?;
 
@@ -1103,10 +1095,10 @@ fn pick_next_job(
             };
 
             /* Sort by prio */
-            new_instances.sort_by(|a, b| a.order().cmp(&b.order()));
+            new_instances.sort_by_key(|a| a.order());
 
             /* Handle the first, if any */
-            for new_instance in new_instances {
+            if let Some(new_instance) = new_instances.into_iter().next() {
                 diesel::update(jobs::table)
                     .filter(jobs::id.eq(new_instance.get_job_id()))
                     .set((jobs::status.eq(JobStatus::Started as i16),))
@@ -1372,7 +1364,7 @@ pub fn start_job_executor(
         );
     }
     JobQueue {
-        executors: executors,
+        executors,
         running: true,
     }
     .start()

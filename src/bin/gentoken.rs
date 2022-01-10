@@ -92,7 +92,7 @@ fn main() {
 
     let secret_contents;
 
-    if scope.len() == 0 {
+    if scope.is_empty() {
         scope = vec![
             "build".to_string(),
             "upload".to_string(),
@@ -101,16 +101,16 @@ fn main() {
         ];
     }
 
-    if prefixes.len() == 0 {
+    if prefixes.is_empty() {
         prefixes = vec!["".to_string()];
     }
 
-    if repos.len() == 0 {
+    if repos.is_empty() {
         repos = vec!["".to_string()];
     }
 
     if let Some(s) = secret {
-        secret_contents = s.clone();
+        secret_contents = s;
     } else if let Some(filename) = secret_file {
         match read_secret(filename) {
             Ok(contents) => secret_contents = contents,
@@ -131,10 +131,10 @@ fn main() {
     };
 
     let claims = Claims {
-        sub: sub,
-        scope: scope,
-        prefixes: prefixes,
-        repos: repos,
+        sub,
+        scope,
+        prefixes,
+        repos,
         name: name.clone(),
         exp: Utc::now().timestamp() + duration,
     };

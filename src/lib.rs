@@ -72,8 +72,8 @@ pub use errors::DeltaGenerationError;
 type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
-    let config_data =
-        app::load_config(&path).expect(&format!("Failed to read config file {:?}", &path));
+    let config_data = app::load_config(&path)
+        .unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
     Arc::new(config_data)
 }
 
@@ -101,7 +101,7 @@ fn start_job_queue(
     pool: &Pool,
     delta_generator: &Addr<DeltaGenerator>,
 ) -> Addr<JobQueue> {
-    jobs::cleanup_started_jobs(&pool).expect("Failed to cleanup started jobs");
+    jobs::cleanup_started_jobs(pool).expect("Failed to cleanup started jobs");
     jobs::start_job_executor(config.clone(), delta_generator.clone(), pool.clone())
 }
 
