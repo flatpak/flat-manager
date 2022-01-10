@@ -1,23 +1,3 @@
-extern crate actix;
-extern crate actix_codec;
-extern crate actix_http;
-extern crate actix_web;
-extern crate actix_web_actors;
-extern crate awc;
-extern crate dotenv;
-extern crate env_logger;
-extern crate flatmanager;
-extern crate futures;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate serde_json;
-extern crate futures_fs;
-extern crate futures_locks;
-extern crate mpart_async;
-extern crate num_cpus;
-extern crate tokio;
-
 use actix::io::{SinkWrite, WriteHandler};
 use actix::*;
 use actix_codec::Framed;
@@ -32,7 +12,9 @@ use dotenv::dotenv;
 use futures::stream::SplitSink;
 use futures::{Future, Stream};
 use futures_fs::FsPool;
+use log::{error, info, warn};
 use mpart_async::MultipartRequest;
+use serde_json::json;
 use std::env;
 use std::fs;
 use std::io;

@@ -1,12 +1,12 @@
 use actix::prelude::*;
 use actix_web::*;
-use diesel;
 use diesel::prelude::*;
+use serde_json::json;
 
-use errors::ApiError;
-use models::*;
-use schema;
-use Pool;
+use crate::errors::ApiError;
+use crate::models::*;
+use crate::schema;
+use crate::Pool;
 
 pub struct Db(pub Pool);
 

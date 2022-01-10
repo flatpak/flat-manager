@@ -8,8 +8,8 @@ use futures::{Future, Poll};
 use jwt::{decode, DecodingKey, Validation};
 use std::rc::Rc;
 
-use app::Claims;
-use errors::ApiError;
+use crate::app::Claims;
+use crate::errors::ApiError;
 
 pub trait ClaimsValidator {
     fn get_claims(&self) -> Option<Claims>;
@@ -280,7 +280,7 @@ where
         Either::A(Box::new(self.service.call(req).and_then(move |resp| {
             if resp.status() == 401 || resp.status() == 403 {
                 if let Some(ref claims) = c {
-                    info!("Presented claims: {:?}", claims);
+                    log::info!("Presented claims: {:?}", claims);
                 }
             }
             Ok(resp)

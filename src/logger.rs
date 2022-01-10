@@ -8,9 +8,8 @@ use futures::future::{ok, FutureResult};
 use futures::{Async, Future, Poll};
 use std::marker::PhantomData;
 use std::rc::Rc;
-use time;
 
-use tokens::ClaimsValidator;
+use crate::tokens::ClaimsValidator;
 
 pub struct Logger(Rc<Inner>);
 
@@ -33,7 +32,7 @@ impl Inner {
     fn log(&self, req: &RequestData, resp: &ResponseData) {
         let rt = ((time::now() - req.time).num_nanoseconds().unwrap_or(0) as f64) / 1_000_000_000.0;
 
-        info!(
+        log::info!(
             "{} \"{}\" {} {} {} {} {:.6}",
             req.remote_ip,
             req.request_line,
@@ -158,7 +157,7 @@ where
 
         if let Some(error) = res.response().error() {
             if res.response().head().status != StatusCode::INTERNAL_SERVER_ERROR {
-                debug!("Error in response: {:?}", error);
+                log::debug!("Error in response: {:?}", error);
             }
         }
 
