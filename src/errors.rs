@@ -79,13 +79,13 @@ impl From<BlockingError<ApiError>> for ApiError {
 
 impl From<r2d2::Error> for ApiError {
     fn from(e: r2d2::Error) -> Self {
-        ApiError::InternalServerError(format!("Database error: {}", e.to_string()))
+        ApiError::InternalServerError(format!("Database error: {}", e))
     }
 }
 
 impl From<DeltaGenerationError> for JobError {
     fn from(e: DeltaGenerationError) -> Self {
-        JobError::InternalError(format!("Failed to generate delta: {}", e.to_string()))
+        JobError::InternalError(format!("Failed to generate delta: {}", e))
     }
 }
 

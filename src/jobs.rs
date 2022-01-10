@@ -849,8 +849,8 @@ impl UpdateRepoJobInstance {
 
         for (delta, result) in rx.iter().take(deltas.len()) {
             let message = match result {
-                Ok(()) => format!(" {}", delta.to_string()),
-                Err(e) => format!(" failed to generate {}: {}", delta.to_string(), e),
+                Ok(()) => format!(" {}", delta),
+                Err(e) => format!(" failed to generate {}: {}", delta, e),
             };
             job_log_and_info(self.job_id, conn, &message);
         }
@@ -1125,11 +1125,7 @@ fn process_one_job(executor: &mut JobExecutor, conn: &PgConnection) -> bool {
                     (JobStatus::Ended, json.to_string())
                 }
                 Err(e) => {
-                    job_log_and_error(
-                        instance.get_job_id(),
-                        conn,
-                        &format!("Job failed: {}", e.to_string()),
-                    );
+                    job_log_and_error(instance.get_job_id(), conn, &format!("Job failed: {}", e));
                     (
                         JobStatus::Broken,
                         json!({"error-message": e.to_string()}).to_string(),
