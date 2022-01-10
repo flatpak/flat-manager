@@ -1,9 +1,10 @@
-use actix;
+use crate::ostree::OstreeError;
 use actix_web::error::BlockingError;
 use actix_web::http::StatusCode;
 use actix_web::{error::ResponseError, HttpResponse};
 use diesel::result::Error as DieselError;
-use ostree::OstreeError;
+use failure::Fail;
+use serde_json::json;
 use std::io;
 
 #[derive(Fail, Debug, Clone)]
@@ -202,10 +203,10 @@ impl ApiError {
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
         if let ApiError::InternalServerError(internal_message) = self {
-            error!("Responding with internal error: {}", internal_message);
+            log::error!("Responding with internal error: {}", internal_message);
         }
         if let ApiError::NotEnoughPermissions(internal_message) = self {
-            error!(
+            log::error!(
                 "Responding with NotEnoughPermissions error: {}",
                 internal_message
             );

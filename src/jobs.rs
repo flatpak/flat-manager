@@ -1,13 +1,11 @@
 use actix::prelude::*;
 use actix::{Actor, SyncContext};
-use diesel;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel::result::Error as DieselError;
-use filetime;
-use libc;
-use serde_json;
+use log::{error, info};
+use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
@@ -23,18 +21,18 @@ use std::sync::Arc;
 use std::time;
 use walkdir::WalkDir;
 
-use app::{Config, RepoConfig};
-use deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
-use errors::{JobError, JobResult};
-use models;
-use models::{
+use crate::app::{Config, RepoConfig};
+use crate::deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
+use crate::errors::{JobError, JobResult};
+use crate::models;
+use crate::models::{
     job_dependencies_with_status, CommitJob, Job, JobDependency, JobKind, JobStatus, NewJob,
     PublishJob, PublishedState, RepoState, UpdateRepoJob,
 };
-use ostree;
-use schema;
-use schema::*;
-use Pool;
+use crate::ostree;
+use crate::schema;
+use crate::schema::*;
+use crate::Pool;
 
 /**************************************************************************
  * Job handling - theory of operations.
@@ -1310,7 +1308,7 @@ impl Handler<StopJobQueue> for JobQueue {
             .values()
             .map(|info| info.borrow().addr.clone())
             .collect();
-        ActorResponse::async(
+        ActorResponse::r#async(
             futures::stream::iter_ok(executors)
                 .into_actor(self)
                 .map(|executor: Addr<JobExecutor>, job_queue, _ctx| {

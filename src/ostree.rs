@@ -1,9 +1,9 @@
-use base64;
 use byteorder::{ByteOrder, LittleEndian, NativeEndian};
+use failure::Fail;
 use futures::future;
 use futures::future::Either;
 use futures::Future;
-use hex;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Read;
 use std::num::NonZeroUsize;
@@ -964,7 +964,7 @@ pub fn pull_commit_async(
             .arg("upstream")
             .arg(&commit);
 
-        info!("Pulling commit {}", commit);
+        log::info!("Pulling commit {}", commit);
         let commit_clone = commit.clone();
         cmd.output_async()
             .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))
@@ -973,7 +973,7 @@ pub fn pull_commit_async(
                 Ok(res) => Ok(future::Loop::Break(res)),
                 Err(e) => {
                     if count > 1 {
-                        warn!(
+                        log::warn!(
                             "Pull error, retrying commit {}: {}",
                             commit_clone,
                             e.to_string()
@@ -1036,7 +1036,7 @@ pub fn generate_delta_async(
 
     cmd.arg(&repo_path);
 
-    info!("Generating delta {}", delta.to_string());
+    log::info!("Generating delta {}", delta.to_string());
     Box::new(
         cmd.output_async()
             .map_err(|e| {

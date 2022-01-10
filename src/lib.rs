@@ -1,45 +1,9 @@
 #![allow(proc_macro_derive_resolution_fallback)]
 
-extern crate actix;
-extern crate actix_files;
-extern crate actix_multipart;
-extern crate actix_net;
-extern crate actix_service;
-extern crate actix_web;
-extern crate actix_web_actors;
-extern crate askama;
-extern crate base64;
-extern crate byteorder;
-extern crate bytes;
-extern crate chrono;
 #[macro_use]
 extern crate diesel;
 #[macro_use]
 extern crate diesel_migrations;
-extern crate env_logger;
-#[macro_use]
-extern crate failure;
-extern crate futures;
-extern crate r2d2;
-extern crate serde;
-#[macro_use]
-extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
-extern crate jsonwebtoken as jwt;
-extern crate tempfile;
-#[macro_use]
-extern crate log;
-extern crate filetime;
-extern crate hex;
-extern crate libc;
-extern crate num_cpus;
-extern crate rand;
-extern crate time;
-extern crate tokio;
-extern crate tokio_process;
-extern crate tokio_signal;
-extern crate walkdir;
 
 mod api;
 mod app;
@@ -61,6 +25,7 @@ use deltas::{DeltaGenerator, StopDeltaGenerator};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, ManageConnection};
 use jobs::{JobQueue, StopJobQueue};
+use log::info;
 use std::path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};

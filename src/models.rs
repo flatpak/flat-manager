@@ -1,7 +1,6 @@
+use crate::schema::{build_refs, builds, job_dependencies, jobs};
+use serde::{Deserialize, Serialize};
 use std::{mem, time};
-
-use chrono;
-use schema::{build_refs, builds, job_dependencies, jobs};
 
 #[derive(Deserialize, Insertable, Debug)]
 #[table_name = "builds"]

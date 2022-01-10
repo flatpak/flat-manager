@@ -1,12 +1,3 @@
-extern crate jsonwebtoken as jwt;
-#[macro_use]
-extern crate serde_derive;
-extern crate argparse;
-extern crate base64;
-extern crate chrono;
-extern crate serde;
-extern crate serde_json;
-
 use chrono::{Duration, Utc};
 use jwt::{encode, EncodingKey, Header};
 use std::fs;
@@ -15,6 +6,7 @@ use std::io::prelude::*;
 use std::process;
 
 use argparse::{ArgumentParser, List, Store, StoreOption, StoreTrue};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Claims {

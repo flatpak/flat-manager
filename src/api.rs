@@ -9,8 +9,8 @@ use actix_web_actors::ws;
 use chrono::Utc;
 use futures::future;
 use futures::future::Future;
-use jwt;
-use serde::Serialize;
+use log::warn;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::clone::Clone;
 use std::env;
@@ -24,14 +24,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 
-use app::{Claims, Config};
+use crate::app::{Claims, Config};
+use crate::db::*;
+use crate::deltas::{DeltaGenerator, RemoteWorker};
+use crate::errors::ApiError;
+use crate::jobs::{JobQueue, ProcessJobs};
+use crate::models::{Job, JobKind, JobStatus, NewBuild, NewBuildRef};
+use crate::tokens::{self, ClaimsValidator};
 use askama::Template;
-use db::*;
-use deltas::{DeltaGenerator, RemoteWorker};
-use errors::ApiError;
-use jobs::{JobQueue, ProcessJobs};
-use models::{Job, JobKind, JobStatus, NewBuild, NewBuildRef};
-use tokens::{self, ClaimsValidator};
 
 fn init_ostree_repo(
     repo_path: &path::Path,

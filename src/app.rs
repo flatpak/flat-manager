@@ -7,12 +7,7 @@ use actix_web::http::header::{HeaderValue, CACHE_CONTROL};
 use actix_web::web::Data;
 use actix_web::Responder;
 use actix_web::{self, http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
-use base64;
-use num_cpus;
-use serde;
-use serde::Deserialize;
-use serde_json;
-use std;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::io;
@@ -21,15 +16,15 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-use api;
-use db::Db;
-use deltas::DeltaGenerator;
-use errors::ApiError;
-use jobs::JobQueue;
-use logger::Logger;
-use ostree;
-use tokens::{ClaimsValidator, TokenParser};
-use Pool;
+use crate::api;
+use crate::db::Db;
+use crate::deltas::DeltaGenerator;
+use crate::errors::ApiError;
+use crate::jobs::JobQueue;
+use crate::logger::Logger;
+use crate::ostree;
+use crate::tokens::{ClaimsValidator, TokenParser};
+use crate::Pool;
 
 // Ensure we strip out .. and other risky things to avoid escaping out of the base dir
 fn canonicalize_path(path: &str) -> Result<PathBuf, actix_web::Error> {
@@ -618,7 +613,7 @@ pub fn create_app(
         .disable_signals()
         .start();
 
-    info!("Started http server: {}", bind_to);
+    log::info!("Started http server: {}", bind_to);
 
     server
 }

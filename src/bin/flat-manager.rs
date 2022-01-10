@@ -1,7 +1,3 @@
-extern crate dotenv;
-extern crate env_logger;
-extern crate flatmanager;
-
 use dotenv::dotenv;
 use std::env;
 use std::path::PathBuf;
