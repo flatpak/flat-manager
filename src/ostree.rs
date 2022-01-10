@@ -548,7 +548,7 @@ fn get_object_path(repo_path: &path::Path, object: &str, object_type: &str) -> p
     let mut path = std::env::current_dir().unwrap_or_default();
     path.push(repo_path);
     path.push("objects");
-    path.push(object[0..2].to_string());
+    path.push(&object[0..2]);
     path.push(format!("{}.{}", &object[2..], object_type));
     path
 }
@@ -722,9 +722,9 @@ pub fn get_delta_superblock(
     delta: &str,
 ) -> OstreeResult<OstreeDeltaSuperblock> {
     let mut path = get_deltas_path(repo_path);
-    path.push(delta[0..2].to_string());
-    path.push(delta[2..].to_string());
-    path.push("superblock".to_string());
+    path.push(&delta[0..2]);
+    path.push(&delta[2..]);
+    path.push("superblock");
 
     load_delta_superblock_file(&path)
 }
@@ -765,7 +765,7 @@ pub struct Delta {
 }
 
 fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
-    let bytes = base64::decode(&part.replace("_", "/")).map_err(|err| {
+    let bytes = base64::decode(&part.replace('_', "/")).map_err(|err| {
         OstreeError::InternalError(format!("Invalid delta part name '{}': {}", part, err))
     })?;
     Ok(bytes_to_object(&bytes))
@@ -774,7 +774,7 @@ fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
 fn hex_to_delta_part(hex: &str) -> OstreeResult<String> {
     let bytes = object_to_bytes(hex)?;
     let part = base64::encode_config(&bytes, base64::STANDARD_NO_PAD);
-    Ok(part.replace("/", "_"))
+    Ok(part.replace('/', "_"))
 }
 
 impl Delta {
@@ -813,16 +813,16 @@ impl Delta {
     pub fn delta_path(&self, repo_path: &path::Path) -> OstreeResult<path::PathBuf> {
         let mut path = get_deltas_path(repo_path);
         let name = self.to_name()?;
-        path.push(name[0..2].to_string());
-        path.push(name[2..].to_string());
+        path.push(&name[0..2]);
+        path.push(&name[2..]);
         Ok(path)
     }
 
     pub fn tmp_delta_path(&self, repo_path: &path::Path) -> OstreeResult<path::PathBuf> {
         let mut path = get_tmp_deltas_path(repo_path);
         let name = self.to_name()?;
-        path.push(name[0..2].to_string());
-        path.push(name[2..].to_string());
+        path.push(&name[0..2]);
+        path.push(&name[2..]);
         Ok(path)
     }
 }
