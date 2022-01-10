@@ -1351,7 +1351,7 @@ pub fn start_job_executor(
         start_executor(&None, &config, &delta_generator, &pool),
     );
 
-    for repo in config.repos.keys().cloned() {
+    for repo in config.repos.keys() {
         executors.insert(
             Some(repo.clone()),
             start_executor(&Some(repo.clone()), &config, &delta_generator, &pool),
