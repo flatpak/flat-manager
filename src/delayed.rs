@@ -1,16 +1,16 @@
-use futures::{task, Future,Async,Poll};
+use futures::{task, Async, Future, Poll};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::cell::{Cell,RefCell};
 use std::rc::Rc;
 
 #[derive(Debug)]
-struct InnerDelayedResult<T,E> {
+struct InnerDelayedResult<T, E> {
     next_clone_id: Cell<usize>,
-    result: RefCell<Option<Result<T,E>>>,
-    waiters: RefCell<HashMap<usize, task::Task>>
+    result: RefCell<Option<Result<T, E>>>,
+    waiters: RefCell<HashMap<usize, task::Task>>,
 }
 
-impl <T,E> InnerDelayedResult<T,E> {
+impl<T, E> InnerDelayedResult<T, E> {
     fn new() -> Rc<Self> {
         Rc::new(InnerDelayedResult {
             next_clone_id: Cell::new(0),
@@ -28,12 +28,12 @@ impl <T,E> InnerDelayedResult<T,E> {
 }
 
 #[derive(Debug)]
-pub struct DelayedResult<T,E> {
-    inner: Rc<InnerDelayedResult<T,E>>,
+pub struct DelayedResult<T, E> {
+    inner: Rc<InnerDelayedResult<T, E>>,
     waiter: usize,
 }
 
-impl<T, E> Clone for DelayedResult<T,E> {
+impl<T, E> Clone for DelayedResult<T, E> {
     fn clone(&self) -> Self {
         let next_id = self.inner.next_clone_id.get() + 1;
         self.inner.next_clone_id.replace(next_id);
@@ -45,16 +45,18 @@ impl<T, E> Clone for DelayedResult<T,E> {
     }
 }
 
-impl<T, E> Drop for DelayedResult<T,E> {
+impl<T, E> Drop for DelayedResult<T, E> {
     fn drop(&mut self) {
         let mut waiters = self.inner.waiters.borrow_mut();
         waiters.remove(&self.waiter);
     }
 }
 
-impl<T,E> Future for DelayedResult<T,E>
-    where T: std::fmt::Debug + std::clone::Clone,
-          E: std::fmt::Debug + std::clone::Clone,  {
+impl<T, E> Future for DelayedResult<T, E>
+where
+    T: std::fmt::Debug + std::clone::Clone,
+    E: std::fmt::Debug + std::clone::Clone,
+{
     type Item = T;
     type Error = E;
 
@@ -66,15 +68,20 @@ impl<T,E> Future for DelayedResult<T,E>
                 Ok(r) => Ok(Async::Ready(r.clone())),
             }
         } else {
-            self.inner.waiters.borrow_mut().insert(self.waiter, task::current());
+            self.inner
+                .waiters
+                .borrow_mut()
+                .insert(self.waiter, task::current());
             Ok(Async::NotReady)
         }
     }
 }
 
-impl <T,E> DelayedResult<T,E>
-    where T: std::fmt::Debug,
-          E: std::fmt::Debug,   {
+impl<T, E> DelayedResult<T, E>
+where
+    T: std::fmt::Debug,
+    E: std::fmt::Debug,
+{
     pub fn new() -> Self {
         let inner = InnerDelayedResult::new();
         DelayedResult {
@@ -90,7 +97,7 @@ impl <T,E> DelayedResult<T,E>
         }
     }
 
-    pub fn set(&mut self, res: Result<T,E>) {
+    pub fn set(&mut self, res: Result<T, E>) {
         self.inner.result.replace(Some(res));
 
         let waiters = self.inner.waiters.replace(HashMap::new());

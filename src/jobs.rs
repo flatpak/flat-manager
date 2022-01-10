@@ -1,37 +1,40 @@
 use actix::prelude::*;
 use actix::{Actor, SyncContext};
+use diesel;
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use diesel::result::{Error as DieselError};
 use diesel::result::DatabaseErrorKind::SerializationFailure;
-use diesel;
+use diesel::result::Error as DieselError;
 use filetime;
+use libc;
 use serde_json;
 use std::cell::RefCell;
-use std::str;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Write;
-use std::process::{Command, Stdio};
-use std::sync::{Arc};
-use std::path::PathBuf;
-use std::time;
-use std::os::unix::process::CommandExt;
-use libc;
-use std::collections::{HashMap,HashSet};
 use std::iter::FromIterator;
-use walkdir::WalkDir;
+use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
+use std::process::{Command, Stdio};
+use std::str;
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::time;
+use walkdir::WalkDir;
 
-use ostree;
-use app::{RepoConfig, Config};
-use Pool;
-use errors::{JobError, JobResult};
-use models::{NewJob, Job, JobDependency, JobKind, CommitJob, PublishJob, UpdateRepoJob, JobStatus, job_dependencies_with_status, RepoState, PublishedState };
+use app::{Config, RepoConfig};
 use deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
+use errors::{JobError, JobResult};
 use models;
-use schema::*;
+use models::{
+    job_dependencies_with_status, CommitJob, Job, JobDependency, JobKind, JobStatus, NewJob,
+    PublishJob, PublishedState, RepoState, UpdateRepoJob,
+};
+use ostree;
 use schema;
+use schema::*;
+use Pool;
 
 /**************************************************************************
  * Job handling - theory of operations.
@@ -62,10 +65,12 @@ use schema;
  *
  ************************************************************************/
 
-fn generate_flatpakref(ref_name: &String,
-                       maybe_build_id: Option<i32>,
-                       config: &Config,
-                       repoconfig: &RepoConfig) -> (String, String) {
+fn generate_flatpakref(
+    ref_name: &String,
+    maybe_build_id: Option<i32>,
+    config: &Config,
+    repoconfig: &RepoConfig,
+) -> (String, String) {
     let parts: Vec<&str> = ref_name.split('/').collect();
 
     let filename = format!("{}.flatpakref", parts[1]);
@@ -81,11 +86,11 @@ fn generate_flatpakref(ref_name: &String,
     let (url, maybe_gpg_content) = match maybe_build_id {
         Some(build_id) => (
             format!("{}/build-repo/{}", config.base_url, build_id),
-            &config.build_gpg_key_content
+            &config.build_gpg_key_content,
         ),
         None => (
-            repoconfig.get_base_url (&config),
-            &repoconfig.gpg_key_content
+            repoconfig.get_base_url(&config),
+            &repoconfig.gpg_key_content,
         ),
     };
 
@@ -99,13 +104,16 @@ fn generate_flatpakref(ref_name: &String,
         format!("{} from {}", app_id, reponame)
     };
 
-    let mut contents = format!(r#"[Flatpak Ref]
+    let mut contents = format!(
+        r#"[Flatpak Ref]
 Name={}
 Branch={}
 Title={}
 IsRuntime={}
 Url={}
-"#, app_id, branch, title, is_runtime, url);
+"#,
+        app_id, branch, title, is_runtime, url
+    );
 
     /* We only want to deploy the collection ID if the flatpakref is being generated for the main
      * repo not a build repo.
@@ -133,23 +141,26 @@ Url={}
     (filename, contents)
 }
 
-fn add_gpg_args(cmd: &mut Command, maybe_gpg_key: &Option<String>, maybe_gpg_homedir: &Option<String>) {
+fn add_gpg_args(
+    cmd: &mut Command,
+    maybe_gpg_key: &Option<String>,
+    maybe_gpg_homedir: &Option<String>,
+) {
     if let Some(gpg_homedir) = maybe_gpg_homedir {
-        cmd
-            .arg(format!("--gpg-homedir={}", gpg_homedir));
+        cmd.arg(format!("--gpg-homedir={}", gpg_homedir));
     };
 
     if let Some(key) = maybe_gpg_key {
-        cmd
-            .arg(format!("--gpg-sign={}", key));
+        cmd.arg(format!("--gpg-sign={}", key));
     };
 }
 
-fn queue_update_job (delay_secs: u64,
-                     conn: &PgConnection,
-                     repo: &str,
-                     starting_job_id: Option<i32>) -> Result<(bool,Job), DieselError>
-{
+fn queue_update_job(
+    delay_secs: u64,
+    conn: &PgConnection,
+    repo: &str,
+    starting_job_id: Option<i32>,
+) -> Result<(bool, Job), DieselError> {
     /* We wrap everything in a serializable transaction, because if something else
      * starts the job while we're adding dependencies to it the dependencies will be
      * ignored.
@@ -233,8 +244,10 @@ fn queue_update_job (delay_secs: u64,
 
     /* Retry on serialization failure */
     match transaction_result {
-        Err(DieselError::DatabaseError(SerializationFailure, _)) => queue_update_job (delay_secs, conn, repo, starting_job_id),
-        _ => transaction_result
+        Err(DieselError::DatabaseError(SerializationFailure, _)) => {
+            queue_update_job(delay_secs, conn, repo, starting_job_id)
+        }
+        _ => transaction_result,
     }
 }
 
@@ -253,9 +266,10 @@ fn job_log(job_id: i32, conn: &PgConnection, output: &str) {
     if let Err(e) = diesel::update(jobs::table)
         .filter(jobs::id.eq(job_id))
         .set((jobs::log.eq(jobs::log.concat(&output)),))
-        .execute(conn) {
-            error!("Error appending to job {} log: {}", job_id, e.to_string());
-        }
+        .execute(conn)
+    {
+        error!("Error appending to job {} log: {}", job_id, e.to_string());
+    }
 }
 
 fn job_log_and_info(job_id: i32, conn: &PgConnection, output: &str) {
@@ -268,26 +282,27 @@ fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
     job_log(job_id, conn, &format!("{}\n", output));
 }
 
-fn do_command(mut cmd: Command) -> JobResult<()>
-{
-    let output =
-        unsafe {
-            cmd
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .pre_exec (|| {
-                    // Setsid in the child to avoid SIGINT on server killing
-                    // child and breaking the graceful shutdown
-                    libc::setsid();
-                    Ok(())
-                })
-                .output()
-                .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?
-        };
+fn do_command(mut cmd: Command) -> JobResult<()> {
+    let output = unsafe {
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .pre_exec(|| {
+                // Setsid in the child to avoid SIGINT on server killing
+                // child and breaking the graceful shutdown
+                libc::setsid();
+                Ok(())
+            })
+            .output()
+            .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?
+    };
 
     if !output.status.success() {
-        return Err(JobError::new(&format!("Command {:?} exited unsuccesfully: {}", &cmd, String::from_utf8_lossy(&output.stderr))))
+        return Err(JobError::new(&format!(
+            "Command {:?} exited unsuccesfully: {}",
+            &cmd,
+            String::from_utf8_lossy(&output.stderr)
+        )));
     }
     Ok(())
 }
@@ -296,17 +311,23 @@ fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance> {
     match JobKind::from_db(job.kind) {
         Some(JobKind::Commit) => CommitJobInstance::new(job),
         Some(JobKind::Publish) => PublishJobInstance::new(job),
-        Some(JobKind::UpdateRepo) => UpdateRepoJobInstance::new(job, executor.delta_generator.clone()),
+        Some(JobKind::UpdateRepo) => {
+            UpdateRepoJobInstance::new(job, executor.delta_generator.clone())
+        }
         _ => InvalidJobInstance::new(job, JobError::new("Unknown job type")),
     }
 }
 
 pub trait JobInstance {
-    fn get_job_id (&self) -> i32;
-    fn order (&self) -> i32 {
+    fn get_job_id(&self) -> i32;
+    fn order(&self) -> i32 {
         0
     }
-    fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value>;
+    fn handle_job(
+        &mut self,
+        executor: &JobExecutor,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value>;
 }
 
 struct InvalidJobInstance {
@@ -315,8 +336,7 @@ struct InvalidJobInstance {
 }
 
 impl InvalidJobInstance {
-    fn new(job: Job,
-           error: JobError) -> Box<dyn JobInstance> {
+    fn new(job: Job, error: JobError) -> Box<dyn JobInstance> {
         Box::new(InvalidJobInstance {
             job_id: job.id,
             error: error,
@@ -325,15 +345,18 @@ impl InvalidJobInstance {
 }
 
 impl JobInstance for InvalidJobInstance {
-    fn get_job_id (&self) -> i32 {
+    fn get_job_id(&self) -> i32 {
         self.job_id
     }
 
-    fn handle_job (&mut self, _executor: &JobExecutor, _conn: &PgConnection) -> JobResult<serde_json::Value> {
+    fn handle_job(
+        &mut self,
+        _executor: &JobExecutor,
+        _conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
         Err(self.error.clone())
     }
 }
-
 
 #[derive(Debug)]
 struct CommitJobInstance {
@@ -359,11 +382,13 @@ impl CommitJobInstance {
         }
     }
 
-    fn do_commit_build_refs (&self,
-                             build_refs: &Vec<models::BuildRef>,
-                             config: &Config,
-                             repoconfig: &RepoConfig,
-                             conn: &PgConnection)  -> JobResult<serde_json::Value> {
+    fn do_commit_build_refs(
+        &self,
+        build_refs: &Vec<models::BuildRef>,
+        config: &Config,
+        repoconfig: &RepoConfig,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
         let upload_path = build_repo_path.join("upload");
 
@@ -373,8 +398,16 @@ impl CommitJobInstance {
         let mut commits = HashMap::new();
 
         let endoflife_rebase_arg = if let Some(endoflife_rebase) = &self.endoflife_rebase {
-            if let Some(app_ref) = build_refs.iter().filter(|app_ref| app_ref.ref_name.starts_with("app/")).nth(0) {
-                Some(format!("--end-of-life-rebase={}={}", app_ref.ref_name.split('/').nth(1).unwrap(), endoflife_rebase))
+            if let Some(app_ref) = build_refs
+                .iter()
+                .filter(|app_ref| app_ref.ref_name.starts_with("app/"))
+                .nth(0)
+            {
+                Some(format!(
+                    "--end-of-life-rebase={}={}",
+                    app_ref.ref_name.split('/').nth(1).unwrap(),
+                    endoflife_rebase
+                ))
             } else {
                 None
             }
@@ -387,38 +420,40 @@ impl CommitJobInstance {
             src_ref_arg.push_str(&build_ref.commit);
 
             let mut cmd = Command::new("flatpak");
-            cmd
-                .arg("build-commit-from")
-                .arg("--timestamp=NOW")     // All builds have the same timestamp, not when the individual builds finished
+            cmd.arg("build-commit-from")
+                .arg("--timestamp=NOW") // All builds have the same timestamp, not when the individual builds finished
                 .arg("--no-update-summary") // We update it once at the end
-                .arg("--untrusted")         // Verify that the uploaded objects are correct
-                .arg("--force")             // Always generate a new commit even if nothing changed
-                .arg("--disable-fsync");    // There is a sync in flatpak build-update-repo, so avoid it here
+                .arg("--untrusted") // Verify that the uploaded objects are correct
+                .arg("--force") // Always generate a new commit even if nothing changed
+                .arg("--disable-fsync"); // There is a sync in flatpak build-update-repo, so avoid it here
 
             add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
             if let Some(endoflife) = &self.endoflife {
-                cmd
-                    .arg(format!("--end-of-life={}", endoflife));
+                cmd.arg(format!("--end-of-life={}", endoflife));
             };
 
             if let Some(endoflife_rebase_arg) = &endoflife_rebase_arg {
-                cmd
-                    .arg(&endoflife_rebase_arg);
+                cmd.arg(&endoflife_rebase_arg);
             };
 
             if let Some(token_type) = &self.token_type {
-                cmd
-                    .arg(format!("--token-type={}", token_type));
+                cmd.arg(format!("--token-type={}", token_type));
             };
 
-            cmd
-                .arg(&src_repo_arg)
+            cmd.arg(&src_repo_arg)
                 .arg(&src_ref_arg)
                 .arg(&build_repo_path)
                 .arg(&build_ref.ref_name);
 
-            job_log_and_info(self.job_id, conn, &format!("Committing ref {} ({})", build_ref.ref_name, build_ref.commit));
+            job_log_and_info(
+                self.job_id,
+                conn,
+                &format!(
+                    "Committing ref {} ({})",
+                    build_ref.ref_name, build_ref.commit
+                ),
+            );
             do_command(cmd)?;
 
             let commit = ostree::parse_ref(&build_repo_path, &build_ref.ref_name)?;
@@ -427,18 +462,25 @@ impl CommitJobInstance {
             let unwanted_exts = [".Debug", ".Locale", ".Sources", ".Docs"];
             let ref_id_parts: Vec<&str> = build_ref.ref_name.split('/').collect();
 
-            if build_ref.ref_name.starts_with("app/") || (build_ref.ref_name.starts_with("runtime/") && !unwanted_exts.iter().any(|&ext| ref_id_parts[1].ends_with(ext))) {
-                let (filename, contents) = generate_flatpakref(&build_ref.ref_name, Some(self.build_id), config, repoconfig);
+            if build_ref.ref_name.starts_with("app/")
+                || (build_ref.ref_name.starts_with("runtime/")
+                    && !unwanted_exts
+                        .iter()
+                        .any(|&ext| ref_id_parts[1].ends_with(ext)))
+            {
+                let (filename, contents) = generate_flatpakref(
+                    &build_ref.ref_name,
+                    Some(self.build_id),
+                    config,
+                    repoconfig,
+                );
                 let path = build_repo_path.join(&filename);
                 File::create(&path)?.write_all(contents.as_bytes())?;
             }
         }
 
-
         let mut cmd = Command::new("flatpak");
-        cmd
-            .arg("build-update-repo")
-            .arg(&build_repo_path);
+        cmd.arg("build-update-repo").arg(&build_repo_path);
 
         add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
@@ -448,16 +490,20 @@ impl CommitJobInstance {
         job_log_and_info(self.job_id, conn, "Removing upload directory");
         fs::remove_dir_all(&upload_path)?;
 
-        Ok(json!({ "refs": commits}))
+        Ok(json!({ "refs": commits }))
     }
 }
 
 impl JobInstance for CommitJobInstance {
-    fn get_job_id (&self) -> i32 {
+    fn get_job_id(&self) -> i32 {
         self.job_id
     }
 
-    fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
+    fn handle_job(
+        &mut self,
+        executor: &JobExecutor,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
         info!("#{}: Handling Job Commit: build: {}, end-of-life: {}, eol-rebase: {}, token-type: {:?}",
               &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()), self.endoflife_rebase.as_ref().unwrap_or(&"".to_string()), self.token_type);
 
@@ -470,8 +516,12 @@ impl JobInstance for CommitJobInstance {
             .or_else(|_e| Err(JobError::new("Can't load build")))?;
 
         // Get repo config
-        let repoconfig = config.get_repoconfig(&build_data.repo)
-            .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &build_data.repo))))?;
+        let repoconfig = config.get_repoconfig(&build_data.repo).or_else(|_e| {
+            Err(JobError::new(&format!(
+                "Can't find repo {}",
+                &build_data.repo
+            )))
+        })?;
 
         // Get the uploaded refs from db
         let build_refs = build_refs::table
@@ -498,23 +548,25 @@ impl JobInstance for CommitJobInstance {
             let current_build = builds::table
                 .filter(builds::id.eq(self.build_id))
                 .get_result::<models::Build>(conn)?;
-            let current_repo_state = RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
+            let current_repo_state =
+                RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
             if !current_repo_state.same_state_as(&RepoState::Verifying) {
                 // Something weird was happening, we expected this build to be in the verifying state
-                return Err(DieselError::RollbackTransaction)
+                return Err(DieselError::RollbackTransaction);
             };
             let (val, reason) = RepoState::to_db(&new_repo_state);
             diesel::update(builds::table)
                 .filter(builds::id.eq(self.build_id))
-                .set((builds::repo_state.eq(val),
-                      builds::repo_state_reason.eq(reason)))
+                .set((
+                    builds::repo_state.eq(val),
+                    builds::repo_state_reason.eq(reason),
+                ))
                 .get_result::<models::Build>(conn)
         })?;
 
         res
     }
 }
-
 
 #[derive(Debug)]
 struct PublishJobInstance {
@@ -534,12 +586,14 @@ impl PublishJobInstance {
         }
     }
 
-    fn do_publish (&self,
-                   build: &models::Build,
-                   build_refs: &Vec<models::BuildRef>,
-                   config: &Config,
-                   repoconfig: &RepoConfig,
-                   conn: &PgConnection)  -> JobResult<serde_json::Value> {
+    fn do_publish(
+        &self,
+        build: &models::Build,
+        build_refs: &Vec<models::BuildRef>,
+        config: &Config,
+        repoconfig: &RepoConfig,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
 
         let mut src_repo_arg = OsString::from("--src-repo=");
@@ -548,25 +602,28 @@ impl PublishJobInstance {
         // Import commit and modify refs
 
         let mut cmd = Command::new("flatpak");
-        cmd
-            .arg("build-commit-from")
-            .arg("--force")             // Always generate a new commit even if nothing changed
+        cmd.arg("build-commit-from")
+            .arg("--force") // Always generate a new commit even if nothing changed
             .arg("--no-update-summary"); // We update it separately
 
         add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
 
         if let Some(collection_id) = &repoconfig.collection_id {
             for ref extra_id in build.extra_ids.iter() {
-                cmd.arg(format!("--extra-collection-id={}.{}", collection_id, extra_id));
+                cmd.arg(format!(
+                    "--extra-collection-id={}.{}",
+                    collection_id, extra_id
+                ));
             }
         }
 
-        cmd
-            .arg(&src_repo_arg)
-            .arg(&repoconfig.path);
+        cmd.arg(&src_repo_arg).arg(&repoconfig.path);
 
-        job_log_and_info(self.job_id, conn,
-                         &format!("Importing build to repo {}", repoconfig.name));
+        job_log_and_info(
+            self.job_id,
+            conn,
+            &format!("Importing build to repo {}", repoconfig.name),
+        );
         do_command(cmd)?;
 
         let appstream_dir = repoconfig.path.join("appstream");
@@ -577,15 +634,17 @@ impl PublishJobInstance {
 
         let mut commits = HashMap::new();
         for build_ref in build_refs.iter() {
-            if build_ref.ref_name.starts_with("app/") || build_ref.ref_name.starts_with("runtime/") {
+            if build_ref.ref_name.starts_with("app/") || build_ref.ref_name.starts_with("runtime/")
+            {
                 let commit = ostree::parse_ref(&repoconfig.path, &build_ref.ref_name)?;
                 commits.insert(build_ref.ref_name.to_string(), commit);
             }
 
             if build_ref.ref_name.starts_with("app/") {
-                let (filename, contents) = generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
+                let (filename, contents) =
+                    generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
                 let path = appstream_dir.join(&filename);
-                job_log_and_info (self.job_id, conn, &format!("generating {}", &filename));
+                job_log_and_info(self.job_id, conn, &format!("generating {}", &filename));
                 let old_contents = fs::read_to_string(&path).unwrap_or_default();
                 if contents != old_contents {
                     File::create(&path)?.write_all(contents.as_bytes())?;
@@ -595,10 +654,13 @@ impl PublishJobInstance {
 
         for build_ref in build_refs.iter() {
             if build_ref.ref_name.starts_with("screenshots/") {
-                job_log_and_info (self.job_id, conn, &format!("extracting {}", build_ref.ref_name));
+                job_log_and_info(
+                    self.job_id,
+                    conn,
+                    &format!("extracting {}", build_ref.ref_name),
+                );
                 let mut cmd = Command::new("ostree");
-                cmd
-                    .arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
+                cmd.arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
                     .arg("checkout")
                     .arg("--user-mode")
                     .arg("--bareuseronly-dirs")
@@ -611,17 +673,27 @@ impl PublishJobInstance {
 
         /* Create update repo job */
         let delay = config.delay_update_secs;
-        let (is_new, update_job) = queue_update_job (delay, conn, &repoconfig.name, Some(self.job_id))?;
+        let (is_new, update_job) =
+            queue_update_job(delay, conn, &repoconfig.name, Some(self.job_id))?;
         if is_new {
-            job_log_and_info(self.job_id, conn,
-                                    &format!("Queued repository update job {}{}",
-                                             update_job.id, match delay {
-                                                 0 => "".to_string(),
-                                                 _ => format!(" in {} secs", delay),
-                                             }));
+            job_log_and_info(
+                self.job_id,
+                conn,
+                &format!(
+                    "Queued repository update job {}{}",
+                    update_job.id,
+                    match delay {
+                        0 => "".to_string(),
+                        _ => format!(" in {} secs", delay),
+                    }
+                ),
+            );
         } else {
-            job_log_and_info(self.job_id, conn,
-                             &format!("Piggy-backed on existing update job {}", update_job.id));
+            job_log_and_info(
+                self.job_id,
+                conn,
+                &format!("Piggy-backed on existing update job {}", update_job.id),
+            );
         }
 
         Ok(json!({
@@ -632,18 +704,24 @@ impl PublishJobInstance {
 }
 
 impl JobInstance for PublishJobInstance {
-    fn get_job_id (&self) -> i32 {
+    fn get_job_id(&self) -> i32 {
         self.job_id
     }
 
-    fn order (&self) -> i32 {
+    fn order(&self) -> i32 {
         1 /* Delay publish after commits (and other normal ops). because the
-            commits may generate more publishes. */
+          commits may generate more publishes. */
     }
 
-    fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("#{}: Handling Job Publish: build: {}",
-              &self.job_id, &self.build_id);
+    fn handle_job(
+        &mut self,
+        executor: &JobExecutor,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
+        info!(
+            "#{}: Handling Job Publish: build: {}",
+            &self.job_id, &self.build_id
+        );
 
         let config = &executor.config;
 
@@ -654,12 +732,16 @@ impl JobInstance for PublishJobInstance {
             .or_else(|_e| Err(JobError::new("Can't load build")))?;
 
         // Get repo config
-        let repoconfig = config.get_repoconfig(&build_data.repo)
-            .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &build_data.repo))))?;
+        let repoconfig = config.get_repoconfig(&build_data.repo).or_else(|_e| {
+            Err(JobError::new(&format!(
+                "Can't find repo {}",
+                &build_data.repo
+            )))
+        })?;
 
         // Get the uploaded refs from db
         let build_refs = build_refs::table
-        .filter(build_refs::build_id.eq(self.build_id))
+            .filter(build_refs::build_id.eq(self.build_id))
             .get_results::<models::BuildRef>(conn)
             .or_else(|_e| Err(JobError::new("Can't load build refs")))?;
         if build_refs.len() == 0 {
@@ -680,17 +762,22 @@ impl JobInstance for PublishJobInstance {
             let current_build = builds::table
                 .filter(builds::id.eq(self.build_id))
                 .get_result::<models::Build>(conn)?;
-            let current_published_state = PublishedState::from_db(current_build.published_state, &current_build.published_state_reason);
+            let current_published_state = PublishedState::from_db(
+                current_build.published_state,
+                &current_build.published_state_reason,
+            );
             if !current_published_state.same_state_as(&PublishedState::Publishing) {
                 // Something weird was happening, we expected this build to be in the publishing state
                 error!("Unexpected publishing state {:?}", current_published_state);
-                return Err(DieselError::RollbackTransaction)
+                return Err(DieselError::RollbackTransaction);
             };
             let (val, reason) = PublishedState::to_db(&new_published_state);
             diesel::update(builds::table)
                 .filter(builds::id.eq(self.build_id))
-                .set((builds::published_state.eq(val),
-                      builds::published_state_reason.eq(reason)))
+                .set((
+                    builds::published_state.eq(val),
+                    builds::published_state_reason.eq(reason),
+                ))
                 .get_result::<models::Build>(conn)
         })?;
 
@@ -718,11 +805,14 @@ impl UpdateRepoJobInstance {
         }
     }
 
-    fn calculate_deltas(&self, repoconfig: &RepoConfig) -> (HashSet<ostree::Delta>, HashSet<ostree::Delta>) {
+    fn calculate_deltas(
+        &self,
+        repoconfig: &RepoConfig,
+    ) -> (HashSet<ostree::Delta>, HashSet<ostree::Delta>) {
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut wanted_deltas = HashSet::new();
-        let refs = ostree::list_refs (&repo_path, "");
+        let refs = ostree::list_refs(&repo_path, "");
 
         for ref_name in refs {
             let depth = repoconfig.get_delta_depth_for_ref(&ref_name);
@@ -734,7 +824,7 @@ impl UpdateRepoJobInstance {
                 }
             }
         }
-        let old_deltas = HashSet::from_iter(ostree::list_deltas (&repo_path).iter().cloned());
+        let old_deltas = HashSet::from_iter(ostree::list_deltas(&repo_path).iter().cloned());
 
         let missing_deltas = wanted_deltas.difference(&old_deltas).cloned().collect();
         let unwanted_deltas = old_deltas.difference(&wanted_deltas).cloned().collect();
@@ -742,10 +832,12 @@ impl UpdateRepoJobInstance {
         (missing_deltas, unwanted_deltas)
     }
 
-    fn generate_deltas(&self,
-                       deltas: &HashSet<ostree::Delta>,
-                       repoconfig: &RepoConfig,
-                       conn: &PgConnection) -> JobResult<()> {
+    fn generate_deltas(
+        &self,
+        deltas: &HashSet<ostree::Delta>,
+        repoconfig: &RepoConfig,
+        conn: &PgConnection,
+    ) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Generating deltas");
 
         let (tx, rx) = mpsc::channel();
@@ -753,7 +845,7 @@ impl UpdateRepoJobInstance {
         /* We can't use a regular .send() here, as that requres a current task which is
          * not available in a sync actor like this. Instead we use the non-blocking
          * do_send and implement returns using a mpsc::channel.
-        */
+         */
 
         for delta in deltas.iter() {
             self.delta_generator.do_send(DeltaRequestSync {
@@ -778,10 +870,12 @@ impl UpdateRepoJobInstance {
         Ok(())
     }
 
-    fn retire_deltas(&self,
-                     deltas: &HashSet<ostree::Delta>,
-                     repoconfig: &RepoConfig,
-                     conn: &PgConnection) -> JobResult<()> {
+    fn retire_deltas(
+        &self,
+        deltas: &HashSet<ostree::Delta>,
+        repoconfig: &RepoConfig,
+        conn: &PgConnection,
+    ) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Cleaning out old deltas");
         let repo_path = repoconfig.get_abs_repo_path();
         let deltas_dir = repo_path.join("deltas");
@@ -802,8 +896,14 @@ impl UpdateRepoJobInstance {
             let dst_parent = dst.parent().unwrap();
             fs::create_dir_all(&dst_parent)?;
 
-            job_log_and_info(self.job_id, conn,
-                                    &format!(" Queuing delta {:?} for deletion", src.strip_prefix(&deltas_dir).unwrap()));
+            job_log_and_info(
+                self.job_id,
+                conn,
+                &format!(
+                    " Queuing delta {:?} for deletion",
+                    src.strip_prefix(&deltas_dir).unwrap()
+                ),
+            );
 
             if dst.exists() {
                 fs::remove_dir_all(&dst)?;
@@ -815,8 +915,7 @@ impl UpdateRepoJobInstance {
         }
 
         /* Delete all temporary deltas older than one hour */
-        let to_delete =
-            WalkDir::new(&tmp_deltas_dir)
+        let to_delete = WalkDir::new(&tmp_deltas_dir)
             .min_depth(2)
             .max_depth(2)
             .into_iter()
@@ -825,7 +924,7 @@ impl UpdateRepoJobInstance {
                 if let Ok(metadata) = e.metadata() {
                     if let Ok(mtime) = metadata.modified() {
                         if let Ok(since) = now.duration_since(mtime) {
-                            return since.as_secs() > 60 * 60
+                            return since.as_secs() > 60 * 60;
                         }
                     }
                 };
@@ -835,79 +934,76 @@ impl UpdateRepoJobInstance {
             .collect::<Vec<PathBuf>>();
 
         for dir in to_delete {
-            job_log_and_info(self.job_id, conn,
-                             &format!(" Deleting old delta {:?}", dir.strip_prefix(&tmp_deltas_dir).unwrap()));
+            job_log_and_info(
+                self.job_id,
+                conn,
+                &format!(
+                    " Deleting old delta {:?}",
+                    dir.strip_prefix(&tmp_deltas_dir).unwrap()
+                ),
+            );
             fs::remove_dir_all(&dir)?;
         }
 
         Ok(())
     }
 
-    fn update_appstream (&self,
-                         config: &Config,
-                         repoconfig: &RepoConfig,
-                         conn: &PgConnection) -> JobResult<()> {
+    fn update_appstream(
+        &self,
+        config: &Config,
+        repoconfig: &RepoConfig,
+        conn: &PgConnection,
+    ) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Regenerating appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut cmd = Command::new("flatpak");
-        cmd
-            .arg("build-update-repo")
-            .arg("--no-update-summary");
+        cmd.arg("build-update-repo").arg("--no-update-summary");
         add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
-        cmd
-            .arg(&repo_path);
+        cmd.arg(&repo_path);
 
         do_command(cmd)?;
         Ok(())
     }
 
-    fn update_summary (&self,
-                       config: &Config,
-                       repoconfig: &RepoConfig,
-                       conn: &PgConnection) -> JobResult<()> {
+    fn update_summary(
+        &self,
+        config: &Config,
+        repoconfig: &RepoConfig,
+        conn: &PgConnection,
+    ) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Updating summary");
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut cmd = Command::new("flatpak");
-        cmd
-            .arg("build-update-repo")
-            .arg("--no-update-appstream");
+        cmd.arg("build-update-repo").arg("--no-update-appstream");
         add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
-        cmd
-            .arg(&repo_path);
+        cmd.arg(&repo_path);
 
         do_command(cmd)?;
         Ok(())
     }
 
-    fn run_post_publish (&self,
-                         repoconfig: &RepoConfig,
-                         conn: &PgConnection) -> JobResult<()> {
+    fn run_post_publish(&self, repoconfig: &RepoConfig, conn: &PgConnection) -> JobResult<()> {
         if let Some(post_publish_script) = &repoconfig.post_publish_script {
             let repo_path = repoconfig.get_abs_repo_path();
             let mut cmd = Command::new(post_publish_script);
-            cmd
-                .arg(&repoconfig.name)
-                .arg(&repo_path);
+            cmd.arg(&repoconfig.name).arg(&repo_path);
             job_log_and_info(self.job_id, conn, "Running post-publish script");
             do_command(cmd)?;
         };
         Ok(())
     }
 
-    fn extract_appstream (&self,
-                          repoconfig: &RepoConfig,
-                          conn: &PgConnection) -> JobResult<()> {
+    fn extract_appstream(&self, repoconfig: &RepoConfig, conn: &PgConnection) -> JobResult<()> {
         job_log_and_info(self.job_id, conn, "Extracting appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
         let appstream_dir = repo_path.join("appstream");
-        let appstream_refs = ostree::list_refs (&repoconfig.path, "appstream");
+        let appstream_refs = ostree::list_refs(&repoconfig.path, "appstream");
         for appstream_ref in appstream_refs {
             let arch = appstream_ref.split("/").nth(1).unwrap();
             let mut cmd = Command::new("ostree");
-            cmd
-                .arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
+            cmd.arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
                 .arg("checkout")
                 .arg("--user-mode")
                 .arg("--union")
@@ -915,28 +1011,34 @@ impl UpdateRepoJobInstance {
                 .arg(&appstream_ref)
                 .arg(appstream_dir.join(arch));
             do_command(cmd)?;
-        };
+        }
         Ok(())
     }
 }
 
-
 impl JobInstance for UpdateRepoJobInstance {
-    fn get_job_id (&self) -> i32 {
+    fn get_job_id(&self) -> i32 {
         self.job_id
     }
 
-    fn order (&self) -> i32 {
+    fn order(&self) -> i32 {
         2 /* Delay updates after publish so they can be chunked. */
     }
 
-    fn handle_job (&mut self, executor: &JobExecutor, conn: &PgConnection) -> JobResult<serde_json::Value> {
-        info!("#{}: Handling Job UpdateRepo: repo: {}",
-              &self.job_id, &self.repo);
+    fn handle_job(
+        &mut self,
+        executor: &JobExecutor,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
+        info!(
+            "#{}: Handling Job UpdateRepo: repo: {}",
+            &self.job_id, &self.repo
+        );
 
         // Get repo config
         let config = &executor.config;
-        let repoconfig = config.get_repoconfig(&self.repo)
+        let repoconfig = config
+            .get_repoconfig(&self.repo)
             .or_else(|_e| Err(JobError::new(&format!("Can't find repo {}", &self.repo))))?;
 
         self.update_appstream(config, repoconfig, conn)?;
@@ -951,11 +1053,14 @@ impl JobInstance for UpdateRepoJobInstance {
 
         self.run_post_publish(repoconfig, conn)?;
 
-        Ok(json!({ }))
+        Ok(json!({}))
     }
 }
 
-fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box<dyn JobInstance>, DieselError> {
+fn pick_next_job(
+    executor: &mut JobExecutor,
+    conn: &PgConnection,
+) -> Result<Box<dyn JobInstance>, DieselError> {
     use diesel::dsl::exists;
     use diesel::dsl::not;
     use diesel::dsl::now;
@@ -963,41 +1068,38 @@ fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box
     /* Find next job (if any) and mark it started */
 
     let for_repo = executor.repo.clone();
-    let transaction_result =
-        conn
+    let transaction_result = conn
         .build_transaction()
         .serializable()
         .deferrable()
         .run(|| {
-            let ready_job_filter = jobs::status.eq(JobStatus::New as i16)
+            let ready_job_filter = jobs::status
+                .eq(JobStatus::New as i16)
                 .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
-                .and(
-                    not(exists(
-                        job_dependencies_with_status::table.filter(
-                            job_dependencies_with_status::job_id.eq(jobs::id)
-                                .and(job_dependencies_with_status::dependant_status.le(JobStatus::Started as i16))
-                        )
-                    )));
+                .and(not(exists(
+                    job_dependencies_with_status::table.filter(
+                        job_dependencies_with_status::job_id.eq(jobs::id).and(
+                            job_dependencies_with_status::dependant_status
+                                .le(JobStatus::Started as i16),
+                        ),
+                    ),
+                )));
 
-            let mut new_instances : Vec<Box<dyn JobInstance>> = match for_repo {
-                None => {
-                    jobs::table
-                        .order(jobs::id)
-                        .filter(ready_job_filter.and(jobs::repo.is_null()))
-                        .get_results::<models::Job>(conn)?
-                        .into_iter()
-                        .map(|job| new_job_instance(executor, job))
-                        .collect()
-                },
-                Some(repo) => {
-                    jobs::table
-                        .order(jobs::id)
-                        .filter(ready_job_filter.and(jobs::repo.eq(repo)))
-                        .get_results::<models::Job>(conn)?
-                        .into_iter()
-                        .map(|job| new_job_instance(executor, job))
-                        .collect()
-                },
+            let mut new_instances: Vec<Box<dyn JobInstance>> = match for_repo {
+                None => jobs::table
+                    .order(jobs::id)
+                    .filter(ready_job_filter.and(jobs::repo.is_null()))
+                    .get_results::<models::Job>(conn)?
+                    .into_iter()
+                    .map(|job| new_job_instance(executor, job))
+                    .collect(),
+                Some(repo) => jobs::table
+                    .order(jobs::id)
+                    .filter(ready_job_filter.and(jobs::repo.eq(repo)))
+                    .get_results::<models::Job>(conn)?
+                    .into_iter()
+                    .map(|job| new_job_instance(executor, job))
+                    .collect(),
             };
 
             /* Sort by prio */
@@ -1009,7 +1111,7 @@ fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box
                     .filter(jobs::id.eq(new_instance.get_job_id()))
                     .set((jobs::status.eq(JobStatus::Started as i16),))
                     .execute(conn)?;
-                return Ok(new_instance)
+                return Ok(new_instance);
             }
 
             Err(diesel::NotFound)
@@ -1017,48 +1119,53 @@ fn pick_next_job (executor: &mut JobExecutor, conn: &PgConnection) -> Result<Box
 
     /* Retry on serialization failure */
     match transaction_result {
-        Err(DieselError::DatabaseError(SerializationFailure, _)) => pick_next_job (executor, conn),
-        _ => transaction_result
+        Err(DieselError::DatabaseError(SerializationFailure, _)) => pick_next_job(executor, conn),
+        _ => transaction_result,
     }
 }
 
-
-fn process_one_job (executor: &mut JobExecutor, conn: &PgConnection) -> bool {
+fn process_one_job(executor: &mut JobExecutor, conn: &PgConnection) -> bool {
     let new_instance = pick_next_job(executor, conn);
 
     match new_instance {
         Ok(mut instance) => {
-            let (new_status, new_results) =
-                match instance.handle_job(executor, conn) {
-                    Ok(json) =>  {
-                        info!("#{}: Job succeeded", instance.get_job_id());
-                        (JobStatus::Ended, json.to_string())
-                    },
-                    Err(e) => {
-                        job_log_and_error(instance.get_job_id(), conn,
-                                          &format!("Job failed: {}", e.to_string()));
-                        (JobStatus::Broken, json!({"error-message": e.to_string()}).to_string())
-                    }
-                };
+            let (new_status, new_results) = match instance.handle_job(executor, conn) {
+                Ok(json) => {
+                    info!("#{}: Job succeeded", instance.get_job_id());
+                    (JobStatus::Ended, json.to_string())
+                }
+                Err(e) => {
+                    job_log_and_error(
+                        instance.get_job_id(),
+                        conn,
+                        &format!("Job failed: {}", e.to_string()),
+                    );
+                    (
+                        JobStatus::Broken,
+                        json!({"error-message": e.to_string()}).to_string(),
+                    )
+                }
+            };
 
-            let update_res =
-                diesel::update(jobs::table)
+            let update_res = diesel::update(jobs::table)
                 .filter(jobs::id.eq(instance.get_job_id()))
-                .set((jobs::status.eq(new_status as i16),
-                      jobs::results.eq(new_results)))
+                .set((
+                    jobs::status.eq(new_status as i16),
+                    jobs::results.eq(new_results),
+                ))
                 .execute(conn);
             if let Err(e) = update_res {
                 error!("handle_job: Error updating job {}", e);
             }
             true /* We handled a job */
-        },
+        }
         Err(diesel::NotFound) => {
             false /* We didn't handle a job */
-        },
+        }
         Err(e) => {
             error!("Unexpected db error processing job: {}", e);
             false
-        },
+        }
     }
 }
 
@@ -1088,10 +1195,9 @@ impl Handler<ProcessOneJob> for JobExecutor {
 
     fn handle(&mut self, _msg: ProcessOneJob, _ctx: &mut Self::Context) -> Self::Result {
         let conn = &self.pool.get().map_err(|_e| ())?;
-        Ok(process_one_job (self, conn))
+        Ok(process_one_job(self, conn))
     }
 }
-
 
 // We have an async JobQueue object that wraps the sync JobExecutor, because
 // that way we can respond to incomming requests immediately and decide in
@@ -1105,7 +1211,7 @@ struct ExecutorInfo {
 }
 
 pub struct JobQueue {
-    executors: HashMap<Option<String>,RefCell<ExecutorInfo>>,
+    executors: HashMap<Option<String>, RefCell<ExecutorInfo>>,
     running: bool,
 }
 
@@ -1114,13 +1220,13 @@ impl JobQueue {
         let mut info = match self.executors.get(repo) {
             None => {
                 error!("Got process jobs for non existing executor");
-                return
-            },
+                return;
+            }
             Some(executor_info) => executor_info.borrow_mut(),
         };
 
         if !self.running {
-            return
+            return;
         }
         if info.processing_job {
             info.job_queued = true;
@@ -1129,45 +1235,41 @@ impl JobQueue {
             info.job_queued = false;
 
             let repo = repo.clone();
-            ctx.spawn(
-                info.addr
-                    .send (ProcessOneJob())
-                    .into_actor(self)
-                    .then(|result, queue, ctx| {
-                        let job_queued = {
-                            let mut info = queue.executors.get(&repo).unwrap().borrow_mut();
-                            info.processing_job = false;
-                            info.job_queued
+            ctx.spawn(info.addr.send(ProcessOneJob()).into_actor(self).then(
+                |result, queue, ctx| {
+                    let job_queued = {
+                        let mut info = queue.executors.get(&repo).unwrap().borrow_mut();
+                        info.processing_job = false;
+                        info.job_queued
+                    };
+
+                    if queue.running {
+                        let processed_job = match result {
+                            Ok(Ok(true)) => true,
+                            Ok(Ok(false)) => false,
+                            res => {
+                                error!("Unexpected ProcessOneJob result {:?}", res);
+                                false
+                            }
                         };
 
-                        if queue.running {
-                            let processed_job = match result {
-                                Ok(Ok(true)) => true,
-                                Ok(Ok(false)) => false,
-                                res => {
-                                    error!("Unexpected ProcessOneJob result {:?}", res);
-                                    false
-                                },
-                            };
+                        // If we ran a job, or a job was queued, kick again
+                        if job_queued || processed_job {
+                            queue.kick(&repo, ctx);
+                        } else {
+                            // We send a ProcessJobs message each time we added something to the
+                            // db, but case something external modifes the db we have a 10 sec
+                            // polling loop here.  Ideally this should be using NOTIFY/LISTEN
+                            // postgre, but diesel/pq-sys does not currently support it.
 
-                            // If we ran a job, or a job was queued, kick again
-                            if job_queued || processed_job {
+                            ctx.run_later(time::Duration::new(10, 0), move |queue, ctx| {
                                 queue.kick(&repo, ctx);
-                            } else  {
-                                // We send a ProcessJobs message each time we added something to the
-                                // db, but case something external modifes the db we have a 10 sec
-                                // polling loop here.  Ideally this should be using NOTIFY/LISTEN
-                                // postgre, but diesel/pq-sys does not currently support it.
-
-                                ctx.run_later(time::Duration::new(10, 0), move |queue, ctx| {
-                                    queue.kick(&repo, ctx);
-                                });
-                            }
-
+                            });
                         }
-                        actix::fut::ok(())
-                    })
-            );
+                    }
+                    actix::fut::ok(())
+                },
+            ));
         }
     }
 }
@@ -1211,27 +1313,31 @@ impl Handler<StopJobQueue> for JobQueue {
     fn handle(&mut self, _msg: StopJobQueue, _ctx: &mut Self::Context) -> Self::Result {
         self.running = false;
 
-        let executors : Vec<Addr<JobExecutor>> = self.executors.values().map(|info| info.borrow().addr.clone()).collect();
+        let executors: Vec<Addr<JobExecutor>> = self
+            .executors
+            .values()
+            .map(|info| info.borrow().addr.clone())
+            .collect();
         ActorResponse::async(
-            futures::stream::iter_ok(executors).into_actor(self)
+            futures::stream::iter_ok(executors)
+                .into_actor(self)
                 .map(|executor: Addr<JobExecutor>, job_queue, _ctx| {
                     executor
-                        .send (StopJobs())
+                        .send(StopJobs())
                         .into_actor(job_queue)
-                        .then(|_result, _job_queue, _ctx| {
-                            actix::fut::ok::<_,(),_>(())
-                        })
+                        .then(|_result, _job_queue, _ctx| actix::fut::ok::<_, (), _>(()))
                 })
-                .finish()
+                .finish(),
         )
     }
 }
 
-fn start_executor(repo: &Option<String>,
-                  config: &Arc<Config>,
-                  delta_generator: &Addr<DeltaGenerator>,
-                  pool: &Pool) -> RefCell<ExecutorInfo>
-{
+fn start_executor(
+    repo: &Option<String>,
+    config: &Arc<Config>,
+    delta_generator: &Addr<DeltaGenerator>,
+    pool: &Pool,
+) -> RefCell<ExecutorInfo> {
     let config_copy = config.clone();
     let delta_generator_copy = delta_generator.clone();
     let pool_copy = pool.clone();
@@ -1241,29 +1347,35 @@ fn start_executor(repo: &Option<String>,
             repo: repo_clone.clone(),
             config: config_copy.clone(),
             delta_generator: delta_generator_copy.clone(),
-            pool: pool_copy.clone()
+            pool: pool_copy.clone(),
         }),
         processing_job: false,
         job_queued: false,
     })
 }
 
-
-pub fn start_job_executor(config: Arc<Config>,
-                          delta_generator: Addr<DeltaGenerator>,
-                          pool: Pool) -> Addr<JobQueue> {
+pub fn start_job_executor(
+    config: Arc<Config>,
+    delta_generator: Addr<DeltaGenerator>,
+    pool: Pool,
+) -> Addr<JobQueue> {
     let mut executors = HashMap::new();
-    executors.insert(None,
-                     start_executor(&None, &config, &delta_generator, &pool));
+    executors.insert(
+        None,
+        start_executor(&None, &config, &delta_generator, &pool),
+    );
 
     for repo in config.repos.keys().cloned() {
-        executors.insert(Some(repo.clone()),
-                         start_executor(&Some(repo.clone()), &config, &delta_generator, &pool));
+        executors.insert(
+            Some(repo.clone()),
+            start_executor(&Some(repo.clone()), &config, &delta_generator, &pool),
+        );
     }
     JobQueue {
         executors: executors,
         running: true,
-    }.start()
+    }
+    .start()
 }
 
 pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
@@ -1272,37 +1384,46 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
         use schema::builds::dsl::*;
         let (verifying, _) = RepoState::Verifying.to_db();
         let (purging, _) = RepoState::Purging.to_db();
-        let (failed, failed_reason) = RepoState::Failed("Server was restarted during job".to_string()).to_db();
-        let n_updated =
-            diesel::update(builds)
+        let (failed, failed_reason) =
+            RepoState::Failed("Server was restarted during job".to_string()).to_db();
+        let n_updated = diesel::update(builds)
             .filter(repo_state.eq(verifying).or(repo_state.eq(purging)))
-            .set((repo_state.eq(failed),
-                  repo_state_reason.eq(failed_reason)))
+            .set((repo_state.eq(failed), repo_state_reason.eq(failed_reason)))
             .execute(conn)?;
         if n_updated != 0 {
-            error!("Marked {} builds as failed due to in progress jobs on startup", n_updated);
+            error!(
+                "Marked {} builds as failed due to in progress jobs on startup",
+                n_updated
+            );
         }
         let (publishing, _) = PublishedState::Publishing.to_db();
-        let (failed_publish, failed_publish_reason) = PublishedState::Failed("Server was restarted during publish".to_string()).to_db();
-        let n_updated2 =
-            diesel::update(builds)
+        let (failed_publish, failed_publish_reason) =
+            PublishedState::Failed("Server was restarted during publish".to_string()).to_db();
+        let n_updated2 = diesel::update(builds)
             .filter(published_state.eq(publishing))
-            .set((published_state.eq(failed_publish),
-                  published_state_reason.eq(failed_publish_reason)))
+            .set((
+                published_state.eq(failed_publish),
+                published_state_reason.eq(failed_publish_reason),
+            ))
             .execute(conn)?;
         if n_updated2 != 0 {
-            error!("Marked {} builds as failed to publish due to in progress jobs on startup", n_updated2);
+            error!(
+                "Marked {} builds as failed to publish due to in progress jobs on startup",
+                n_updated2
+            );
         }
     };
     {
         use schema::jobs::dsl::*;
-        let updated =
-            diesel::update(jobs)
+        let updated = diesel::update(jobs)
             .filter(status.eq(JobStatus::Started as i16))
             .set((status.eq(JobStatus::Broken as i16),))
             .get_results::<Job>(conn)?;
         if !updated.is_empty() {
-            error!("Marked {} jobs as broken due to being started already at startup", updated.len());
+            error!(
+                "Marked {} jobs as broken due to being started already at startup",
+                updated.len()
+            );
             /* For any repo that had an update-repo marked broken, queue a new job */
             for job in updated.iter() {
                 let mut queue_update_for_repos = HashSet::new();
@@ -1313,7 +1434,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
                 }
                 for reponame in queue_update_for_repos {
                     info!("Queueing new update job for repo {:?}", reponame);
-                    let _update_job = queue_update_job (0, conn, &reponame, None);
+                    let _update_job = queue_update_job(0, conn, &reponame, None);
                 }
             }
         }

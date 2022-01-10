@@ -1,20 +1,20 @@
 use base64;
-use byteorder::{NativeEndian,LittleEndian, ByteOrder};
+use byteorder::{ByteOrder, LittleEndian, NativeEndian};
+use futures::future;
+use futures::future::Either;
+use futures::Future;
+use hex;
+use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::num::NonZeroUsize;
-use std::path;
-use std::str;
-use walkdir::WalkDir;
-use hex;
-use std::process::Command;
-use tokio_process::CommandExt;
 use std::os::unix::process::CommandExt as UnixCommandExt;
-use futures::Future;
-use futures::future::Either;
-use std::path::{PathBuf};
-use std::collections::HashMap;
-use futures::future;
+use std::path;
+use std::path::PathBuf;
+use std::process::Command;
+use std::str;
+use tokio_process::CommandExt;
+use walkdir::WalkDir;
 
 #[derive(Fail, Debug, Clone, PartialEq)]
 pub enum OstreeError {
@@ -27,9 +27,9 @@ pub enum OstreeError {
     #[fail(display = "Invalid utf8 string")]
     InvalidUtf8,
     #[fail(display = "Command {} failed to start: {}", _0, _1)]
-    ExecFailed(String,String),
+    ExecFailed(String, String),
     #[fail(display = "Command {} exited unsucessfully with stderr: {}", _0, _1)]
-    CommandFailed(String,String),
+    CommandFailed(String, String),
     #[fail(display = "Internal Error: {}", _0)]
     InternalError(String),
 }
@@ -38,7 +38,7 @@ pub type OstreeResult<T> = Result<T, OstreeError>;
 
 #[derive(Debug)]
 pub struct OstreeCommit {
-    pub metadata: HashMap<String,Variant>,
+    pub metadata: HashMap<String, Variant>,
     pub parent: Option<String>,
     pub subject: String,
     pub body: String,
@@ -49,24 +49,23 @@ pub struct OstreeCommit {
 
 #[derive(Debug)]
 pub struct OstreeDeltaSuperblock {
-    pub metadata: HashMap<String,Variant>,
+    pub metadata: HashMap<String, Variant>,
     pub commit: OstreeCommit,
 }
 
 fn is_base_type(byte: u8) -> bool {
     let c = byte as char;
-    return
-        c == 'b' ||
-        c == 'y' ||
-        c == 'n' ||
-        c == 'q' ||
-        c == 'i' ||
-        c == 'u' ||
-        c == 'x' ||
-        c == 't' ||
-        c == 's' ||
-        c == 'o' ||
-        c == 'g';
+    return c == 'b'
+        || c == 'y'
+        || c == 'n'
+        || c == 'q'
+        || c == 'i'
+        || c == 'u'
+        || c == 'x'
+        || c == 't'
+        || c == 's'
+        || c == 'o'
+        || c == 'g';
 }
 
 fn type_string_element_len(type_string: &str) -> Option<usize> {
@@ -76,7 +75,7 @@ fn type_string_element_len(type_string: &str) -> Option<usize> {
     let bytes = type_string.as_bytes();
     let c = bytes[0];
     if is_base_type(c) || c == 'v' as u8 {
-        return Some(1)
+        return Some(1);
     }
     match c as char {
         'm' | 'a' => {
@@ -85,7 +84,7 @@ fn type_string_element_len(type_string: &str) -> Option<usize> {
             } else {
                 return None;
             }
-        },
+        }
         '{' => {
             if type_string.len() < 3 || !is_base_type(bytes[1]) {
                 return None;
@@ -99,9 +98,9 @@ fn type_string_element_len(type_string: &str) -> Option<usize> {
             } else {
                 return None;
             }
-        },
+        }
         '(' => {
-            let mut pos : usize = 1;
+            let mut pos: usize = 1;
             loop {
                 if type_string.len() <= pos {
                     return None;
@@ -112,7 +111,7 @@ fn type_string_element_len(type_string: &str) -> Option<usize> {
                 if let Some(len) = type_string_element_len(&type_string[pos..]) {
                     pos += len;
                 } else {
-                    return None
+                    return None;
                 }
             }
         }
@@ -123,7 +122,7 @@ fn type_string_element_len(type_string: &str) -> Option<usize> {
 }
 
 fn type_string_split<'a>(type_string: &'a str) -> Option<(&'a str, &'a str)> {
-    if let Some(len) = type_string_element_len (type_string) {
+    if let Some(len) = type_string_element_len(type_string) {
         return Some((&type_string[0..len], &type_string[len..]));
     }
     return None;
@@ -132,7 +131,7 @@ fn type_string_split<'a>(type_string: &'a str) -> Option<(&'a str, &'a str)> {
 #[derive(Debug)]
 enum VariantSize {
     Fixed(NonZeroUsize),
-    Variable
+    Variable,
 }
 
 #[derive(Debug)]
@@ -157,11 +156,17 @@ impl Variant {
     fn new(type_string: String, data: Vec<u8>) -> OstreeResult<Variant> {
         match type_string_element_len(&type_string) {
             None => {
-                return Err(OstreeError::InternalError(format!("Invalid type string '{}'", type_string)));
-            },
+                return Err(OstreeError::InternalError(format!(
+                    "Invalid type string '{}'",
+                    type_string
+                )));
+            }
             Some(len) => {
                 if len != type_string.len() {
-                    return Err(OstreeError::InternalError(format!("Leftover text in type string '{}'", type_string)));
+                    return Err(OstreeError::InternalError(format!(
+                        "Leftover text in type string '{}'",
+                        type_string
+                    )));
                 }
             }
         };
@@ -199,7 +204,7 @@ impl Variant {
         return self.root().parse_as_i32_le();
     }
 
-    pub fn as_bytes<'a>(&'a self) ->  &'a [u8] {
+    pub fn as_bytes<'a>(&'a self) -> &'a [u8] {
         return self.root().parse_as_bytes();
     }
 }
@@ -209,7 +214,7 @@ impl<'a> SubVariant<'a> {
         return Variant {
             type_string: self.type_string.to_string(),
             data: self.data.to_vec(),
-        }
+        };
     }
 
     fn framing_size(&self) -> usize {
@@ -228,7 +233,10 @@ impl<'a> SubVariant<'a> {
     }
     fn read_frame_offset(&self, offset: usize, framing_size: usize) -> OstreeResult<usize> {
         if offset + framing_size > self.data.len() {
-            return Err(OstreeError::InternalError(format!("Framing error: can't read frame offset at {}", offset)));
+            return Err(OstreeError::InternalError(format!(
+                "Framing error: can't read frame offset at {}",
+                offset
+            )));
         }
         let data = &self.data[offset..offset + framing_size];
         let offset = match framing_size {
@@ -239,16 +247,26 @@ impl<'a> SubVariant<'a> {
             8 => {
                 let len64 = LittleEndian::read_u64(data);
                 if len64 > ::std::usize::MAX as u64 {
-                    return Err(OstreeError::InternalError("Framing error: To large framing size fror usize".to_string()));
+                    return Err(OstreeError::InternalError(
+                        "Framing error: To large framing size fror usize".to_string(),
+                    ));
                 }
                 len64 as usize
-            },
-            _ => return Err(OstreeError::InternalError(format!("Framing error: Unexpected framing size {}", framing_size))),
+            }
+            _ => {
+                return Err(OstreeError::InternalError(format!(
+                    "Framing error: Unexpected framing size {}",
+                    framing_size
+                )))
+            }
         };
         if offset > self.data.len() {
-            return Err(OstreeError::InternalError(format!("Framing error: out of bounds offset at {}", offset)));
+            return Err(OstreeError::InternalError(format!(
+                "Framing error: out of bounds offset at {}",
+                offset
+            )));
         };
-        return Ok(offset)
+        return Ok(offset);
     }
 
     fn pad(&self, cur: usize, alignment: usize) -> usize {
@@ -260,11 +278,19 @@ impl<'a> SubVariant<'a> {
         }
     }
 
-    fn subset(&self, start: usize, end: usize, type_string: &'a str) -> OstreeResult<SubVariant<'a>> {
+    fn subset(
+        &self,
+        start: usize,
+        end: usize,
+        type_string: &'a str,
+    ) -> OstreeResult<SubVariant<'a>> {
         if end < start || end > self.data.len() {
-            return Err(OstreeError::InternalError(format!("Framing error: subset {}-{} out of bounds for {:?}", start, end, self)));
+            return Err(OstreeError::InternalError(format!(
+                "Framing error: subset {}-{} out of bounds for {:?}",
+                start, end, self
+            )));
         }
-        Ok( SubVariant {
+        Ok(SubVariant {
             type_string: type_string,
             data: &self.data[start..end],
         })
@@ -272,7 +298,9 @@ impl<'a> SubVariant<'a> {
 
     fn checked_sub(&self, a: usize, b: usize) -> OstreeResult<usize> {
         if b > a {
-            return Err(OstreeError::InternalError("Framing error: negative checked_sub".to_string()));
+            return Err(OstreeError::InternalError(
+                "Framing error: negative checked_sub".to_string(),
+            ));
         } else {
             Ok(a - b)
         }
@@ -283,7 +311,10 @@ impl<'a> SubVariant<'a> {
 
         let t = self.type_string.as_bytes()[0] as char;
         if t != '(' && t != '{' {
-            return Err(OstreeError::InternalError(format!("Not a dictionary: {}", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Not a dictionary: {}",
+                self.type_string
+            )));
         }
 
         let mut type_string_rest = &self.type_string[1..];
@@ -291,35 +322,36 @@ impl<'a> SubVariant<'a> {
         let framing_size = self.framing_size();
         let mut frame_offset = self.data.len();
 
-        let mut next : usize = 0;
+        let mut next: usize = 0;
         for i in 0..fields.len() {
             let field = &fields[i];
 
-            let field_type = if let Some((t, r)) = type_string_split (type_string_rest) {
+            let field_type = if let Some((t, r)) = type_string_split(type_string_rest) {
                 type_string_rest = r;
                 t
             } else {
-                return Err(OstreeError::InternalError(format!("Invalid type: {}", type_string_rest)));
+                return Err(OstreeError::InternalError(format!(
+                    "Invalid type: {}",
+                    type_string_rest
+                )));
             };
 
             next = self.pad(next, field.alignment);
 
-            let field_size =
-                match field.size {
-                    VariantSize::Fixed(size) => usize::from(size),
-                    VariantSize::Variable => {
-                        let end =
-                            if i == fields.len() - 1 {
-                                frame_offset
-                            } else {
-                                frame_offset = self.checked_sub(frame_offset, framing_size)?;
-                                self.read_frame_offset(frame_offset, framing_size)?
-                            };
-                        self.checked_sub(end, next)?
-                    },
-                };
+            let field_size = match field.size {
+                VariantSize::Fixed(size) => usize::from(size),
+                VariantSize::Variable => {
+                    let end = if i == fields.len() - 1 {
+                        frame_offset
+                    } else {
+                        frame_offset = self.checked_sub(frame_offset, framing_size)?;
+                        self.read_frame_offset(frame_offset, framing_size)?
+                    };
+                    self.checked_sub(end, next)?
+                }
+            };
 
-            let sub = self.subset(next, next+field_size, field_type)?;
+            let sub = self.subset(next, next + field_size, field_type)?;
             result.push(sub);
             next += field_size;
         }
@@ -327,10 +359,16 @@ impl<'a> SubVariant<'a> {
         Ok(result)
     }
 
-    fn parse_as_variable_width_array(&self, element_alignment: usize) -> OstreeResult<Vec<SubVariant<'a>>> {
+    fn parse_as_variable_width_array(
+        &self,
+        element_alignment: usize,
+    ) -> OstreeResult<Vec<SubVariant<'a>>> {
         let t = self.type_string.as_bytes()[0] as char;
         if t != 'a' {
-            return Err(OstreeError::InternalError(format!("Not an array: {}", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Not an array: {}",
+                self.type_string
+            )));
         }
 
         let size = self.data.len();
@@ -346,7 +384,7 @@ impl<'a> SubVariant<'a> {
 
         let mut result = Vec::with_capacity(length);
 
-        let mut last_end : usize = 0;
+        let mut last_end: usize = 0;
         for i in 0..length {
             let start = self.pad(last_end, element_alignment);
             let end = self.read_frame_offset(frame_offsets + i * framing_size, framing_size)?;
@@ -359,18 +397,23 @@ impl<'a> SubVariant<'a> {
         Ok(result)
     }
 
-    fn parse_as_variant(&self) ->  OstreeResult<SubVariant<'a>> {
+    fn parse_as_variant(&self) -> OstreeResult<SubVariant<'a>> {
         if self.type_string != "v" {
-            return Err(OstreeError::InternalError(format!("Variant type '{}' not a variant", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Variant type '{}' not a variant",
+                self.type_string
+            )));
         }
 
         if self.data.len() == 0 {
-            return Ok (self.subset(0,0, "()")?);
+            return Ok(self.subset(0, 0, "()")?);
         }
 
-        let parts : Vec<&'a [u8]> = self.data.rsplitn(2, |&x| x == 0).collect();
+        let parts: Vec<&'a [u8]> = self.data.rsplitn(2, |&x| x == 0).collect();
         if parts.len() != 2 {
-            return Err(OstreeError::InternalError(format!("No type string in variant")));
+            return Err(OstreeError::InternalError(format!(
+                "No type string in variant"
+            )));
         }
 
         if let Ok(type_string) = str::from_utf8(parts[0]) {
@@ -380,12 +423,18 @@ impl<'a> SubVariant<'a> {
         }
     }
 
-    fn parse_as_asv_element(&self) ->  OstreeResult<(String, SubVariant<'a>)> {
+    fn parse_as_asv_element(&self) -> OstreeResult<(String, SubVariant<'a>)> {
         let fields = vec![
             // 0 - s - key
-            VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+            VariantFieldInfo {
+                size: VariantSize::Variable,
+                alignment: 0,
+            },
             // 1 - v - value
-            VariantFieldInfo { size: VariantSize::Variable, alignment: 8 }
+            VariantFieldInfo {
+                size: VariantSize::Variable,
+                alignment: 8,
+            },
         ];
         let kv = self.parse_as_tuple(&fields)?;
         let key = kv[0].parse_as_string()?;
@@ -393,7 +442,7 @@ impl<'a> SubVariant<'a> {
         return Ok((key, val));
     }
 
-    fn parse_as_asv(&self) ->  OstreeResult<HashMap<String,Variant>> {
+    fn parse_as_asv(&self) -> OstreeResult<HashMap<String, Variant>> {
         let mut res = HashMap::new();
 
         for elt in self.parse_as_variable_width_array(8)? {
@@ -406,7 +455,10 @@ impl<'a> SubVariant<'a> {
 
     fn parse_as_string(&self) -> OstreeResult<String> {
         if self.type_string != "s" {
-            return Err(OstreeError::InternalError(format!("Variant type '{}' not a string", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Variant type '{}' not a string",
+                self.type_string
+            )));
         }
         let without_nul = &self.data[0..self.data.len() - 1];
         if let Ok(str) = str::from_utf8(without_nul) {
@@ -418,9 +470,12 @@ impl<'a> SubVariant<'a> {
 
     fn parse_as_string_vec(&self) -> OstreeResult<Vec<String>> {
         if self.type_string != "as" {
-            return Err(OstreeError::InternalError(format!("Variant type '{}' not an array of strings", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Variant type '{}' not an array of strings",
+                self.type_string
+            )));
         }
-        let array =  self.parse_as_variable_width_array(0)?;
+        let array = self.parse_as_variable_width_array(0)?;
         return array.iter().map(|v| v.parse_as_string()).collect();
     }
 
@@ -430,24 +485,36 @@ impl<'a> SubVariant<'a> {
 
     fn parse_as_u64(&self) -> OstreeResult<u64> {
         if self.type_string != "t" {
-            return Err(OstreeError::InternalError(format!("Variant type '{}' not a u64", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Variant type '{}' not a u64",
+                self.type_string
+            )));
         }
         if self.data.len() != 8 {
-            return Err(OstreeError::InternalError(format!("Wrong length {} for u64", self.data.len())));
+            return Err(OstreeError::InternalError(format!(
+                "Wrong length {} for u64",
+                self.data.len()
+            )));
         }
         Ok(NativeEndian::read_u64(self.data))
     }
 
     fn parse_as_i32(&self) -> OstreeResult<i32> {
         if self.type_string != "i" {
-            return Err(OstreeError::InternalError(format!("Variant type '{}' not a i32", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Variant type '{}' not a i32",
+                self.type_string
+            )));
         }
         Ok(NativeEndian::read_i32(self.data))
     }
 
     fn parse_as_i32_le(&self) -> OstreeResult<i32> {
         if self.type_string != "i" {
-            return Err(OstreeError::InternalError(format!("Variant type '{}' not a i32", self.type_string)));
+            return Err(OstreeError::InternalError(format!(
+                "Variant type '{}' not a i32",
+                self.type_string
+            )));
         }
         Ok(LittleEndian::read_i32(self.data))
     }
@@ -458,7 +525,8 @@ fn bytes_to_object(bytes: &[u8]) -> String {
 }
 
 fn object_to_bytes(object: &str) -> OstreeResult<Vec<u8>> {
-    hex::decode(object).map_err(|e| OstreeError::InternalError(format!("Invalid object '{}: {}'", object, e)))
+    hex::decode(object)
+        .map_err(|e| OstreeError::InternalError(format!("Invalid object '{}: {}'", object, e)))
 }
 
 fn maybe_bytes_to_object(bytes: &[u8]) -> Option<String> {
@@ -499,24 +567,48 @@ fn get_object_path(repo_path: &path::PathBuf, object: &str, object_type: &str) -
     path
 }
 
-fn parse_commit (variant: &SubVariant) ->OstreeResult<OstreeCommit> {
+fn parse_commit(variant: &SubVariant) -> OstreeResult<OstreeCommit> {
     let ostree_commit_fields = vec![
         // 0 - a{sv} - Metadata
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 8,
+        },
         // 1 - ay - parent checksum (empty string for initial)
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 2- a(say) - Related objects
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 3 - s - subject
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 4- s - body
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 5- t - Timestamp in seconds since the epoch (UTC, big-endian)
-        VariantFieldInfo { size: VariantSize::Fixed(std::num::NonZeroUsize::new(8).unwrap()), alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Fixed(std::num::NonZeroUsize::new(8).unwrap()),
+            alignment: 8,
+        },
         // 6- ay - Root tree contents
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 7- ay - Root tree metadata
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
     ];
 
     let commit = variant.parse_as_tuple(&ostree_commit_fields)?;
@@ -524,13 +616,13 @@ fn parse_commit (variant: &SubVariant) ->OstreeResult<OstreeCommit> {
 
     return Ok(OstreeCommit {
         metadata: metadata,
-        parent: maybe_bytes_to_object (commit[1].parse_as_bytes()),
+        parent: maybe_bytes_to_object(commit[1].parse_as_bytes()),
         subject: commit[3].parse_as_string()?,
         body: commit[4].parse_as_string()?,
         timestamp: u64::from_be(commit[5].parse_as_u64()?),
-        root_tree: bytes_to_object (commit[6].parse_as_bytes()),
-        root_metadata: bytes_to_object (commit[7].parse_as_bytes()),
-    })
+        root_tree: bytes_to_object(commit[6].parse_as_bytes()),
+        root_metadata: bytes_to_object(commit[7].parse_as_bytes()),
+    });
 }
 
 /* This is like basename, but also includes the parent dir because in
@@ -538,10 +630,10 @@ fn parse_commit (variant: &SubVariant) ->OstreeResult<OstreeCommit> {
  * of the ID, which we don't want to miss.
  * Also, this is mainly used for debug/errors, so converts to string.
  */
-fn get_dir_and_basename (path: &path::PathBuf) -> String {
+fn get_dir_and_basename(path: &path::PathBuf) -> String {
     let mut res = String::new();
-    if let Some(parent_name) =
-        path.parent()
+    if let Some(parent_name) = path
+        .parent()
         .and_then(|parent| parent.file_name())
         .and_then(|file_name| file_name.to_str())
     {
@@ -552,53 +644,84 @@ fn get_dir_and_basename (path: &path::PathBuf) -> String {
     res
 }
 
-pub fn load_commit_file (path: &path::PathBuf) ->OstreeResult<OstreeCommit> {
-    let mut fp = fs::File::open(path)
-        .map_err(|_e| OstreeError::NoSuchCommit(get_dir_and_basename(path)))?;
+pub fn load_commit_file(path: &path::PathBuf) -> OstreeResult<OstreeCommit> {
+    let mut fp =
+        fs::File::open(path).map_err(|_e| OstreeError::NoSuchCommit(get_dir_and_basename(path)))?;
 
     let mut contents = vec![];
-    fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid commit {}", get_dir_and_basename(path))))?;
+    fp.read_to_end(&mut contents).map_err(|_e| {
+        OstreeError::InternalError(format!("Invalid commit {}", get_dir_and_basename(path)))
+    })?;
 
     let variant = Variant::new("(a{sv}aya(say)sstayay)".to_string(), contents)?;
 
-    return parse_commit (&variant.root());
+    return parse_commit(&variant.root());
 }
 
-pub fn get_commit (repo_path: &path::PathBuf, commit: &String) ->OstreeResult<OstreeCommit> {
+pub fn get_commit(repo_path: &path::PathBuf, commit: &String) -> OstreeResult<OstreeCommit> {
     let path = get_object_path(repo_path, commit, "commit");
     return load_commit_file(&path);
 }
 
-pub fn load_delta_superblock_file (path: &path::PathBuf) ->OstreeResult<OstreeDeltaSuperblock> {
-    let mut fp = fs::File::open(path)
-        .map_err(|_e| OstreeError::NoSuchObject(get_dir_and_basename(path)))?;
+pub fn load_delta_superblock_file(path: &path::PathBuf) -> OstreeResult<OstreeDeltaSuperblock> {
+    let mut fp =
+        fs::File::open(path).map_err(|_e| OstreeError::NoSuchObject(get_dir_and_basename(path)))?;
 
     let mut contents = vec![];
-    fp.read_to_end(&mut contents)
-        .map_err(|_e| OstreeError::InternalError(format!("Invalid delta superblock {}", get_dir_and_basename(path))))?;
+    fp.read_to_end(&mut contents).map_err(|_e| {
+        OstreeError::InternalError(format!(
+            "Invalid delta superblock {}",
+            get_dir_and_basename(path)
+        ))
+    })?;
 
     let ostree_superblock_fields = vec![
         // 0 - "a{sv}", - Metadata
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 8,
+        },
         // 1 - "t", - timestamp
-        VariantFieldInfo { size: VariantSize::Fixed(std::num::NonZeroUsize::new(8).unwrap()), alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Fixed(std::num::NonZeroUsize::new(8).unwrap()),
+            alignment: 8,
+        },
         // 2 - "ay" - from checksum
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 3 - "ay" - to checksum
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 4 - "(a{sv}aya(say)sstayay)" - commit object
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 8,
+        },
         // 5 - "ay" -Prerequisite deltas
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 0 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 0,
+        },
         // 6 - "a(uayttay)" -Delta objects
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 8,
+        },
         // 7 - "a(yaytt)" - Fallback objects
-        VariantFieldInfo { size: VariantSize::Variable, alignment: 8 },
+        VariantFieldInfo {
+            size: VariantSize::Variable,
+            alignment: 8,
+        },
     ];
 
-
-    let variant = Variant::new("(a{sv}tayay(a{sv}aya(say)sstayay)aya(uayttay)a(yaytt))".to_string(), contents)?;
+    let variant = Variant::new(
+        "(a{sv}tayay(a{sv}aya(say)sstayay)aya(uayttay)a(yaytt))".to_string(),
+        contents,
+    )?;
     let container = variant.root();
     let superblock = container.parse_as_tuple(&ostree_superblock_fields)?;
 
@@ -611,7 +734,10 @@ pub fn load_delta_superblock_file (path: &path::PathBuf) ->OstreeResult<OstreeDe
     })
 }
 
-pub fn get_delta_superblock (repo_path: &path::PathBuf, delta: &String) ->OstreeResult<OstreeDeltaSuperblock> {
+pub fn get_delta_superblock(
+    repo_path: &path::PathBuf,
+    delta: &String,
+) -> OstreeResult<OstreeDeltaSuperblock> {
     let mut path = get_deltas_path(repo_path);
     path.push(delta[0..2].to_string());
     path.push(delta[2..].to_string());
@@ -620,40 +746,45 @@ pub fn get_delta_superblock (repo_path: &path::PathBuf, delta: &String) ->Ostree
     return load_delta_superblock_file(&path);
 }
 
-pub fn parse_ref (repo_path: &path::PathBuf, ref_name: &str) ->OstreeResult<String> {
+pub fn parse_ref(repo_path: &path::PathBuf, ref_name: &str) -> OstreeResult<String> {
     let mut ref_dir = get_ref_path(repo_path);
     ref_dir.push(ref_name);
-    let commit =
-        fs::read_to_string(ref_dir)
+    let commit = fs::read_to_string(ref_dir)
         .map_err(|_e| OstreeError::NoSuchRef(ref_name.to_string()))?
-        .trim_end().to_string();
+        .trim_end()
+        .to_string();
     Ok(commit)
 }
 
-pub fn list_refs (repo_path: &path::PathBuf, prefix: &str) -> Vec<String> {
+pub fn list_refs(repo_path: &path::PathBuf, prefix: &str) -> Vec<String> {
     let mut ref_dir = get_ref_path(repo_path);
     let path_prefix = &ref_dir.clone();
     ref_dir.push(prefix);
 
-    return
-        WalkDir::new(&ref_dir)
+    return WalkDir::new(&ref_dir)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| !e.file_type().is_dir())
-        .filter_map(|e| e.path().strip_prefix(path_prefix).map(|p| p.to_path_buf()).ok())
+        .filter_map(|e| {
+            e.path()
+                .strip_prefix(path_prefix)
+                .map(|p| p.to_path_buf())
+                .ok()
+        })
         .filter_map(|p| p.to_str().map(|s| s.to_string()))
         .collect();
 }
 
-#[derive(Serialize, Deserialize,Debug,PartialEq,Eq,Hash,Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Delta {
     pub from: Option<String>,
     pub to: String,
 }
 
 fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
-    let bytes = base64::decode(&part.replace("_", "/"))
-        .map_err(|err| OstreeError::InternalError(format!("Invalid delta part name '{}': {}", part, err)))?;
+    let bytes = base64::decode(&part.replace("_", "/")).map_err(|err| {
+        OstreeError::InternalError(format!("Invalid delta part name '{}': {}", part, err))
+    })?;
     Ok(bytes_to_object(&bytes))
 }
 
@@ -713,9 +844,11 @@ impl Delta {
     }
 
     pub fn to_string(&self) -> String {
-        format!("{}-{}",
-                self.from.as_ref().unwrap_or(&"nothing".to_string()),
-                self.to)
+        format!(
+            "{}-{}",
+            self.from.as_ref().unwrap_or(&"nothing".to_string()),
+            self.to
+        )
     }
 }
 
@@ -742,35 +875,52 @@ mod tests {
 
     #[test]
     fn test_delta_name() {
-        assert_eq!(delta_part_to_hex("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c"),
-                   Ok("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string()));
-        assert_eq!(hex_to_delta_part("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97"),
-                   Ok("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c".to_string()));
-        assert_eq!(Delta::from_name("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c"),
-                   Ok(Delta { from: None, to: "3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string() }));
+        assert_eq!(
+            delta_part_to_hex("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c"),
+            Ok("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string())
+        );
+        assert_eq!(
+            hex_to_delta_part("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97"),
+            Ok("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c".to_string())
+        );
+        assert_eq!(
+            Delta::from_name("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c"),
+            Ok(Delta {
+                from: None,
+                to: "3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string()
+            })
+        );
         assert_eq!(Delta::from_name("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c-3dpOrJG4MNyKHDDGXHpH_zd9NXugnexr5jpvSFQ77S4"),
                    Ok(Delta { from: Some("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string()), to: "ddda4eac91b830dc8a1c30c65c7a47ff377d357ba09dec6be63a6f48543bed2e".to_string() }));
     }
 }
 
-pub fn list_deltas (repo_path: &path::PathBuf) -> Vec<Delta> {
+pub fn list_deltas(repo_path: &path::PathBuf) -> Vec<Delta> {
     let deltas_dir = get_deltas_path(repo_path);
 
-    return
-        WalkDir::new(&deltas_dir)
+    return WalkDir::new(&deltas_dir)
         .min_depth(2)
         .max_depth(2)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_dir())
-        .map(|e| format!("{}{}",
-                         e.path().parent().unwrap().file_name().unwrap().to_string_lossy(),
-                         e.file_name().to_string_lossy()))
+        .map(|e| {
+            format!(
+                "{}{}",
+                e.path()
+                    .parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy(),
+                e.file_name().to_string_lossy()
+            )
+        })
         .filter_map(|name| Delta::from_name(&name).ok())
         .collect();
 }
 
-pub fn calc_deltas_for_ref (repo_path: &path::PathBuf, ref_name: &str, depth: u32) -> Vec<Delta> {
+pub fn calc_deltas_for_ref(repo_path: &path::PathBuf, ref_name: &str, depth: u32) -> Vec<Delta> {
     let mut res = Vec::new();
 
     let to_commit_res = parse_ref(repo_path, ref_name);
@@ -779,9 +929,9 @@ pub fn calc_deltas_for_ref (repo_path: &path::PathBuf, ref_name: &str, depth: u3
     }
     let to_commit = to_commit_res.unwrap();
 
-    let mut from_commit : Option<String> = None;
+    let mut from_commit: Option<String> = None;
     for _i in 0..depth {
-        if let Ok(commitinfo) = get_commit (repo_path, from_commit.as_ref().unwrap_or(&to_commit)) {
+        if let Ok(commitinfo) = get_commit(repo_path, from_commit.as_ref().unwrap_or(&to_commit)) {
             res.push(Delta::new(from_commit.as_ref().map(|x| &**x), &to_commit));
             from_commit = commitinfo.parent;
             if from_commit == None {
@@ -797,30 +947,33 @@ pub fn calc_deltas_for_ref (repo_path: &path::PathBuf, ref_name: &str, depth: u3
 
 fn result_from_output(output: std::process::Output, command: &str) -> Result<(), OstreeError> {
     if !output.status.success() {
-        Err(OstreeError::CommandFailed(command.to_string(), String::from_utf8_lossy(&output.stderr).trim().to_string()))
+        Err(OstreeError::CommandFailed(
+            command.to_string(),
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ))
     } else {
         Ok(())
     }
 }
 
-pub fn pull_commit_async(n_retries: i32,
-                         repo_path: PathBuf,
-                         url: String,
-                         commit: String) -> Box<dyn Future<Item=(), Error=OstreeError>> {
+pub fn pull_commit_async(
+    n_retries: i32,
+    repo_path: PathBuf,
+    url: String,
+    commit: String,
+) -> Box<dyn Future<Item = (), Error = OstreeError>> {
     Box::new(future::loop_fn(n_retries, move |count| {
         let mut cmd = Command::new("ostree");
         unsafe {
-            cmd
-                .pre_exec (|| {
-                    // Setsid in the child to avoid SIGINT on server killing
-                    // child and breaking the graceful shutdown
-                    libc::setsid();
-                    Ok(())
-                });
+            cmd.pre_exec(|| {
+                // Setsid in the child to avoid SIGINT on server killing
+                // child and breaking the graceful shutdown
+                libc::setsid();
+                Ok(())
+            });
         }
 
-        cmd
-            .arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
+        cmd.arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
             .arg("pull")
             .arg(&format!("--url={}", url))
             .arg("upstream")
@@ -828,104 +981,105 @@ pub fn pull_commit_async(n_retries: i32,
 
         info!("Pulling commit {}", commit);
         let commit_clone = commit.clone();
-        cmd
-            .output_async()
+        cmd.output_async()
             .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))
-            .and_then(|output| {
-                result_from_output(output, "ostree pull")}
-            )
-            .then(move |r| {
-                match r {
-                    Ok(res) => Ok(future::Loop::Break(res)),
-                    Err(e) => {
-                        if count > 1 {
-                            warn!("Pull error, retrying commit {}: {}", commit_clone, e.to_string());
-                            Ok(future::Loop::Continue(count - 1))
-                        } else {
-                            Err(e)
-                        }
+            .and_then(|output| result_from_output(output, "ostree pull"))
+            .then(move |r| match r {
+                Ok(res) => Ok(future::Loop::Break(res)),
+                Err(e) => {
+                    if count > 1 {
+                        warn!(
+                            "Pull error, retrying commit {}: {}",
+                            commit_clone,
+                            e.to_string()
+                        );
+                        Ok(future::Loop::Continue(count - 1))
+                    } else {
+                        Err(e)
                     }
                 }
             })
     }))
 }
 
-pub fn pull_delta_async(n_retries: i32,
-                        repo_path: &PathBuf,
-                        url: &String,
-                        delta: &Delta) -> Box<dyn Future<Item=(), Error=OstreeError>> {
+pub fn pull_delta_async(
+    n_retries: i32,
+    repo_path: &PathBuf,
+    url: &String,
+    delta: &Delta,
+) -> Box<dyn Future<Item = (), Error = OstreeError>> {
     let url_clone = url.clone();
     let repo_path_clone = repo_path.clone();
     let to = delta.to.clone();
     Box::new(
         if let Some(ref from) = delta.from {
-            Either::A(pull_commit_async(n_retries, repo_path.clone(), url.clone(), from.clone()))
+            Either::A(pull_commit_async(
+                n_retries,
+                repo_path.clone(),
+                url.clone(),
+                from.clone(),
+            ))
         } else {
             Either::B(future::result(Ok(())))
         }
-        .and_then(move |_| pull_commit_async(n_retries, repo_path_clone, url_clone, to))
+        .and_then(move |_| pull_commit_async(n_retries, repo_path_clone, url_clone, to)),
     )
 }
 
-pub fn generate_delta_async(repo_path: &PathBuf,
-                            delta: &Delta) -> Box<dyn Future<Item=(), Error=OstreeError>> {
+pub fn generate_delta_async(
+    repo_path: &PathBuf,
+    delta: &Delta,
+) -> Box<dyn Future<Item = (), Error = OstreeError>> {
     let mut cmd = Command::new("flatpak");
 
     unsafe {
-        cmd
-            .pre_exec (|| {
-                // Setsid in the child to avoid SIGINT on server killing
-                // child and breaking the graceful shutdown
-                libc::setsid();
-                Ok(())
-            });
+        cmd.pre_exec(|| {
+            // Setsid in the child to avoid SIGINT on server killing
+            // child and breaking the graceful shutdown
+            libc::setsid();
+            Ok(())
+        });
     }
 
-    cmd
-        .arg("build-update-repo")
+    cmd.arg("build-update-repo")
         .arg("--generate-static-delta-to")
         .arg(delta.to.clone());
 
     if let Some(ref from) = delta.from {
-        cmd
-            .arg("--generate-static-delta-from")
-            .arg(from.clone());
+        cmd.arg("--generate-static-delta-from").arg(from.clone());
     };
 
-    cmd
-        .arg(&repo_path);
+    cmd.arg(&repo_path);
 
     info!("Generating delta {}", delta.to_string());
     Box::new(
-        cmd
-            .output_async()
-            .map_err(|e| OstreeError::ExecFailed("flatpak build-update-repo".to_string(), e.to_string()))
-            .and_then(|output| result_from_output(output, "flatpak build-update-repo"))
+        cmd.output_async()
+            .map_err(|e| {
+                OstreeError::ExecFailed("flatpak build-update-repo".to_string(), e.to_string())
+            })
+            .and_then(|output| result_from_output(output, "flatpak build-update-repo")),
     )
 }
 
-pub fn prune_async(repo_path: &PathBuf) -> Box<dyn Future<Item=(), Error=OstreeError>> {
+pub fn prune_async(repo_path: &PathBuf) -> Box<dyn Future<Item = (), Error = OstreeError>> {
     let mut cmd = Command::new("ostree");
 
     unsafe {
-        cmd
-            .pre_exec (|| {
-                // Setsid in the child to avoid SIGINT on server killing
-                // child and breaking the graceful shutdown
-                libc::setsid();
-                Ok(())
-            });
+        cmd.pre_exec(|| {
+            // Setsid in the child to avoid SIGINT on server killing
+            // child and breaking the graceful shutdown
+            libc::setsid();
+            Ok(())
+        });
     }
 
-    cmd
-        .arg("prune")
+    cmd.arg("prune")
         .arg(&format!("--repo={}", repo_path.to_string_lossy()))
         .arg("--keep-younger-than=3 days ago");
 
     Box::new(
-        cmd
-            .output_async()
+        cmd.output_async()
             .map_err(|e| OstreeError::ExecFailed("ostree prune".to_string(), e.to_string()))
-            .and_then(|output| result_from_output(output, "ostree prune"))
+            .and_then(|output| result_from_output(output, "ostree prune")),
     )
 }

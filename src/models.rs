@@ -1,7 +1,7 @@
-use std::{mem,time};
+use std::{mem, time};
 
 use chrono;
-use schema::{ builds, build_refs, jobs, job_dependencies };
+use schema::{build_refs, builds, job_dependencies, jobs};
 
 #[derive(Deserialize, Insertable, Debug)]
 #[table_name = "builds"]
@@ -27,7 +27,7 @@ pub struct Build {
     pub extra_ids: Vec<String>,
 }
 
-#[derive(Deserialize, Debug,PartialEq)]
+#[derive(Deserialize, Debug, PartialEq)]
 pub enum PublishedState {
     Unpublished,
     Publishing,
@@ -45,7 +45,7 @@ impl PublishedState {
             PublishedState::Unpublished => (0, None),
             PublishedState::Publishing => (1, None),
             PublishedState::Published => (2, None),
-            PublishedState::Failed(s) => (3, Some(s.to_string()))
+            PublishedState::Failed(s) => (3, Some(s.to_string())),
         }
     }
 
@@ -54,7 +54,12 @@ impl PublishedState {
             0 => PublishedState::Unpublished,
             1 => PublishedState::Publishing,
             2 => PublishedState::Published,
-            3 => PublishedState::Failed(reason.as_ref().unwrap_or(&"Unknown reason".to_string()).to_string()),
+            3 => PublishedState::Failed(
+                reason
+                    .as_ref()
+                    .unwrap_or(&"Unknown reason".to_string())
+                    .to_string(),
+            ),
             _ => PublishedState::Failed("Unknown state".to_string()),
         }
     }
@@ -91,7 +96,12 @@ impl RepoState {
             0 => RepoState::Uploading,
             1 => RepoState::Verifying,
             2 => RepoState::Ready,
-            3 => RepoState::Failed(reason.as_ref().unwrap_or(&"Unknown reason".to_string()).to_string()),
+            3 => RepoState::Failed(
+                reason
+                    .as_ref()
+                    .unwrap_or(&"Unknown reason".to_string())
+                    .to_string(),
+            ),
             4 => RepoState::Purging,
             5 => RepoState::Purged,
             _ => RepoState::Failed("Unknown state".to_string()),
@@ -124,12 +134,9 @@ table! {
     }
 }
 
-allow_tables_to_appear_in_same_query!(
-    jobs,
-    job_dependencies_with_status,
-);
+allow_tables_to_appear_in_same_query!(jobs, job_dependencies_with_status,);
 
-#[derive(Deserialize, Debug,PartialEq)]
+#[derive(Deserialize, Debug, PartialEq)]
 pub enum JobStatus {
     New,
     Started,
@@ -149,7 +156,7 @@ impl JobStatus {
     }
 }
 
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum JobKind {
     Commit,
     Publish,
@@ -201,7 +208,9 @@ impl Job {
     // Ideally we'd do this via a SUBSTRING query, but at least do it behind the API
     pub fn apply_log_offset(mut self: Self, log_offset: Option<usize>) -> Self {
         if let Some(log_offset) = log_offset {
-            self.log = self.log.split_off(std::cmp::min(log_offset, self.log.len()))
+            self.log = self
+                .log
+                .split_off(std::cmp::min(log_offset, self.log.len()))
         }
         self
     }
@@ -226,7 +235,6 @@ pub struct JobDependencyWithStatus {
     pub dependant_status: i16,
 }
 
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CommitJob {
     pub build: i32,
@@ -234,7 +242,6 @@ pub struct CommitJob {
     pub endoflife_rebase: Option<String>,
     pub token_type: Option<i32>,
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublishJob {

@@ -1,29 +1,29 @@
+use actix::dev::ToEnvelope;
 use actix::prelude::*;
 use actix::Actor;
-use actix::dev::ToEnvelope;
 use actix_web::web::Data;
-use app::Config;
-use errors::{DeltaGenerationError};
-use futures::Future;
-use futures::future;
-use ostree;
-use std::collections::{VecDeque,HashMap};
-use std::cell::Cell;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::time::{Instant, Duration};
 use actix_web_actors::ws;
-use serde_json;
+use app::Config;
+use errors::DeltaGenerationError;
+use futures::future;
+use futures::Future;
+use ostree;
 use rand;
 use rand::prelude::IteratorRandom;
+use serde_json;
+use std::cell::Cell;
+use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use delayed::DelayedResult;
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[derive(Debug,Clone,PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DeltaRequest {
     pub repo: String,
     pub delta: ostree::Delta,
@@ -39,7 +39,7 @@ impl Message for DeltaRequest {
     type Result = Result<(), DeltaGenerationError>;
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub struct DeltaRequestSync {
     pub delta_request: DeltaRequest,
     pub tx: mpsc::Sender<(ostree::Delta, Result<(), DeltaGenerationError>)>,
@@ -52,7 +52,7 @@ impl Message for DeltaRequestSync {
 #[derive(Debug)]
 struct QueuedRequest {
     request: DeltaRequest,
-    delayed_result: DelayedResult<(),DeltaGenerationError>,
+    delayed_result: DelayedResult<(), DeltaGenerationError>,
 }
 
 impl QueuedRequest {
@@ -87,7 +87,6 @@ impl<A: Actor> WorkerInfo<A> {
         self.available.set(self.available.get() + 1);
     }
 }
-
 
 /* The DeltaGenerator is an actor handling the DeltaRequest message, but
  * it then fronts a number of workers that it queues the request onto.
@@ -128,10 +127,21 @@ impl DeltaGenerator {
         }
     }
 
-    fn start_request<A>(&self, worker: Rc<WorkerInfo<A>>, mut queued_request: QueuedRequest, ctx: &mut Context<Self>)
-        where A: Handler<DeltaRequest>,
-              A::Context: ToEnvelope<A, DeltaRequest>  {
-        info!("Assigned delta {} to worker {} #{}", queued_request.request.to_string(), worker.name, worker.id);
+    fn start_request<A>(
+        &self,
+        worker: Rc<WorkerInfo<A>>,
+        mut queued_request: QueuedRequest,
+        ctx: &mut Context<Self>,
+    ) where
+        A: Handler<DeltaRequest>,
+        A::Context: ToEnvelope<A, DeltaRequest>,
+    {
+        info!(
+            "Assigned delta {} to worker {} #{}",
+            queued_request.request.to_string(),
+            worker.name,
+            worker.id
+        );
         worker.claim();
         ctx.spawn(
             worker.addr
@@ -173,7 +183,12 @@ impl DeltaGenerator {
                 }
             } else {
                 /* Find available worker */
-                if let Some(available_worker) = self.remote_workers.iter().filter(|w| w.is_available()).choose(&mut rand::thread_rng()) {
+                if let Some(available_worker) = self
+                    .remote_workers
+                    .iter()
+                    .filter(|w| w.is_available())
+                    .choose(&mut rand::thread_rng())
+                {
                     self.start_request(available_worker.clone(), request, ctx);
                 } else {
                     /* No worker available, return to queue */
@@ -184,11 +199,16 @@ impl DeltaGenerator {
         }
     }
 
-    fn handle_request(&mut self, request: DeltaRequest, ctx: &mut Context<Self>) -> DelayedResult<(),DeltaGenerationError> {
-        self.outstanding.iter()
+    fn handle_request(
+        &mut self,
+        request: DeltaRequest,
+        ctx: &mut Context<Self>,
+    ) -> DelayedResult<(), DeltaGenerationError> {
+        self.outstanding
+            .iter()
             .find(|req| req.request == request)
             .map(|req| req.delayed_result.clone())
-            .unwrap_or_else( || {
+            .unwrap_or_else(|| {
                 let req = QueuedRequest::new(&request);
                 let r = req.delayed_result.clone();
                 self.outstanding.push_back(req);
@@ -216,15 +236,15 @@ impl Handler<DeltaRequestSync> for DeltaGenerator {
         let delta = request.delta.clone();
         let tx = msg.tx.clone();
         let r = self.handle_request(request, ctx);
-        ctx.spawn(Box::new(r
-                           .then(move |r| {
-                               if let Err(_e) = tx.send((delta, r.clone())) {
-                                   error!("Failed to reply to sync delta request");
-                               }
-                               r
-                           })
-                           .map_err(|_e| ())
-                           .into_actor(self)
+        ctx.spawn(Box::new(
+            r.then(move |r| {
+                if let Err(_e) = tx.send((delta, r.clone())) {
+                    error!("Failed to reply to sync delta request");
+                }
+                r
+            })
+            .map_err(|_e| ())
+            .into_actor(self),
         ));
         Box::new(actix::fut::ok(()))
     }
@@ -245,7 +265,6 @@ impl Handler<StopDeltaGenerator> for DeltaGenerator {
     }
 }
 
-
 #[derive(Debug)]
 pub struct RegisterRemoteWorker {
     name: String,
@@ -261,10 +280,9 @@ impl Handler<RegisterRemoteWorker> for DeltaGenerator {
     type Result = usize;
 
     fn handle(&mut self, msg: RegisterRemoteWorker, _ctx: &mut Self::Context) -> usize {
-        self.add_worker( &msg.name, msg.capacity, msg.addr)
+        self.add_worker(&msg.name, msg.capacity, msg.addr)
     }
 }
-
 
 #[derive(Debug)]
 pub struct UnregisterRemoteWorker {
@@ -283,7 +301,6 @@ impl Handler<UnregisterRemoteWorker> for DeltaGenerator {
     }
 }
 
-
 #[derive(Debug)]
 pub struct LocalWorker {
     pub config: Arc<Config>,
@@ -300,9 +317,13 @@ impl Handler<DeltaRequest> for LocalWorker {
         let repoconfig = match self.config.get_repoconfig(&msg.repo) {
             Err(_e) => {
                 return Box::new(
-                    future::err(DeltaGenerationError::new(&format!("No repo named: {}", &msg.repo)))
-                        .into_actor(self))
-            },
+                    future::err(DeltaGenerationError::new(&format!(
+                        "No repo named: {}",
+                        &msg.repo
+                    )))
+                    .into_actor(self),
+                )
+            }
             Ok(r) => r,
         };
 
@@ -312,17 +333,18 @@ impl Handler<DeltaRequest> for LocalWorker {
         Box::new(
             ostree::generate_delta_async(&repo_path, &delta)
                 .from_err()
-                .into_actor(self))
+                .into_actor(self),
+        )
     }
 }
 
 pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
-
     let n_threads = config.local_delta_threads;
     let config_copy = config.clone();
     let local_worker = LocalWorker {
         config: config_copy.clone(),
-    }.start();
+    }
+    .start();
 
     let generator = DeltaGenerator {
         outstanding: VecDeque::new(),
@@ -342,9 +364,8 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
 #[derive(Debug)]
 pub struct RemoteWorkerItem {
     id: u32,
-    delayed_result: DelayedResult<(),DeltaGenerationError>,
+    delayed_result: DelayedResult<(), DeltaGenerationError>,
 }
-
 
 #[derive(Debug)]
 pub struct RemoteWorker {
@@ -362,8 +383,7 @@ pub struct RemoteWorker {
 pub enum RemoteClientMessage {
     Register { capacity: u32 },
     Unregister,
-    Finished { id: u32,
-               errmsg: Option<String> },
+    Finished { id: u32, errmsg: Option<String> },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -391,7 +411,7 @@ impl RemoteWorker {
     }
 
     fn allocate_item_id(&mut self) -> u32 {
-        self.last_item_id +=1;
+        self.last_item_id += 1;
         self.last_item_id
     }
 
@@ -408,7 +428,8 @@ impl RemoteWorker {
             self.generator
                 .send(RegisterRemoteWorker {
                     name: self.remote.clone(),
-                    addr, capacity,
+                    addr,
+                    capacity,
                 })
                 .into_actor(self)
                 .then(move |msg_send_res, worker, ctx| {
@@ -419,18 +440,19 @@ impl RemoteWorker {
                          * we got the register response, do it now */
                         if worker.unregistered {
                             ctx.spawn(
-                                worker.generator
-                                    .send(UnregisterRemoteWorker {
-                                        id,
-                                    })
+                                worker
+                                    .generator
+                                    .send(UnregisterRemoteWorker { id })
                                     .into_actor(worker)
-                                    .then(|_msg_send_res, _worker, _ctx| actix::fut::ok(()) ));
+                                    .then(|_msg_send_res, _worker, _ctx| actix::fut::ok(())),
+                            );
                         }
                     } else {
                         error!("Unable to register Remote Worker {:?}", msg_send_res);
                     }
                     actix::fut::ok(())
-                }));
+                }),
+        );
     }
 
     fn msg_unregister(&mut self, ctx: &mut ws::WebsocketContext<Self>) {
@@ -441,25 +463,30 @@ impl RemoteWorker {
         if let Some(id) = self.id {
             ctx.spawn(
                 self.generator
-                    .send(UnregisterRemoteWorker {
-                        id,
-                    })
+                    .send(UnregisterRemoteWorker { id })
                     .into_actor(self)
                     .then(move |_msg_send_res, worker, _ctx| {
                         worker.id = None;
                         actix::fut::ok(())
-                    }));
+                    }),
+            );
         }
     }
 
-    fn msg_finished(&mut self, id: u32, errmsg: Option<String>, _ctx: &mut ws::WebsocketContext<Self>) {
+    fn msg_finished(
+        &mut self,
+        id: u32,
+        errmsg: Option<String>,
+        _ctx: &mut ws::WebsocketContext<Self>,
+    ) {
         match self.outstanding.remove(&id) {
-            Some(mut item) => {
-                item.delayed_result.set(match errmsg {
-                    None => Ok(()),
-                    Some(msg) => Err(DeltaGenerationError::new(&format!("Remote worked id {} failed to generate delta: {}", id, &msg))),
-                })
-            },
+            Some(mut item) => item.delayed_result.set(match errmsg {
+                None => Ok(()),
+                Some(msg) => Err(DeltaGenerationError::new(&format!(
+                    "Remote worked id {} failed to generate delta: {}",
+                    id, &msg
+                ))),
+            }),
             None => error!("Got finished message for unexpected handle {}", id),
         }
     }
@@ -488,24 +515,32 @@ impl Handler<DeltaRequest> for RemoteWorker {
 
     fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
         let url = {
-            let repoconfig =
-                match self.config.get_repoconfig(&msg.repo) {
-                    Ok(c) => c,
-                    Err(e) => return Box::new(
-                        DelayedResult::err(DeltaGenerationError::new(&format!("Can't get repoconfig: {}", e)))
-                            .into_actor(self)),
-                };
+            let repoconfig = match self.config.get_repoconfig(&msg.repo) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Box::new(
+                        DelayedResult::err(DeltaGenerationError::new(&format!(
+                            "Can't get repoconfig: {}",
+                            e
+                        )))
+                        .into_actor(self),
+                    )
+                }
+            };
             repoconfig.get_base_url(&self.config)
         };
 
         let item = self.new_item();
 
-        ctx.text(json!(RemoteServerMessage::RequestDelta {
-            url: url,
-            id: item.id,
-            repo: msg.repo,
-            delta: msg.delta,
-        }).to_string());
+        ctx.text(
+            json!(RemoteServerMessage::RequestDelta {
+                url: url,
+                id: item.id,
+                repo: msg.repo,
+                delta: msg.delta,
+            })
+            .to_string(),
+        );
 
         let fut = item.delayed_result.clone();
         self.outstanding.insert(item.id, item);
@@ -527,10 +562,9 @@ impl Actor for RemoteWorker {
             /* We send this with Arbiter::spawn, not cxt.spawn() as this context is shutting down */
             Arbiter::spawn(
                 self.generator
-                    .send(UnregisterRemoteWorker {
-                        id,
-                    })
-                    .then(|_msg_send_res| Ok(())));
+                    .send(UnregisterRemoteWorker { id })
+                    .then(|_msg_send_res| Ok(())),
+            );
         }
 
         Running::Stop
@@ -545,20 +579,16 @@ impl StreamHandler<ws::Message, ws::ProtocolError> for RemoteWorker {
                 self.last_recieved_ping = Instant::now();
                 ctx.pong(&msg);
             }
-            ws::Message::Pong(_) => {
-            }
-            ws::Message::Text(text) => {
-                match serde_json::from_str::<RemoteClientMessage>(&text) {
-                    Ok(message) => self.message(message, ctx),
-                    Err(e) => error!("Got invalid websocket message: {}", e),
-                }
-            }
+            ws::Message::Pong(_) => {}
+            ws::Message::Text(text) => match serde_json::from_str::<RemoteClientMessage>(&text) {
+                Ok(message) => self.message(message, ctx),
+                Err(e) => error!("Got invalid websocket message: {}", e),
+            },
             ws::Message::Binary(_bin) => error!("Unexpected binary ws message"),
             ws::Message::Close(_) => {
                 ctx.stop();
-            },
-            ws::Message::Nop => {
-            },
+            }
+            ws::Message::Nop => {}
         }
     }
 }

@@ -1,10 +1,10 @@
 use actix;
-use actix_web::{error::ResponseError, HttpResponse};
-use diesel::result::{Error as DieselError};
-use std::io;
-use actix_web::http::StatusCode;
-use ostree::OstreeError;
 use actix_web::error::BlockingError;
+use actix_web::http::StatusCode;
+use actix_web::{error::ResponseError, HttpResponse};
+use diesel::result::Error as DieselError;
+use ostree::OstreeError;
+use std::io;
 
 #[derive(Fail, Debug, Clone)]
 pub enum DeltaGenerationError {
@@ -50,9 +50,7 @@ pub type JobResult<T> = Result<T, JobError>;
 impl From<DieselError> for JobError {
     fn from(e: DieselError) -> Self {
         match e {
-            _ => {
-                JobError::DBError(e.to_string())
-            }
+            _ => JobError::DBError(e.to_string()),
         }
     }
 }
@@ -60,9 +58,7 @@ impl From<DieselError> for JobError {
 impl From<OstreeError> for JobError {
     fn from(e: OstreeError) -> Self {
         match e {
-            _ => {
-                JobError::InternalError(e.to_string())
-            }
+            _ => JobError::InternalError(e.to_string()),
         }
     }
 }
@@ -70,9 +66,7 @@ impl From<OstreeError> for JobError {
 impl From<OstreeError> for ApiError {
     fn from(e: OstreeError) -> Self {
         match e {
-            _ => {
-                ApiError::InternalServerError(e.to_string())
-            }
+            _ => ApiError::InternalServerError(e.to_string()),
         }
     }
 }
@@ -81,7 +75,9 @@ impl From<BlockingError<ApiError>> for ApiError {
     fn from(e: BlockingError<ApiError>) -> Self {
         match e {
             BlockingError::Error(e) => e,
-            BlockingError::Canceled => ApiError::InternalServerError("Blocking operation cancelled".to_string())
+            BlockingError::Canceled => {
+                ApiError::InternalServerError("Blocking operation cancelled".to_string())
+            }
         }
     }
 }
@@ -89,7 +85,7 @@ impl From<BlockingError<ApiError>> for ApiError {
 impl From<r2d2::Error> for ApiError {
     fn from(e: r2d2::Error) -> Self {
         match e {
-            _ => ApiError::InternalServerError(format!("Database error: {}", e.to_string()))
+            _ => ApiError::InternalServerError(format!("Database error: {}", e.to_string())),
         }
     }
 }
@@ -97,9 +93,7 @@ impl From<r2d2::Error> for ApiError {
 impl From<DeltaGenerationError> for JobError {
     fn from(e: DeltaGenerationError) -> Self {
         match e {
-            _ => {
-                JobError::InternalError(format!("Failed to generate delta: {}", e.to_string()))
-            }
+            _ => JobError::InternalError(format!("Failed to generate delta: {}", e.to_string())),
         }
     }
 }
@@ -107,9 +101,7 @@ impl From<DeltaGenerationError> for JobError {
 impl From<io::Error> for JobError {
     fn from(e: io::Error) -> Self {
         match e {
-            _ => {
-                JobError::InternalError(e.to_string())
-            }
+            _ => JobError::InternalError(e.to_string()),
         }
     }
 }
@@ -126,10 +118,10 @@ pub enum ApiError {
     BadRequest(String),
 
     #[fail(display = "WrongRepoState({}): {}", _2, _0)]
-    WrongRepoState(String,String,String),
+    WrongRepoState(String, String, String),
 
-    #[fail(display = "WrongPublishedState({}): {}", _2, _0 )]
-    WrongPublishedState(String,String,String),
+    #[fail(display = "WrongPublishedState({}): {}", _2, _0)]
+    WrongPublishedState(String, String, String),
 
     #[fail(display = "InvalidToken: {}", _0)]
     InvalidToken(String),
@@ -142,9 +134,7 @@ impl From<DieselError> for ApiError {
     fn from(e: DieselError) -> Self {
         match e {
             DieselError::NotFound => ApiError::NotFound,
-            _ => {
-                ApiError::InternalServerError(e.to_string())
-            }
+            _ => ApiError::InternalServerError(e.to_string()),
         }
     }
 }
@@ -152,9 +142,7 @@ impl From<DieselError> for ApiError {
 impl From<io::Error> for ApiError {
     fn from(io_error: io::Error) -> Self {
         match io_error {
-            _ => {
-                ApiError::InternalServerError(io_error.to_string())
-            }
+            _ => ApiError::InternalServerError(io_error.to_string()),
         }
     }
 }
@@ -162,9 +150,7 @@ impl From<io::Error> for ApiError {
 impl From<actix::MailboxError> for ApiError {
     fn from(e: actix::MailboxError) -> Self {
         match e {
-            _ => {
-                ApiError::InternalServerError(e.to_string())
-            }
+            _ => ApiError::InternalServerError(e.to_string()),
         }
     }
 }
@@ -216,11 +202,13 @@ impl ApiError {
 
     pub fn status_code(&self) -> StatusCode {
         match *self {
-            ApiError::InternalServerError(ref _internal_message) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::InternalServerError(ref _internal_message) => {
+                StatusCode::INTERNAL_SERVER_ERROR
+            }
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::BadRequest(ref _message) => StatusCode::BAD_REQUEST,
-            ApiError::WrongRepoState(_,_,_) => StatusCode::BAD_REQUEST,
-            ApiError::WrongPublishedState(_,_,_) => StatusCode::BAD_REQUEST,
+            ApiError::WrongRepoState(_, _, _) => StatusCode::BAD_REQUEST,
+            ApiError::WrongPublishedState(_, _, _) => StatusCode::BAD_REQUEST,
             ApiError::InvalidToken(_) => StatusCode::UNAUTHORIZED,
             ApiError::NotEnoughPermissions(ref _message) => StatusCode::FORBIDDEN,
         }
@@ -233,7 +221,10 @@ impl ResponseError for ApiError {
             error!("Responding with internal error: {}", internal_message);
         }
         if let ApiError::NotEnoughPermissions(internal_message) = self {
-            error!("Responding with NotEnoughPermissions error: {}", internal_message);
+            error!(
+                "Responding with NotEnoughPermissions error: {}",
+                internal_message
+            );
         }
         HttpResponse::build(self.status_code()).json(self.to_json())
     }
