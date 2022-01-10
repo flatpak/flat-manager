@@ -92,9 +92,7 @@ where
             .json(data)),
         Err(e) => Err(ApiError::InternalServerError(format!(
             "Can't get url for {} {:?}: {}",
-            name,
-            elements,
-            e.to_string()
+            name, elements, e
         ))),
     }
 }
