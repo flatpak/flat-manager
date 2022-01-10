@@ -64,8 +64,8 @@ where
         let res_ref = self.inner.result.borrow().clone();
         if let Some(res) = res_ref {
             match res {
-                Err(e) => Err(e.clone()),
-                Ok(r) => Ok(Async::Ready(r.clone())),
+                Err(e) => Err(e),
+                Ok(r) => Ok(Async::Ready(r)),
             }
         } else {
             self.inner
@@ -86,14 +86,14 @@ where
         let inner = InnerDelayedResult::new();
         DelayedResult {
             waiter: inner.next_clone_id.get(),
-            inner: inner,
+            inner,
         }
     }
     pub fn err(e: E) -> Self {
         let inner = InnerDelayedResult::err(e);
         DelayedResult {
             waiter: inner.next_clone_id.get(),
-            inner: inner,
+            inner,
         }
     }
 

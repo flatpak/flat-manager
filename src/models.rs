@@ -206,7 +206,7 @@ pub struct Job {
 
 impl Job {
     // Ideally we'd do this via a SUBSTRING query, but at least do it behind the API
-    pub fn apply_log_offset(mut self: Self, log_offset: Option<usize>) -> Self {
+    pub fn apply_log_offset(mut self, log_offset: Option<usize>) -> Self {
         if let Some(log_offset) = log_offset {
             self.log = self
                 .log

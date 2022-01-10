@@ -25,9 +25,8 @@ pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
     // Matches using a path-prefix style comparison:
     //  claimed_sub == "build" should match required_sub == "build" or "build/N[/...]"
     //  claimed_sub == "build/N" should only matchs required_sub == "build/N[/...]"
-    if required_sub.starts_with(claimed_sub) {
-        let rest = &required_sub[claimed_sub.len()..];
-        if rest.len() == 0 || rest.starts_with("/") {
+    if let Some(rest) = required_sub.strip_prefix(claimed_sub) {
+        if rest.is_empty() || rest.starts_with('/') {
             return true;
         }
     };
@@ -35,30 +34,29 @@ pub fn sub_has_prefix(required_sub: &str, claimed_sub: &str) -> bool {
 }
 
 pub fn id_matches_prefix(id: &str, prefix: &str) -> bool {
-    if prefix == "" {
+    if prefix.is_empty() {
         return true;
     }
-    if id.starts_with(prefix) {
-        let rest = &id[prefix.len()..];
-        if rest.len() == 0 || rest.starts_with(".") {
+    if let Some(rest) = id.strip_prefix(prefix) {
+        if rest.is_empty() || rest.starts_with('.') {
             return true;
         }
     };
     false
 }
 
-pub fn id_matches_one_prefix(id: &str, prefixes: &Vec<String>) -> bool {
+pub fn id_matches_one_prefix(id: &str, prefixes: &[String]) -> bool {
     prefixes.iter().any(|prefix| id_matches_prefix(id, prefix))
 }
 
 pub fn repo_matches_claimed(repo: &str, claimed_repo: &str) -> bool {
-    if claimed_repo == "" {
+    if claimed_repo.is_empty() {
         return true;
     }
     repo == claimed_repo
 }
 
-pub fn repo_matches_one_claimed(repo: &str, claimed_repos: &Vec<String>) -> bool {
+pub fn repo_matches_one_claimed(repo: &str, claimed_repos: &[String]) -> bool {
     claimed_repos
         .iter()
         .any(|claimed_repo| repo_matches_claimed(repo, claimed_repo))
@@ -148,9 +146,7 @@ impl Inner {
 
         let mut parts = header
             .to_str()
-            .or(Err(ApiError::InvalidToken(
-                "Cannot convert header to string".to_string(),
-            )))?
+            .map_err(|_| ApiError::InvalidToken("Cannot convert header to string".to_string()))?
             .splitn(2, ' ');
         match parts.next() {
             Some(scheme) if scheme == "Bearer" => (),
@@ -161,9 +157,9 @@ impl Inner {
             }
         }
 
-        let token = parts.next().ok_or(ApiError::InvalidToken(
-            "No token value in header".to_string(),
-        ))?;
+        let token = parts
+            .next()
+            .ok_or_else(|| ApiError::InvalidToken("No token value in header".to_string()))?;
 
         Ok(token.to_string())
     }
@@ -218,7 +214,7 @@ where
 
     fn new_transform(&self, service: S) -> Self::Future {
         ok(TokenParserMiddleware {
-            service: service,
+            service,
             inner: self.0.clone(),
         })
     }
@@ -258,6 +254,7 @@ where
     type Request = ServiceRequest;
     type Response = ServiceResponse<B>;
     type Error = Error;
+    #[allow(clippy::type_complexity)]
     type Future = Either<
         //S::Future,
         Box<dyn Future<Item = Self::Response, Error = Self::Error>>,

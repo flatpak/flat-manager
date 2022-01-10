@@ -49,25 +49,19 @@ pub type JobResult<T> = Result<T, JobError>;
 
 impl From<DieselError> for JobError {
     fn from(e: DieselError) -> Self {
-        match e {
-            _ => JobError::DBError(e.to_string()),
-        }
+        JobError::DBError(e.to_string())
     }
 }
 
 impl From<OstreeError> for JobError {
     fn from(e: OstreeError) -> Self {
-        match e {
-            _ => JobError::InternalError(e.to_string()),
-        }
+        JobError::InternalError(e.to_string())
     }
 }
 
 impl From<OstreeError> for ApiError {
     fn from(e: OstreeError) -> Self {
-        match e {
-            _ => ApiError::InternalServerError(e.to_string()),
-        }
+        ApiError::InternalServerError(e.to_string())
     }
 }
 
@@ -84,25 +78,19 @@ impl From<BlockingError<ApiError>> for ApiError {
 
 impl From<r2d2::Error> for ApiError {
     fn from(e: r2d2::Error) -> Self {
-        match e {
-            _ => ApiError::InternalServerError(format!("Database error: {}", e.to_string())),
-        }
+        ApiError::InternalServerError(format!("Database error: {}", e.to_string()))
     }
 }
 
 impl From<DeltaGenerationError> for JobError {
     fn from(e: DeltaGenerationError) -> Self {
-        match e {
-            _ => JobError::InternalError(format!("Failed to generate delta: {}", e.to_string())),
-        }
+        JobError::InternalError(format!("Failed to generate delta: {}", e.to_string()))
     }
 }
 
 impl From<io::Error> for JobError {
     fn from(e: io::Error) -> Self {
-        match e {
-            _ => JobError::InternalError(e.to_string()),
-        }
+        JobError::InternalError(e.to_string())
     }
 }
 
@@ -141,17 +129,13 @@ impl From<DieselError> for ApiError {
 
 impl From<io::Error> for ApiError {
     fn from(io_error: io::Error) -> Self {
-        match io_error {
-            _ => ApiError::InternalServerError(io_error.to_string()),
-        }
+        ApiError::InternalServerError(io_error.to_string())
     }
 }
 
 impl From<actix::MailboxError> for ApiError {
     fn from(e: actix::MailboxError) -> Self {
-        match e {
-            _ => ApiError::InternalServerError(e.to_string()),
-        }
+        ApiError::InternalServerError(e.to_string())
     }
 }
 
