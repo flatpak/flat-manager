@@ -322,7 +322,7 @@ impl DeltaClient {
                                 Err(e) => error!("Failed to prune repo: {}", e.to_string()),
                                 _ => info!("Pruning repo done"),
                             };
-                            &guard;
+                            let _ = &guard;
                             actix::fut::ok(())
                         })
                 })
@@ -360,7 +360,7 @@ impl DeltaClient {
                         .and_then(move |_| upload_delta(&fs_pool, &base_url, &token, &reponame, &path2, &delta2))
                         .into_actor(client)
                         .then(move |r, client, _ctx| {
-                            &guard;
+                            let _ = &guard;
                             client.finished(id, r.err().map(|e| e.to_string()));
                             actix::fut::ok(())
                         })
