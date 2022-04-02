@@ -448,7 +448,9 @@ fn verify_repo_token(
     for commit_ref in commit_refs {
         let ref_parts: Vec<&str> = commit_ref.split('/').collect();
         if (ref_parts[0] == "app" || ref_parts[0] == "runtime") && ref_parts.len() > 2 {
-            result = req.has_token_prefix(ref_parts[1]);
+            result = req
+                .has_token_prefix(ref_parts[1])
+                .or_else(|_| req.has_token_repo(ref_parts[1]));
             if result.is_ok() {
                 break; // Early exit, we have a match
             }
