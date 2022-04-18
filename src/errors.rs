@@ -117,6 +117,9 @@ pub enum ApiError {
 
     #[fail(display = "NotEnoughPermissions")]
     NotEnoughPermissions(String),
+
+    #[fail(display = "TokenRequired")]
+    TokenRequired,
 }
 
 impl From<DieselError> for ApiError {
@@ -182,6 +185,11 @@ impl ApiError {
                 "error-type": "token-insufficient",
                 "message": format!("Not enough permissions: {}", message),
             }),
+            ApiError::TokenRequired => json!({
+                "status": 401,
+                "error-type": "token-required",
+                "message": "Token required"
+            }),
         }
     }
 
@@ -196,6 +204,7 @@ impl ApiError {
             ApiError::WrongPublishedState(_, _, _) => StatusCode::BAD_REQUEST,
             ApiError::InvalidToken(_) => StatusCode::UNAUTHORIZED,
             ApiError::NotEnoughPermissions(ref _message) => StatusCode::FORBIDDEN,
+            ApiError::TokenRequired => StatusCode::UNAUTHORIZED,
         }
     }
 }
