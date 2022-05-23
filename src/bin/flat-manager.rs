@@ -2,7 +2,8 @@ use dotenv::dotenv;
 use std::env;
 use std::path::PathBuf;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "info");
     }

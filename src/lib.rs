@@ -24,11 +24,13 @@ use app::Config;
 use deltas::{DeltaGenerator, StopDeltaGenerator};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, ManageConnection};
+use futures3::compat::Compat;
+use futures3::FutureExt;
 use jobs::{JobQueue, StopJobQueue};
 use log::info;
 use std::path;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio_signal::unix::Signal;
 
 pub use deltas::{RemoteClientMessage, RemoteServerMessage};
@@ -105,7 +107,11 @@ fn handle_signal(
         })
         .then(|_| {
             info!("Exiting...");
-            tokio::timer::Delay::new(Instant::now() + Duration::from_millis(300))
+            let future = tokio::time::sleep(Duration::from_millis(300)).map(|_| {
+                let result: Result<(), ()> = Ok(());
+                result
+            });
+            Compat::new(Box::pin(future))
         })
         .then(|_| {
             System::current().stop();
