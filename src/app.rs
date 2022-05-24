@@ -252,6 +252,7 @@ pub struct Config {
     pub delay_update_secs: u64,
     #[serde(default = "default_numcpu")]
     pub local_delta_threads: u32,
+    pub storefront_info_endpoint: Option<String>,
 }
 
 impl RepoConfig {

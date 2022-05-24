@@ -4,14 +4,22 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel::result::Error as DieselError;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
+use libostree::gio::{FileType, NONE_CANCELLABLE};
+use libostree::glib::{GString, VariantDict};
+use libostree::prelude::{Cast, InputStreamExt};
+use libostree::{self, MutableTree};
 use log::{error, info};
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs::{self, File};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::iter::FromIterator;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
@@ -25,7 +33,7 @@ use walkdir::WalkDir;
 use crate::app::{Config, RepoConfig};
 use crate::deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
 use crate::errors::{JobError, JobResult};
-use crate::models;
+use crate::models::{self, BuildRef};
 use crate::models::{
     job_dependencies_with_status, CommitJob, Job, JobDependency, JobKind, JobStatus, NewJob,
     PublishJob, PublishedState, RepoState, UpdateRepoJob,
@@ -33,6 +41,7 @@ use crate::models::{
 use crate::ostree;
 use crate::schema;
 use crate::schema::*;
+use crate::storefront::StorefrontInfo;
 use crate::Pool;
 
 /**************************************************************************
@@ -411,8 +420,9 @@ impl CommitJobInstance {
         };
 
         for build_ref in build_refs.iter() {
-            let mut src_ref_arg = String::from("--src-ref=");
-            src_ref_arg.push_str(&build_ref.commit);
+            let storefront_info = self
+                .use_storefront_info(config, build_ref, upload_path.to_str().unwrap(), conn)
+                .map_err(|e| JobError::new(&format!("Failed to apply storefront info: {}", e)))?;
 
             let mut cmd = Command::new("flatpak");
             cmd.arg("build-commit-from")
@@ -432,9 +442,20 @@ impl CommitJobInstance {
                 cmd.arg(&endoflife_rebase_arg);
             };
 
-            if let Some(token_type) = &self.token_type {
+            if let Some(token_type) = self
+                .token_type
+                .or_else(|| storefront_info.as_ref().and_then(|s| s.0.token_type))
+            {
                 cmd.arg(format!("--token-type={}", token_type));
+            }
+
+            let real_commit = if let Some(storefront_info) = &storefront_info {
+                &storefront_info.1
+            } else {
+                &build_ref.commit
             };
+
+            let src_ref_arg = format!("--src-ref={}", real_commit);
 
             cmd.arg(&src_repo_arg)
                 .arg(&src_ref_arg)
@@ -444,10 +465,7 @@ impl CommitJobInstance {
             job_log_and_info(
                 self.job_id,
                 conn,
-                &format!(
-                    "Committing ref {} ({})",
-                    build_ref.ref_name, build_ref.commit
-                ),
+                &format!("Committing ref {} ({})", build_ref.ref_name, real_commit,),
             );
             do_command(cmd)?;
 
@@ -486,6 +504,154 @@ impl CommitJobInstance {
         fs::remove_dir_all(&upload_path)?;
 
         Ok(json!({ "refs": commits }))
+    }
+
+    fn use_storefront_info(
+        &self,
+        config: &Config,
+        build_ref: &BuildRef,
+        upload_path: &str,
+        conn: &PgConnection,
+    ) -> Result<Option<(StorefrontInfo, String)>, Box<dyn Error>> {
+        /* If applicable, get the storefront info for this app from the backend and apply it to the commit. This might
+        require rewriting the commit with a new dirtree. */
+
+        fn mtree_lookup(
+            mtree: &MutableTree,
+            path: &[&str],
+        ) -> Result<(Option<GString>, Option<MutableTree>), Box<dyn Error>> {
+            match path {
+                [file] => mtree.lookup(file).map_err(Into::into),
+                [subdir, rest @ ..] => mtree_lookup(
+                    &mtree
+                        .lookup(subdir)?
+                        .1
+                        .ok_or_else(|| "subdirectory not found".to_string())?,
+                    rest,
+                ),
+                [] => Err("no path given".into()),
+            }
+        }
+
+        let mtree_lookup_file = |mtree, path| -> Result<_, Box<dyn Error>> {
+            mtree_lookup(mtree, path)?
+                .0
+                .ok_or_else(|| "file not found".into())
+        };
+
+        let app_id = build_ref.ref_name.split('/').nth(1).unwrap();
+
+        if build_ref.ref_name.starts_with("app/") {
+            if let Some(endpoint) = &config.storefront_info_endpoint {
+                let convert_err =
+                    |e| format!("Failed to fetch storefront info from {}: {}", &endpoint, e);
+
+                /* Fetch the storefront info */
+                let storefront_info = reqwest::blocking::Client::new()
+                    .get(endpoint)
+                    .query(&[("app_id", app_id)])
+                    .send()
+                    .map_err(convert_err)?
+                    .error_for_status()?
+                    .json::<StorefrontInfo>()
+                    .map_err(convert_err)?;
+
+                /* Read the appstream file from the commit */
+                let repo = libostree::Repo::new_for_path(upload_path);
+                repo.open(NONE_CANCELLABLE)?;
+
+                let mtree = libostree::MutableTree::from_commit(&repo, &build_ref.commit)?;
+
+                let appstream_file = mtree_lookup_file(
+                    &mtree,
+                    &[
+                        "files",
+                        "share",
+                        "app-info",
+                        "xmls",
+                        &format!("{}.xml.gz", app_id),
+                    ],
+                ).map_err(|e| format!("Failed to apply storefront info: Could not find the appstream file in the uploaded commit: {}",e))?;
+
+                let (appstream_file, fileinfo, _) =
+                    repo.load_file(&appstream_file, NONE_CANCELLABLE)?;
+
+                let appstream_content = appstream_file
+                    .unwrap()
+                    .read_bytes(fileinfo.size().try_into().unwrap(), NONE_CANCELLABLE)?;
+
+                let mut s = String::new();
+                GzDecoder::new(&*appstream_content).read_to_string(&mut s)?;
+
+                storefront_info.validate_storefront_info(app_id, &s)?;
+                let new_appstream = storefront_info.apply_storefront_info(&s)?;
+
+                if new_appstream == s {
+                    /* If the appstream file didn't change, we shouldn't bother rewriting the commit  */
+                    return Ok(Some((storefront_info, build_ref.commit.clone())));
+                }
+
+                /* gzip encode the new appstream file */
+                let mut s = vec![];
+                GzEncoder::new(&mut s, Compression::default())
+                    .write_all(new_appstream.as_bytes())?;
+
+                /* Make sure all the file attributes are correct */
+                fileinfo.set_size(s.len().try_into().expect("integer overflow on file size"));
+                fileinfo.set_name(&format!("{}.xml.gz", app_id));
+                fileinfo.set_file_type(FileType::Regular);
+                fileinfo.set_attribute_uint32("unix::uid", 0);
+                fileinfo.set_attribute_uint32("unix::gid", 0);
+                fileinfo.set_attribute_uint32("unix::mode", 0o100644);
+
+                repo.prepare_transaction(NONE_CANCELLABLE)?;
+
+                /* Write the new appstream file to the repo */
+                let checksum =
+                    repo.write_regfile_inline(None, 0, 0, 0o100644, None, &s, NONE_CANCELLABLE)?;
+
+                /* Edit the MutableTree with a reference to the new appstream file */
+                mtree_lookup(&mtree, &["files", "share", "app-info", "xmls"])?
+                    .1
+                    .ok_or("file not found")?
+                    .replace_file(&format!("{}.xml.gz", app_id), &checksum)?;
+
+                let repo_file = repo.write_mtree(&mtree, NONE_CANCELLABLE)?;
+
+                /* Copy the original commit metadata. Leave out extended attributes, that's just the signature, which
+                won't be valid when we rewrite the commit (and we will sign the resulting commit ourselves anyway) */
+                let commit_metadata = repo.load_commit(&build_ref.commit)?.0;
+                let metadata = commit_metadata.child_get::<VariantDict>(0);
+                let subject = &commit_metadata.child_get::<String>(3);
+                let body = &commit_metadata.child_get::<String>(4);
+                let time = libostree::commit_get_timestamp(&commit_metadata);
+
+                /* Write a new commit with the new dirtree but (mostly) the same metadata */
+                let commit = repo.write_commit_with_time(
+                    Some(&build_ref.commit),
+                    Some(subject),
+                    Some(body),
+                    Some(&metadata.end()),
+                    repo_file.dynamic_cast_ref().unwrap(),
+                    time,
+                    NONE_CANCELLABLE,
+                )?;
+
+                repo.commit_transaction(NONE_CANCELLABLE)?;
+
+                job_log_and_info(
+                    self.job_id,
+                    conn,
+                    &format!("Rewriting commit {} -> {}", build_ref.commit, commit),
+                );
+
+                Ok(Some((storefront_info, commit.to_string())))
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 
