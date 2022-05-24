@@ -16,6 +16,7 @@ mod logger;
 mod models;
 pub mod ostree;
 mod schema;
+mod storefront;
 mod tokens;
 
 use actix::prelude::*;

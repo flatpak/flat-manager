@@ -5,7 +5,7 @@ name: Continuous integration
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -13,13 +13,15 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+      - name: Install dependencies
+        run: sudo apt-get install -y libostree-dev
       - uses: actions-rs/cargo@v1
         with:
           command: check
 
   test:
     name: Test Suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -27,13 +29,15 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
+      - name: Install dependencies
+        run: sudo apt-get install -y libostree-dev
       - uses: actions-rs/cargo@v1
         with:
           command: test
 
   end-to-end:
     name: End-to-end upload test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
      - uses: actions/checkout@v2
 
@@ -50,7 +54,7 @@ jobs:
 
   fmt:
     name: Rustfmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -66,7 +70,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
@@ -75,6 +79,8 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
+      - name: Install dependencies
+        run: sudo apt-get install -y libostree-dev
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
