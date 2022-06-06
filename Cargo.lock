@@ -19,7 +19,7 @@ dependencies = [
  "log",
  "parking_lot 0.7.1",
  "smallvec 0.6.14",
- "tokio",
+ "tokio 0.1.22",
  "tokio-codec",
  "tokio-executor",
  "tokio-io",
@@ -192,7 +192,7 @@ dependencies = [
  "net2",
  "num_cpus",
  "slab",
- "tokio",
+ "tokio 0.1.22",
  "tokio-codec",
  "tokio-current-thread",
  "tokio-io",
@@ -975,7 +975,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "time",
- "tokio",
+ "tokio 1.8.4",
  "tokio-process",
  "tokio-signal",
  "walkdir",
@@ -1764,6 +1764,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4fd5641d01c8f18a23da7b6fe29298ff4b55afcccdf78973b24cf3175fee32e"
 
 [[package]]
+name = "pin-project-lite"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e0a7ae3ac2f1173085d398531c705756c94a4c56843785df85a60c1a0afac116"
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2426,6 +2432,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio"
+version = "1.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50dae83881bc9b0403dd5b44ea9deed3e939856cc8722d5be37f0d6e5c6d53dd"
+dependencies = [
+ "autocfg 1.0.1",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "tokio-codec"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2725,7 +2741,7 @@ dependencies = [
  "lru-cache",
  "resolv-conf",
  "smallvec 0.6.14",
- "tokio",
+ "tokio 0.1.22",
  "trust-dns-proto 0.6.3",
 ]
 
