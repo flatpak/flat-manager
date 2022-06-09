@@ -1,6 +1,7 @@
 use actix::prelude::*;
 use actix_web::*;
 use diesel::prelude::*;
+use futures3::compat::Compat01As03;
 use serde_json::json;
 
 use crate::errors::ApiError;
@@ -11,7 +12,7 @@ use crate::Pool;
 pub struct Db(pub Pool);
 
 impl Db {
-    fn run<Func, T>(&self, func: Func) -> impl Future<Item = T, Error = ApiError>
+    async fn run<Func, T>(&self, func: Func) -> Result<T, ApiError>
     where
         Func: FnOnce(
             &r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::PgConnection>>,
@@ -20,14 +21,17 @@ impl Db {
         T: Send + 'static,
     {
         let p = self.0.clone();
-        web::block(move || {
-            let conn = p.get()?;
-            func(&conn)
-        })
-        .map_err(ApiError::from)
+        Compat01As03::new(
+            web::block(move || {
+                let conn = p.get()?;
+                func(&conn)
+            })
+            .map_err(ApiError::from),
+        )
+        .await
     }
 
-    fn run_in_transaction<Func, T>(&self, func: Func) -> impl Future<Item = T, Error = ApiError>
+    async fn run_in_transaction<Func, T>(&self, func: Func) -> Result<T, ApiError>
     where
         Func: FnOnce(
             &r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::PgConnection>>,
@@ -36,15 +40,16 @@ impl Db {
         T: Send + 'static,
     {
         self.run(move |conn| conn.transaction::<T, ApiError, _>(|| func(conn)))
+            .await
     }
 
     /* Jobs */
 
-    pub fn lookup_job(
+    pub async fn lookup_job(
         &self,
         job_id: i32,
         log_offset: Option<usize>,
-    ) -> impl Future<Item = Job, Error = ApiError> {
+    ) -> Result<Job, ApiError> {
         self.run(move |conn| {
             use schema::jobs::dsl::*;
             Ok(jobs
@@ -52,9 +57,10 @@ impl Db {
                 .get_result::<Job>(conn)?
                 .apply_log_offset(log_offset))
         })
+        .await
     }
 
-    pub fn list_active_jobs(&self) -> impl Future<Item = Vec<Job>, Error = ApiError> {
+    pub async fn list_active_jobs(&self) -> Result<Vec<Job>, ApiError> {
         self.run(move |conn| {
             use schema::jobs::dsl::*;
             Ok(jobs
@@ -62,13 +68,14 @@ impl Db {
                 .filter(status.le(JobStatus::Started as i16))
                 .get_results::<Job>(conn)?)
         })
+        .await
     }
 
-    pub fn lookup_commit_job(
+    pub async fn lookup_commit_job(
         &self,
         build_id: i32,
         log_offset: Option<usize>,
-    ) -> impl Future<Item = Job, Error = ApiError> {
+    ) -> Result<Job, ApiError> {
         self.run(move |conn| {
             use schema::builds::dsl::*;
             use schema::jobs::dsl::*;
@@ -80,13 +87,14 @@ impl Db {
                 .get_result::<Job>(conn)?
                 .apply_log_offset(log_offset))
         })
+        .await
     }
 
-    pub fn lookup_publish_job(
+    pub async fn lookup_publish_job(
         &self,
         build_id: i32,
         log_offset: Option<usize>,
-    ) -> impl Future<Item = Job, Error = ApiError> {
+    ) -> Result<Job, ApiError> {
         self.run(move |conn| {
             use schema::builds::dsl::*;
             use schema::jobs::dsl::*;
@@ -98,15 +106,16 @@ impl Db {
                 .get_result::<Job>(conn)?
                 .apply_log_offset(log_offset))
         })
+        .await
     }
 
-    pub fn start_commit_job(
+    pub async fn start_commit_job(
         &self,
         build_id: i32,
         endoflife: Option<String>,
         endoflife_rebase: Option<String>,
         token_type: Option<i32>,
-    ) -> impl Future<Item = Job, Error = ApiError> {
+    ) -> Result<Job, ApiError> {
         self.run_in_transaction(move |conn| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(build_id))
@@ -169,13 +178,10 @@ impl Db {
                 .get_result::<Build>(conn)?;
             Ok(job)
         })
+        .await
     }
 
-    pub fn start_publish_job(
-        &self,
-        build_id: i32,
-        repo: String,
-    ) -> impl Future<Item = Job, Error = ApiError> {
+    pub async fn start_publish_job(&self, build_id: i32, repo: String) -> Result<Job, ApiError> {
         self.run_in_transaction(move |conn| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(build_id))
@@ -263,27 +269,30 @@ impl Db {
                 .get_result::<Build>(conn)?;
             Ok(job)
         })
+        .await
     }
 
     /* Builds */
 
-    pub fn new_build(&self, a_build: NewBuild) -> impl Future<Item = Build, Error = ApiError> {
+    pub async fn new_build(&self, a_build: NewBuild) -> Result<Build, ApiError> {
         self.run(move |conn| {
             use schema::builds::dsl::*;
             Ok(diesel::insert_into(builds)
                 .values(&a_build)
                 .get_result::<Build>(conn)?)
         })
+        .await
     }
 
-    pub fn lookup_build(&self, build_id: i32) -> impl Future<Item = Build, Error = ApiError> {
+    pub async fn lookup_build(&self, build_id: i32) -> Result<Build, ApiError> {
         self.run(move |conn| {
             use schema::builds::dsl::*;
             Ok(builds.filter(id.eq(build_id)).get_result::<Build>(conn)?)
         })
+        .await
     }
 
-    pub fn list_builds(&self) -> impl Future<Item = Vec<Build>, Error = ApiError> {
+    pub async fn list_builds(&self) -> Result<Vec<Build>, ApiError> {
         self.run(move |conn| {
             use schema::builds::dsl::*;
             let (val, _) = RepoState::Purged.to_db();
@@ -291,13 +300,10 @@ impl Db {
                 .filter(repo_state.ne(val))
                 .get_results::<Build>(conn)?)
         })
+        .await
     }
 
-    pub fn add_extra_ids(
-        &self,
-        build_id: i32,
-        ids: Vec<String>,
-    ) -> impl Future<Item = Build, Error = ApiError> {
+    pub async fn add_extra_ids(&self, build_id: i32, ids: Vec<String>) -> Result<Build, ApiError> {
         self.run_in_transaction(move |conn| {
             let current_build = schema::builds::table
                 .filter(schema::builds::id.eq(build_id))
@@ -314,9 +320,10 @@ impl Db {
                 .set(schema::builds::extra_ids.eq(new_ids))
                 .get_result::<Build>(conn)?)
         })
+        .await
     }
 
-    pub fn init_purge(&self, build_id: i32) -> impl Future<Item = (), Error = ApiError> {
+    pub async fn init_purge(&self, build_id: i32) -> Result<(), ApiError> {
         self.run_in_transaction(move |conn| {
             use schema::builds::dsl::*;
             let current_build = builds.filter(id.eq(build_id)).get_result::<Build>(conn)?;
@@ -342,13 +349,14 @@ impl Db {
                 .execute(conn)?;
             Ok(())
         })
+        .await
     }
 
-    pub fn finish_purge(
+    pub async fn finish_purge(
         &self,
         build_id: i32,
         error: Option<String>,
-    ) -> impl Future<Item = Build, Error = ApiError> {
+    ) -> Result<Build, ApiError> {
         self.run_in_transaction(move |conn| {
             use schema::builds::dsl::*;
             let current_build = builds.filter(id.eq(build_id)).get_result::<Build>(conn)?;
@@ -372,27 +380,26 @@ impl Db {
                 .get_result::<Build>(conn)?;
             Ok(new_build)
         })
+        .await
     }
 
     /* Build refs */
 
-    pub fn new_build_ref(
-        &self,
-        a_build_ref: NewBuildRef,
-    ) -> impl Future<Item = BuildRef, Error = ApiError> {
+    pub async fn new_build_ref(&self, a_build_ref: NewBuildRef) -> Result<BuildRef, ApiError> {
         self.run(move |conn| {
             use self::schema::build_refs::dsl::*;
             Ok(diesel::insert_into(build_refs)
                 .values(&a_build_ref)
                 .get_result::<BuildRef>(conn)?)
         })
+        .await
     }
 
-    pub fn lookup_build_ref(
+    pub async fn lookup_build_ref(
         &self,
         the_build_id: i32,
         ref_id: i32,
-    ) -> impl Future<Item = BuildRef, Error = ApiError> {
+    ) -> Result<BuildRef, ApiError> {
         self.run(move |conn| {
             use schema::build_refs::dsl::*;
             Ok(build_refs
@@ -400,18 +407,17 @@ impl Db {
                 .filter(id.eq(ref_id))
                 .get_result::<BuildRef>(conn)?)
         })
+        .await
     }
 
     #[allow(dead_code)]
-    pub fn lookup_build_refs(
-        &self,
-        the_build_id: i32,
-    ) -> impl Future<Item = Vec<BuildRef>, Error = ApiError> {
+    pub async fn lookup_build_refs(&self, the_build_id: i32) -> Result<Vec<BuildRef>, ApiError> {
         self.run(move |conn| {
             use schema::build_refs::dsl::*;
             Ok(build_refs
                 .filter(build_id.eq(the_build_id))
                 .get_results::<BuildRef>(conn)?)
         })
+        .await
     }
 }
