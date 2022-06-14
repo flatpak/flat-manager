@@ -1,0 +1,16 @@
+app-id: org.flatpak.FlatManagerCI
+runtime: org.freedesktop.Platform
+runtime-version: '21.08'
+sdk: org.freedesktop.Sdk
+command: hello.sh
+modules:
+  - name: hello
+    buildsystem: simple
+    build-commands:
+      - install -D hello.sh /app/bin/hello.sh
+      - install -D org.flatpak.FlatManagerCI.metainfo.xml /app/share/metainfo/org.flatpak.FlatManagerCI.metainfo.xml
+    sources:
+      - type: file
+        path: hello.sh
+      - type: file
+        path: org.flatpak.FlatManagerCI.metainfo.xml
