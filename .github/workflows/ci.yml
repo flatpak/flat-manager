@@ -31,6 +31,22 @@ jobs:
         with:
           command: test
 
+  end-to-end:
+    name: End-to-end upload test
+    runs-on: ubuntu-latest
+    steps:
+     - uses: actions/checkout@v2
+
+     - name: Start containers
+       working-directory: ./tests
+       run: docker-compose up -d
+
+     - name: Wait for the containers to finish loading
+       run: sleep 10
+
+     - name: Run test
+       run: docker exec flat-manager ./tests/run-test.py
+
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest

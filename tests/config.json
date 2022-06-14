@@ -1,0 +1,30 @@
+{
+    "repos": {
+        "stable": {
+            "path": "repo",
+            "collection-id": "org.test.Stable",
+            "suggested-repo-name": "flat-manager-test",
+            "runtime-repo-url": "https://dl.flathub.org/repo/flathub.flatpakrepo",
+            "gpg-key": "@GPG_KEY@",
+            "base-url": null,
+            "subsets": {
+                "all": {
+                    "collection-id": "org.test.Stable",
+                    "base-url": null
+                },
+                "free": {
+                    "collection-id": "org.test.Stable.test",
+                    "base-url": null
+                }
+            }
+        }
+    },
+    "port": 8080,
+    "delay-update-secs": 3,
+    "database-url": "postgres://postgres:postgres@db/test_db",
+    "build-repo-base": "build-repo",
+    "build-gpg-key": null,
+    "gpg-homedir": null,
+    "secret": "c2VjcmV0Cg==",
+    "repo-secret": "c2VjcmV0Cg=="
+}

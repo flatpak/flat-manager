@@ -1,0 +1,22 @@
+version: "3"
+
+services:
+  flat-manager:
+    privileged: true # needed for flatpak-builder to work
+    container_name: flat-manager
+    build:
+      dockerfile: tests/Dockerfile
+      context: ..
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+  db:
+    image: docker.io/library/postgres:12
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=test_db
