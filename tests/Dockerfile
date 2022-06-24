@@ -1,4 +1,4 @@
-FROM rust:latest
+FROM rust:1.61-bullseye
 
 # Install run-tests.py's dependencies
 RUN apt-get update

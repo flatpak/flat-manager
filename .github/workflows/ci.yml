@@ -39,13 +39,14 @@ jobs:
 
      - name: Start containers
        working-directory: ./tests
-       run: docker-compose up -d
+       run: docker compose up -d
 
      - name: Wait for the containers to finish loading
        run: sleep 10
 
      - name: Run test
-       run: docker exec flat-manager ./tests/run-test.py
+       working-directory: ./tests
+       run: docker compose exec flat-manager ./tests/run-test.py
 
   fmt:
     name: Rustfmt

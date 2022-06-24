@@ -25,6 +25,6 @@
     "build-repo-base": "build-repo",
     "build-gpg-key": null,
     "gpg-homedir": null,
-    "secret": "c2VjcmV0Cg==",
-    "repo-secret": "c2VjcmV0Cg=="
+    "secret": "c2VjcmV0",
+    "repo-secret": "c2VjcmV0"
 }
