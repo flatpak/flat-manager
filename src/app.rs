@@ -156,6 +156,8 @@ pub enum ClaimsScope {
     Generate,
     // Permission to list builds and to download a build repo.
     Download,
+    // Permission to re-publish an app.
+    Republish,
     #[serde(other)]
     Unknown,
 }
@@ -630,6 +632,10 @@ pub fn create_app(
                     )
                     .service(
                         web::resource("/build/{id}/purge").route(web::post().to_async(api::purge)),
+                    )
+                    .service(
+                        web::resource("/repo/{repo}/republish")
+                            .route(web::post().to_async(api::republish)),
                     )
                     .service(web::resource("/delta/worker").route(web::get().to(api::ws_delta)))
                     .service(

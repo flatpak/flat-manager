@@ -909,6 +909,45 @@ async fn publish_async(
     respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
 }
 
+#[derive(Deserialize)]
+pub struct RepublishPathParams {
+    repo: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RepublishArgs {
+    app: String,
+}
+
+pub fn republish(
+    args: Json<RepublishArgs>,
+    params: Path<RepublishPathParams>,
+    job_queue: Data<Addr<JobQueue>>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> impl Future<Item = HttpResponse, Error = ApiError> {
+    Box::pin(republish_async(args, params, job_queue, db, req)).compat()
+}
+
+async fn republish_async(
+    args: Json<RepublishArgs>,
+    params: Path<RepublishPathParams>,
+    job_queue: Data<Addr<JobQueue>>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    req.has_token_claims("build", ClaimsScope::Republish)?;
+    req.has_token_prefix(&args.app)?;
+    req.has_token_repo(&params.repo)?;
+
+    let job = db
+        .start_republish_job(params.repo.clone(), args.app.clone())
+        .await?;
+    job_queue.do_send(ProcessJobs(Some(params.repo.clone())));
+
+    respond_with_url(&job, &req, "show_job", &[job.id.to_string()])
+}
+
 pub fn purge(
     params: Path<BuildPathParams>,
     db: Data<Db>,

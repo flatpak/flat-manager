@@ -28,15 +28,15 @@ use std::str;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time;
+use tempfile::TempDir;
 use walkdir::WalkDir;
 
 use crate::app::{Config, RepoConfig};
 use crate::deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
 use crate::errors::{JobError, JobResult};
-use crate::models::{self, BuildRef};
 use crate::models::{
-    job_dependencies_with_status, CommitJob, Job, JobDependency, JobKind, JobStatus, NewJob,
-    PublishJob, PublishedState, RepoState, UpdateRepoJob,
+    self, job_dependencies_with_status, CommitJob, Job, JobDependency, JobKind, JobStatus, NewJob,
+    PublishJob, PublishedState, RepoState, RepublishJob, UpdateRepoJob,
 };
 use crate::ostree;
 use crate::schema;
@@ -256,6 +256,39 @@ fn queue_update_job(
     }
 }
 
+fn schedule_update_job(
+    config: &Config,
+    conn: &PgConnection,
+    repo: &str,
+    starting_job_id: i32,
+) -> Result<Job, DieselError> {
+    let delay = config.delay_update_secs;
+    let (is_new, update_job) = queue_update_job(delay, conn, repo, Some(starting_job_id))?;
+
+    if is_new {
+        job_log_and_info(
+            starting_job_id,
+            conn,
+            &format!(
+                "Queued repository update job {}{}",
+                update_job.id,
+                match delay {
+                    0 => "".to_string(),
+                    _ => format!(" in {} secs", delay),
+                }
+            ),
+        );
+    } else {
+        job_log_and_info(
+            starting_job_id,
+            conn,
+            &format!("Piggy-backed on existing update job {}", update_job.id),
+        );
+    }
+
+    Ok(update_job)
+}
+
 pub struct JobExecutor {
     pub repo: Option<String>,
     pub config: Arc<Config>,
@@ -319,6 +352,7 @@ fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance> {
         Some(JobKind::UpdateRepo) => {
             UpdateRepoJobInstance::new(job, executor.delta_generator.clone())
         }
+        Some(JobKind::Republish) => RepublishJobInstance::new(job),
         _ => InvalidJobInstance::new(job, JobError::new("Unknown job type")),
     }
 }
@@ -420,9 +454,15 @@ impl CommitJobInstance {
         };
 
         for build_ref in build_refs.iter() {
-            let storefront_info = self
-                .use_storefront_info(config, build_ref, upload_path.to_str().unwrap(), conn)
-                .map_err(|e| JobError::new(&format!("Failed to apply storefront info: {}", e)))?;
+            let storefront_info = use_storefront_info(
+                self.job_id,
+                config,
+                &build_ref.ref_name,
+                &build_ref.commit,
+                upload_path.to_str().unwrap(),
+                conn,
+            )
+            .map_err(|e| JobError::new(&format!("Failed to apply storefront info: {}", e)))?;
 
             let mut cmd = Command::new("flatpak");
             cmd.arg("build-commit-from")
@@ -505,153 +545,153 @@ impl CommitJobInstance {
 
         Ok(json!({ "refs": commits }))
     }
+}
 
-    fn use_storefront_info(
-        &self,
-        config: &Config,
-        build_ref: &BuildRef,
-        upload_path: &str,
-        conn: &PgConnection,
-    ) -> Result<Option<(StorefrontInfo, String)>, Box<dyn Error>> {
-        /* If applicable, get the storefront info for this app from the backend and apply it to the commit. This might
-        require rewriting the commit with a new dirtree. */
+fn use_storefront_info(
+    job_id: i32,
+    config: &Config,
+    build_ref_name: &str,
+    build_ref_commit: &str,
+    upload_path: &str,
+    conn: &PgConnection,
+) -> Result<Option<(StorefrontInfo, String)>, Box<dyn Error>> {
+    /* If applicable, get the storefront info for this app from the backend and apply it to the commit. This might
+    require rewriting the commit with a new dirtree. */
 
-        fn mtree_lookup(
-            mtree: &MutableTree,
-            path: &[&str],
-        ) -> Result<(Option<GString>, Option<MutableTree>), Box<dyn Error>> {
-            match path {
-                [file] => mtree.lookup(file).map_err(Into::into),
-                [subdir, rest @ ..] => mtree_lookup(
-                    &mtree
-                        .lookup(subdir)?
-                        .1
-                        .ok_or_else(|| "subdirectory not found".to_string())?,
-                    rest,
-                ),
-                [] => Err("no path given".into()),
-            }
-        }
-
-        let mtree_lookup_file = |mtree, path| -> Result<_, Box<dyn Error>> {
-            mtree_lookup(mtree, path)?
-                .0
-                .ok_or_else(|| "file not found".into())
-        };
-
-        let app_id = build_ref.ref_name.split('/').nth(1).unwrap();
-
-        if build_ref.ref_name.starts_with("app/") {
-            if let Some(endpoint) = &config.storefront_info_endpoint {
-                let convert_err =
-                    |e| format!("Failed to fetch storefront info from {}: {}", &endpoint, e);
-
-                /* Fetch the storefront info */
-                let storefront_info = reqwest::blocking::Client::new()
-                    .get(endpoint)
-                    .query(&[("app_id", app_id)])
-                    .send()
-                    .map_err(convert_err)?
-                    .error_for_status()?
-                    .json::<StorefrontInfo>()
-                    .map_err(convert_err)?;
-
-                /* Read the appstream file from the commit */
-                let repo = libostree::Repo::new_for_path(upload_path);
-                repo.open(NONE_CANCELLABLE)?;
-
-                let mtree = libostree::MutableTree::from_commit(&repo, &build_ref.commit)?;
-
-                let appstream_file = mtree_lookup_file(
-                    &mtree,
-                    &[
-                        "files",
-                        "share",
-                        "app-info",
-                        "xmls",
-                        &format!("{}.xml.gz", app_id),
-                    ],
-                ).map_err(|e| format!("Failed to apply storefront info: Could not find the appstream file in the uploaded commit: {}",e))?;
-
-                let (appstream_file, fileinfo, _) =
-                    repo.load_file(&appstream_file, NONE_CANCELLABLE)?;
-
-                let appstream_content = appstream_file
-                    .unwrap()
-                    .read_bytes(fileinfo.size().try_into().unwrap(), NONE_CANCELLABLE)?;
-
-                let mut s = String::new();
-                GzDecoder::new(&*appstream_content).read_to_string(&mut s)?;
-
-                storefront_info.validate_storefront_info(app_id, &s)?;
-                let new_appstream = storefront_info.apply_storefront_info(&s)?;
-
-                if new_appstream == s {
-                    /* If the appstream file didn't change, we shouldn't bother rewriting the commit  */
-                    return Ok(Some((storefront_info, build_ref.commit.clone())));
-                }
-
-                /* gzip encode the new appstream file */
-                let mut s = vec![];
-                GzEncoder::new(&mut s, Compression::default())
-                    .write_all(new_appstream.as_bytes())?;
-
-                /* Make sure all the file attributes are correct */
-                fileinfo.set_size(s.len().try_into().expect("integer overflow on file size"));
-                fileinfo.set_name(format!("{}.xml.gz", app_id));
-                fileinfo.set_file_type(FileType::Regular);
-                fileinfo.set_attribute_uint32("unix::uid", 0);
-                fileinfo.set_attribute_uint32("unix::gid", 0);
-                fileinfo.set_attribute_uint32("unix::mode", 0o100644);
-
-                repo.prepare_transaction(NONE_CANCELLABLE)?;
-
-                /* Write the new appstream file to the repo */
-                let checksum =
-                    repo.write_regfile_inline(None, 0, 0, 0o100644, None, &s, NONE_CANCELLABLE)?;
-
-                /* Edit the MutableTree with a reference to the new appstream file */
-                mtree_lookup(&mtree, &["files", "share", "app-info", "xmls"])?
+    fn mtree_lookup(
+        mtree: &MutableTree,
+        path: &[&str],
+    ) -> Result<(Option<GString>, Option<MutableTree>), Box<dyn Error>> {
+        match path {
+            [file] => mtree.lookup(file).map_err(Into::into),
+            [subdir, rest @ ..] => mtree_lookup(
+                &mtree
+                    .lookup(subdir)?
                     .1
-                    .ok_or("file not found")?
-                    .replace_file(&format!("{}.xml.gz", app_id), &checksum)?;
+                    .ok_or_else(|| "subdirectory not found".to_string())?,
+                rest,
+            ),
+            [] => Err("no path given".into()),
+        }
+    }
 
-                let repo_file = repo.write_mtree(&mtree, NONE_CANCELLABLE)?;
+    let mtree_lookup_file = |mtree, path| -> Result<_, Box<dyn Error>> {
+        mtree_lookup(mtree, path)?
+            .0
+            .ok_or_else(|| "file not found".into())
+    };
 
-                /* Copy the original commit metadata. Leave out extended attributes, that's just the signature, which
-                won't be valid when we rewrite the commit (and we will sign the resulting commit ourselves anyway) */
-                let commit_metadata = repo.load_commit(&build_ref.commit)?.0;
-                let metadata = commit_metadata.child_get::<VariantDict>(0);
-                let subject = &commit_metadata.child_get::<String>(3);
-                let body = &commit_metadata.child_get::<String>(4);
-                let time = libostree::commit_get_timestamp(&commit_metadata);
+    let app_id = build_ref_name.split('/').nth(1).unwrap();
 
-                /* Write a new commit with the new dirtree but (mostly) the same metadata */
-                let commit = repo.write_commit_with_time(
-                    Some(&build_ref.commit),
-                    Some(subject),
-                    Some(body),
-                    Some(&metadata.end()),
-                    repo_file.dynamic_cast_ref().unwrap(),
-                    time,
-                    NONE_CANCELLABLE,
-                )?;
+    if build_ref_name.starts_with("app/") {
+        if let Some(endpoint) = &config.storefront_info_endpoint {
+            let convert_err =
+                |e| format!("Failed to fetch storefront info from {}: {}", &endpoint, e);
 
-                repo.commit_transaction(NONE_CANCELLABLE)?;
+            /* Fetch the storefront info */
+            let storefront_info = reqwest::blocking::Client::new()
+                .get(endpoint)
+                .query(&[("app_id", app_id)])
+                .send()
+                .map_err(convert_err)?
+                .error_for_status()?
+                .json::<StorefrontInfo>()
+                .map_err(convert_err)?;
 
-                job_log_and_info(
-                    self.job_id,
-                    conn,
-                    &format!("Rewriting commit {} -> {}", build_ref.commit, commit),
-                );
+            /* Read the appstream file from the commit */
+            let repo = libostree::Repo::new_for_path(upload_path);
+            repo.open(NONE_CANCELLABLE)?;
 
-                Ok(Some((storefront_info, commit.to_string())))
-            } else {
-                Ok(None)
+            let mtree = libostree::MutableTree::from_commit(&repo, build_ref_commit)?;
+
+            let appstream_file = mtree_lookup_file(
+                &mtree,
+                &[
+                    "files",
+                    "share",
+                    "app-info",
+                    "xmls",
+                    &format!("{}.xml.gz", app_id),
+                ],
+            ).map_err(|e| format!("Failed to apply storefront info: Could not find the appstream file in the uploaded commit: {}",e))?;
+
+            let (appstream_file, fileinfo, _) =
+                repo.load_file(&appstream_file, NONE_CANCELLABLE)?;
+
+            let appstream_content = appstream_file
+                .unwrap()
+                .read_bytes(fileinfo.size().try_into().unwrap(), NONE_CANCELLABLE)?;
+
+            let mut s = String::new();
+            GzDecoder::new(&*appstream_content).read_to_string(&mut s)?;
+
+            storefront_info.validate_storefront_info(app_id, &s)?;
+            let new_appstream = storefront_info.apply_storefront_info(&s)?;
+
+            if new_appstream == s {
+                /* If the appstream file didn't change, we shouldn't bother rewriting the commit  */
+                return Ok(Some((storefront_info, build_ref_commit.to_string())));
             }
+
+            /* gzip encode the new appstream file */
+            let mut s = vec![];
+            GzEncoder::new(&mut s, Compression::default()).write_all(new_appstream.as_bytes())?;
+
+            /* Make sure all the file attributes are correct */
+            fileinfo.set_size(s.len().try_into().expect("integer overflow on file size"));
+            fileinfo.set_name(format!("{}.xml.gz", app_id));
+            fileinfo.set_file_type(FileType::Regular);
+            fileinfo.set_attribute_uint32("unix::uid", 0);
+            fileinfo.set_attribute_uint32("unix::gid", 0);
+            fileinfo.set_attribute_uint32("unix::mode", 0o100644);
+
+            repo.prepare_transaction(NONE_CANCELLABLE)?;
+
+            /* Write the new appstream file to the repo */
+            let checksum =
+                repo.write_regfile_inline(None, 0, 0, 0o100644, None, &s, NONE_CANCELLABLE)?;
+
+            /* Edit the MutableTree with a reference to the new appstream file */
+            mtree_lookup(&mtree, &["files", "share", "app-info", "xmls"])?
+                .1
+                .ok_or("file not found")?
+                .replace_file(&format!("{}.xml.gz", app_id), &checksum)?;
+
+            let repo_file = repo.write_mtree(&mtree, NONE_CANCELLABLE)?;
+
+            /* Copy the original commit metadata. Leave out extended attributes, that's just the signature, which
+            won't be valid when we rewrite the commit (and we will sign the resulting commit ourselves anyway) */
+            let (commit_metadata, _state) = repo.load_commit(build_ref_commit)?;
+            let metadata = commit_metadata.child_get::<VariantDict>(0);
+            let subject = &commit_metadata.child_get::<String>(3);
+            let body = &commit_metadata.child_get::<String>(4);
+            let time = libostree::commit_get_timestamp(&commit_metadata);
+
+            /* Write a new commit with the new dirtree but (mostly) the same metadata */
+            let commit = repo.write_commit_with_time(
+                Some(build_ref_commit),
+                Some(subject),
+                Some(body),
+                Some(&metadata.end()),
+                repo_file.dynamic_cast_ref().unwrap(),
+                time,
+                NONE_CANCELLABLE,
+            )?;
+
+            repo.commit_transaction(NONE_CANCELLABLE)?;
+
+            job_log_and_info(
+                job_id,
+                conn,
+                &format!("Rewriting commit {} -> {}", build_ref_commit, commit),
+            );
+
+            Ok(Some((storefront_info, commit.to_string())))
         } else {
             Ok(None)
         }
+    } else {
+        Ok(None)
     }
 }
 
@@ -831,29 +871,7 @@ impl PublishJobInstance {
         }
 
         /* Create update repo job */
-        let delay = config.delay_update_secs;
-        let (is_new, update_job) =
-            queue_update_job(delay, conn, &repoconfig.name, Some(self.job_id))?;
-        if is_new {
-            job_log_and_info(
-                self.job_id,
-                conn,
-                &format!(
-                    "Queued repository update job {}{}",
-                    update_job.id,
-                    match delay {
-                        0 => "".to_string(),
-                        _ => format!(" in {} secs", delay),
-                    }
-                ),
-            );
-        } else {
-            job_log_and_info(
-                self.job_id,
-                conn,
-                &format!("Piggy-backed on existing update job {}", update_job.id),
-            );
-        }
+        let update_job = schedule_update_job(config, conn, &repoconfig.name, self.job_id)?;
 
         Ok(json!({
             "refs": commits,
@@ -938,6 +956,176 @@ impl JobInstance for PublishJobInstance {
         })?;
 
         res
+    }
+}
+
+#[derive(Debug)]
+struct RepublishJobInstance {
+    pub job_id: i32,
+    pub repo: String,
+    pub app: String,
+}
+
+impl RepublishJobInstance {
+    #[allow(clippy::new_ret_no_self)]
+    fn new(job: Job) -> Box<dyn JobInstance> {
+        if let Ok(republish_job) = serde_json::from_str::<RepublishJob>(&job.contents) {
+            Box::new(RepublishJobInstance {
+                job_id: job.id,
+                repo: republish_job.repo,
+                app: republish_job.app,
+            })
+        } else {
+            InvalidJobInstance::new(job, JobError::new("Can't parse republish job"))
+        }
+    }
+}
+
+impl JobInstance for RepublishJobInstance {
+    fn get_job_id(&self) -> i32 {
+        self.job_id
+    }
+
+    fn order(&self) -> i32 {
+        1 /* Same priority as regular publish jobs. */
+    }
+
+    fn handle_job(
+        &mut self,
+        executor: &JobExecutor,
+        conn: &PgConnection,
+    ) -> JobResult<serde_json::Value> {
+        info!(
+            "#{}: Handling Job Republish: repo: {}, app: {}",
+            &self.job_id, &self.repo, &self.app,
+        );
+
+        // Get repo config
+        let config = &executor.config;
+        let repoconfig = config
+            .get_repoconfig(&self.repo)
+            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &self.repo)))?;
+
+        let repo = libostree::Repo::new_for_path(repoconfig.get_abs_repo_path());
+        repo.open(NONE_CANCELLABLE)
+            .map_err(|e| JobError::new(&format!("Failed to open repo {}: {}", &self.repo, e)))?;
+
+        /* Create a temporary repo to use while editing commits, so that intermediate commits don't clutter the main
+        repo. */
+        let tmp_dir = &repoconfig
+            .get_abs_repo_path()
+            .join("tmp")
+            .join("republish-repos");
+        fs::create_dir_all(tmp_dir)?;
+        let tmp_repo_dir = TempDir::new_in(tmp_dir).map_err(|e| {
+            JobError::new(&format!("Failed to create temporary repo directory: {}", e))
+        })?;
+
+        let tmp_repo = libostree::Repo::new(&libostree::gio::File::for_path(tmp_repo_dir.path()));
+        tmp_repo
+            .create(libostree::RepoMode::Archive, NONE_CANCELLABLE)
+            .map_err(|e| JobError::new(&format!("Failed to create temporary repo: {}", e)))?;
+
+        /* Set the parent repo so we can reuse existing objects */
+        let repo_config = repo
+            .copy_config()
+            .expect("newly created repo should have a configuration");
+        repo_config.set_string(
+            "core",
+            "parent",
+            repoconfig
+                .get_abs_repo_path()
+                .to_str()
+                .expect("this path should be valid utf-8"),
+        );
+        tmp_repo
+            .write_config(&repo_config)
+            .map_err(|e| JobError::new(&format!("Failed to configure temporary repo: {}", e)))?;
+
+        /* Find all refs that match the app */
+        let refs = repo
+            .list_refs_ext(
+                Some(&format!("app/{}", self.app)),
+                libostree::RepoListRefsExtFlags::NONE,
+                NONE_CANCELLABLE,
+            )
+            .map_err(|e| JobError::new(&format!("Failed to load repo {}: {}", &self.repo, e)))?;
+
+        /* Rewrite commits */
+        for (ref_name, checksum) in refs {
+            job_log_and_info(
+                self.job_id,
+                conn,
+                &format!("Re-publishing {} in repo {}", &ref_name, &self.repo),
+            );
+
+            let mut cmd = Command::new("flatpak");
+            cmd.arg("build-commit-from")
+                .arg("--force") // Always generate a new commit even if nothing changed
+                .arg("--no-update-summary")
+                .arg("--disable-fsync"); // No need for fsync in intermediate steps
+
+            cmd.arg(&format!(
+                "--src-repo={}",
+                repoconfig
+                    .get_abs_repo_path()
+                    .to_str()
+                    .expect("repo paths should be valid unicode")
+            ))
+            .arg(&format!("--src-ref={}", ref_name))
+            .arg(tmp_repo_dir.path())
+            .arg(&ref_name);
+
+            do_command(cmd)?;
+
+            /* Edit the storefront info */
+            let storefront_info = use_storefront_info(
+                self.job_id,
+                config,
+                &ref_name,
+                &checksum,
+                tmp_repo_dir.path().to_str().unwrap(),
+                conn,
+            )
+            .map_err(|e| JobError::new(&format!("Failed to apply storefront info: {}", e)))?;
+
+            /* Publish the commit back to the main repo */
+
+            let mut cmd = Command::new("flatpak");
+            cmd.arg("build-commit-from")
+                .arg("--force")
+                .arg("--no-update-summary");
+
+            if let Some(token_type) = storefront_info.as_ref().and_then(|s| s.0.token_type) {
+                cmd.arg(format!("--token-type={}", token_type));
+            }
+
+            add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
+
+            let real_commit = if let Some(storefront_info) = &storefront_info {
+                &storefront_info.1
+            } else {
+                &checksum
+            };
+
+            cmd.arg(&format!(
+                "--src-repo={}",
+                tmp_repo_dir
+                    .path()
+                    .to_str()
+                    .expect("repo paths should be valid unicode")
+            ))
+            .arg(&format!("--src-ref={}", real_commit))
+            .arg(repoconfig.get_abs_repo_path())
+            .arg(&ref_name);
+
+            do_command(cmd)?;
+        }
+
+        /* The repo summary may need to be updated */
+        schedule_update_job(config, conn, &self.repo, self.job_id)?;
+
+        Ok(json!({}))
     }
 }
 

@@ -288,7 +288,7 @@ mod tests {
     fn run_error_test(input: &str, expected_error: &str) {
         let mut info = StorefrontInfo::default();
 
-        info.check_url_types.blocked = vec!["bugtracker".to_string()].into();
+        info.check_url_types.blocked = vec!["bugtracker".to_string()];
         info.check_custom_values.blocked = vec!["TestKey2".to_string()];
 
         info.check_xml_tags.allowed = Some(vec![
