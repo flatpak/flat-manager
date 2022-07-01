@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(60);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DeltaRequest {
     pub repo: String,
     pub delta: ostree::Delta,
