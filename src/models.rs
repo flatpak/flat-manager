@@ -1,3 +1,6 @@
+/* see https://github.com/rust-lang/rust-clippy/issues/9014 */
+#![allow(clippy::extra_unused_lifetimes)]
+
 use crate::schema::{build_refs, builds, job_dependencies, jobs};
 use serde::{Deserialize, Serialize};
 use std::{mem, time};
@@ -8,7 +11,7 @@ pub struct NewBuild {
     pub repo: String,
 }
 
-#[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
+#[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]
 pub struct Build {
     pub id: i32,
     pub created: chrono::NaiveDateTime,
@@ -26,7 +29,7 @@ pub struct Build {
     pub extra_ids: Vec<String>,
 }
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, Debug, Eq, PartialEq)]
 pub enum PublishedState {
     Unpublished,
     Publishing,
@@ -116,7 +119,7 @@ pub struct NewBuildRef {
     pub commit: String,
 }
 
-#[derive(Identifiable, Associations, Serialize, Queryable, PartialEq, Debug)]
+#[derive(Identifiable, Associations, Serialize, Queryable, Eq, PartialEq, Debug)]
 #[belongs_to(Build)]
 pub struct BuildRef {
     pub id: i32,
@@ -135,7 +138,7 @@ table! {
 
 allow_tables_to_appear_in_same_query!(jobs, job_dependencies_with_status,);
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, Debug, Eq, PartialEq)]
 pub enum JobStatus {
     New,
     Started,
@@ -155,7 +158,7 @@ impl JobStatus {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum JobKind {
     Commit,
     Publish,
@@ -190,7 +193,7 @@ pub struct NewJob {
     pub repo: Option<String>,
 }
 
-#[derive(Identifiable, Serialize, Queryable, Debug, PartialEq)]
+#[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]
 pub struct Job {
     pub id: i32,
     pub kind: i16,

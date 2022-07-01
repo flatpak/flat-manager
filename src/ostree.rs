@@ -16,7 +16,7 @@ use std::{collections::HashMap, path::Path};
 use tokio_process::CommandExt;
 use walkdir::WalkDir;
 
-#[derive(Fail, Debug, Clone, PartialEq)]
+#[derive(Fail, Debug, Clone, Eq, PartialEq)]
 pub enum OstreeError {
     #[fail(display = "No such ref: {}", _0)]
     NoSuchRef(String),

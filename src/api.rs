@@ -492,7 +492,8 @@ async fn add_extra_ids_async(
 }
 
 fn is_all_lower_hexdigits(s: &str) -> bool {
-    !s.contains(|c: char| !c.is_digit(16) || c.is_uppercase())
+    s.chars()
+        .all(|c: char| c.is_ascii_hexdigit() && !c.is_uppercase())
 }
 
 fn filename_parse_object(filename: &str) -> Option<path::PathBuf> {
@@ -518,7 +519,7 @@ fn filename_parse_object(filename: &str) -> Option<path::PathBuf> {
 }
 
 fn is_all_digits(s: &str) -> bool {
-    !s.contains(|c: char| !c.is_digit(10))
+    !s.contains(|c: char| !c.is_ascii_digit())
 }
 
 /* Delta part filenames with no slashes, ending with .{part}.delta.
@@ -965,4 +966,16 @@ pub fn ws_delta(
         &req,
         stream,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_all_lower_hexdigits() {
+        assert!(is_all_lower_hexdigits("0123456789abcdef"));
+        assert!(!is_all_lower_hexdigits("0123456789Abcdef"));
+        assert!(!is_all_lower_hexdigits("?"));
+    }
 }
