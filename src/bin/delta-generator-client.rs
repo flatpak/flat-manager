@@ -431,7 +431,7 @@ impl WriteHandler<WsProtocolError> for DeltaClient {}
 
 fn main() {
     env::set_var("RUST_LOG", "info");
-    let _ = env_logger::init();
+    env_logger::init();
     let sys = actix::System::new("delta-generator-client");
 
     let cwd = std::env::current_dir().expect("Can't get cwd");

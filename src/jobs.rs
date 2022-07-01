@@ -9,6 +9,7 @@ use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::Write;
 use std::iter::FromIterator;
@@ -115,22 +116,22 @@ Url={}
      */
     if let Some(collection_id) = &repoconfig.collection_id {
         if repoconfig.deploy_collection_id && maybe_build_id == None {
-            contents.push_str(&format!("DeployCollectionID={}\n", collection_id));
+            writeln!(contents, "DeployCollectionID={}", collection_id).unwrap();
         }
     };
 
     if maybe_build_id == None {
         if let Some(suggested_name) = &repoconfig.suggested_repo_name {
-            contents.push_str(&format!("SuggestRemoteName={}\n", suggested_name));
+            writeln!(contents, "SuggestRemoteName={}", suggested_name).unwrap();
         }
     }
 
     if let Some(gpg_content) = maybe_gpg_content {
-        contents.push_str(&format!("GPGKey={}\n", gpg_content))
+        writeln!(contents, "GPGKey={}", gpg_content).unwrap();
     }
 
     if let Some(runtime_repo_url) = &repoconfig.runtime_repo_url {
-        contents.push_str(&format!("RuntimeRepo={}\n", runtime_repo_url));
+        writeln!(contents, "RuntimeRepo={}\n", runtime_repo_url).unwrap();
     }
 
     (filename, contents)
