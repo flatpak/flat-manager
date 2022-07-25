@@ -213,4 +213,8 @@ impl ResponseError for ApiError {
         }
         HttpResponse::build(self.status_code()).json(self.to_json())
     }
+
+    fn render_response(&self) -> HttpResponse {
+        self.error_response()
+    }
 }
