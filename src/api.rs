@@ -26,7 +26,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 
-use crate::app::{Claims, Config};
+use crate::app::{Claims, Config, ClaimsScope};
 use crate::db::*;
 use crate::deltas::{DeltaGenerator, RemoteWorker};
 use crate::errors::ApiError;
@@ -102,7 +102,7 @@ where
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TokenSubsetArgs {
     sub: String,
-    scope: Vec<String>,
+    scope: Vec<ClaimsScope>,
     duration: i64,
     prefixes: Option<Vec<String>>,
     repos: Option<Vec<String>>,
@@ -209,7 +209,7 @@ async fn get_job_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims("build", "jobs")?;
+    req.has_token_claims("build", ClaimsScope::Jobs)?;
     let job = db.lookup_job(params.id, args.log_offset).await?;
     Ok(HttpResponse::Ok().json(job))
 }
@@ -237,7 +237,7 @@ async fn create_build_async(
     let repo1 = args.repo.clone();
     let repo2 = args.repo.clone();
 
-    req.has_token_claims("build", "build")?;
+    req.has_token_claims("build", ClaimsScope::Build)?;
     req.has_token_repo(&repo1)?;
 
     let repoconfig = config.get_repoconfig(&repo2).map(|rc| rc.clone())?; // Ensure the repo exists
@@ -269,7 +269,7 @@ pub fn builds(
 }
 
 async fn builds_async(db: Data<Db>, req: HttpRequest) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims("build", "build")?;
+    req.has_token_claims("build", ClaimsScope::Build)?;
     let builds = db.list_builds().await?;
     Ok(HttpResponse::Ok().json(builds))
 }
@@ -292,9 +292,9 @@ async fn get_build_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "build")
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)
         /* We allow getting a build for uploaders too, as it is similar info, and useful */
-        .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), "upload"))?;
+        .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload))?;
     let build = db.lookup_build(params.id).await?;
     Ok(HttpResponse::Ok().json(build))
 }
@@ -318,7 +318,7 @@ async fn get_build_ref_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "build")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
     let build_ref = db.lookup_build_ref(params.id, params.ref_id).await?;
     Ok(HttpResponse::Ok().json(build_ref))
 }
@@ -358,7 +358,7 @@ pub fn missing_objects(
     config: Data<Config>,
     req: HttpRequest,
 ) -> HttpResponse {
-    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), "upload") {
+    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload) {
         return e.error_response();
     }
     let mut missing = vec![];
@@ -423,7 +423,7 @@ async fn create_build_ref_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "upload")
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)
         .and_then(|_| validate_ref(&args.ref_name, &req))?;
 
     let build_id = params.id;
@@ -478,7 +478,7 @@ async fn add_extra_ids_async(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     let ids = args.ids.clone();
-    req.has_token_claims(&format!("build/{}", params.id), "upload")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
 
     ids.iter().try_for_each(|id| validate_id(id))?;
 
@@ -676,7 +676,7 @@ async fn upload_async(
     db: Data<Db>,
     config: Data<Config>,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "upload")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
 
     let uploadstate = Arc::new(UploadState {
         only_deltas: false,
@@ -715,7 +715,7 @@ async fn get_commit_job_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "build")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
     let job = db.lookup_commit_job(params.id, args.log_offset).await?;
     Ok(HttpResponse::Ok().json(job))
 }
@@ -744,7 +744,7 @@ async fn commit_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "build")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
 
     let req2 = req.clone();
     let build_id = params.id;
@@ -777,7 +777,7 @@ async fn get_publish_job_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "build")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
     let job = db.lookup_publish_job(params.id, args.log_offset).await?;
     Ok(HttpResponse::Ok().json(job))
 }
@@ -802,7 +802,7 @@ async fn publish_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "publish")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Publish)?;
     let build_id = params.id;
     let req2 = req.clone();
 
@@ -830,7 +830,7 @@ async fn purge_async(
     config: Data<Config>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), "build")?;
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
 
     let build_repo_path = config.build_repo_base.join(params.id.to_string());
     let build_id = params.id;
@@ -931,7 +931,7 @@ pub fn delta_upload(
     req: HttpRequest,
     config: Data<Config>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    futures::done(req.has_token_claims("delta", "generate"))
+    futures::done(req.has_token_claims("delta", ClaimsScope::Generate))
         .and_then(move |_| futures::done(config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
         .and_then(move |repoconfig| {
             let uploadstate = Arc::new(UploadState {
@@ -953,7 +953,7 @@ pub fn ws_delta(
     delta_generator: Data<Addr<DeltaGenerator>>,
     stream: web::Payload,
 ) -> Result<HttpResponse, actix_web::Error> {
-    if let Err(e) = req.has_token_claims("delta", "generate") {
+    if let Err(e) = req.has_token_claims("delta", ClaimsScope::Generate) {
         return Ok(e.error_response());
     }
     let remote = req

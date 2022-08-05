@@ -10,6 +10,7 @@ use actix_web::{self, http, middleware, web, App, HttpRequest, HttpResponse, Htt
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
+use std::fmt::Display;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
@@ -139,6 +140,24 @@ mod tests {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaimsScope {
+    Jobs,
+    Build,
+    Upload,
+    Publish,
+    Generate,
+    #[serde(other)]
+    Unknown,
+}
+
+impl Display for ClaimsScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", format!("{:?}", self).to_ascii_lowercase())
+    }
+}
+
 /* Claims are used in two forms, one for API calls, and one for
  * general repo access, the second one is simpler and just uses scope
  * for the allowed ids, and sub means the user doing the access (which
@@ -150,7 +169,7 @@ pub struct Claims {
 
     // Below are optional, and not used for repo tokens
     #[serde(default)]
-    pub scope: Vec<String>, // "build", "upload" "publish"
+    pub scope: Vec<ClaimsScope>,
     #[serde(default)]
     pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
     #[serde(default)]
