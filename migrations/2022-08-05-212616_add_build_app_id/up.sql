@@ -1,0 +1,1 @@
+ALTER TABLE builds ADD app_id TEXT;
