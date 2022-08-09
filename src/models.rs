@@ -9,6 +9,7 @@ use std::{mem, time};
 #[table_name = "builds"]
 pub struct NewBuild {
     pub repo: String,
+    pub app_id: Option<String>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]

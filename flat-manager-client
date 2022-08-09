@@ -444,9 +444,12 @@ def get_object_multipart(repo_path, object):
 
 async def create_command(session, args):
     build_url = urljoin(args.manager_url, "api/v1/build")
-    resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json={
+    json = {
         "repo": args.repo
-    })
+    }
+    if args.app_id is not None:
+        json["app_id"] = args.app_id
+    resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json=json)
     async with resp:
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
@@ -630,6 +633,7 @@ if __name__ == '__main__':
     create_parser = subparsers.add_parser('create', help='Create new build')
     create_parser.add_argument('manager_url', help='remote repo manager url')
     create_parser.add_argument('repo', help='repo name')
+    create_parser.add_argument('app_id', nargs='?', help='app ID')
     create_parser.set_defaults(func=create_command)
 
     push_parser = subparsers.add_parser('push', help='Push to repo manager')

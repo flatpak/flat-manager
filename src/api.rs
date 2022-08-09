@@ -217,6 +217,7 @@ async fn get_job_async(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateBuildArgs {
     repo: String,
+    app_id: Option<String>,
 }
 
 pub fn create_build(
@@ -240,11 +241,16 @@ async fn create_build_async(
     req.has_token_claims("build", ClaimsScope::Build)?;
     req.has_token_repo(&repo1)?;
 
+    if let Some(app_id) = &args.app_id {
+        req.has_token_prefix(app_id)?;
+    }
+
     let repoconfig = config.get_repoconfig(&repo2).map(|rc| rc.clone())?; // Ensure the repo exists
 
     let build = db
         .new_build(NewBuild {
             repo: args.repo.clone(),
+            app_id: args.app_id.clone(),
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());
