@@ -16,7 +16,11 @@ pub trait ClaimsValidator {
     fn validate_claims<Func>(&self, func: Func) -> Result<(), ApiError>
     where
         Func: Fn(&Claims) -> Result<(), ApiError>;
-    fn has_token_claims(&self, required_sub: &str, required_scope: ClaimsScope) -> Result<(), ApiError>;
+    fn has_token_claims(
+        &self,
+        required_sub: &str,
+        required_scope: ClaimsScope,
+    ) -> Result<(), ApiError>;
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError>;
     fn has_token_repo(&self, repo: &str) -> Result<(), ApiError>;
 }
@@ -80,7 +84,11 @@ impl ClaimsValidator for HttpRequest {
         }
     }
 
-    fn has_token_claims(&self, required_sub: &str, required_scope: ClaimsScope) -> Result<(), ApiError> {
+    fn has_token_claims(
+        &self,
+        required_sub: &str,
+        required_scope: ClaimsScope,
+    ) -> Result<(), ApiError> {
         self.validate_claims(|claims| {
             // Matches using a path-prefix style comparison:
             //  claim.sub == "build" should match required_sub == "build" or "build/N[/...]"

@@ -27,6 +27,7 @@ pub struct Build {
     pub publish_job_id: Option<i32>,
     pub repo: String,
     pub extra_ids: Vec<String>,
+    pub app_id: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]

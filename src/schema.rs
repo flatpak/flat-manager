@@ -19,6 +19,7 @@ table! {
         publish_job_id -> Nullable<Int4>,
         repo -> Text,
         extra_ids -> Array<Text>,
+        app_id -> Nullable<Text>,
     }
 }
 
