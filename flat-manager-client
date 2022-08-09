@@ -55,7 +55,7 @@ class ApiError(Exception):
         self.status = response.status
 
         try:
-            self.body = json.loads(response);
+            self.body = json.loads(body)
         except:
             self.body = {"status": self.status, "error-type": "no-error", "message": "No json error details from server"}
 
