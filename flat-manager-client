@@ -717,8 +717,7 @@ if __name__ == '__main__':
     res = 1
     output = None
     try:
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(run_with_session(args))
+        result = asyncio.run(run_with_session(args))
 
         output = {
             "command": args.subparser_name,
