@@ -71,44 +71,6 @@ impl Db {
         .await
     }
 
-    pub async fn lookup_commit_job(
-        &self,
-        build_id: i32,
-        log_offset: Option<usize>,
-    ) -> Result<Job, ApiError> {
-        self.run(move |conn| {
-            use schema::builds::dsl::*;
-            use schema::jobs::dsl::*;
-
-            Ok(jobs
-                .inner_join(builds.on(commit_job_id.eq(schema::jobs::dsl::id.nullable())))
-                .select(schema::jobs::all_columns)
-                .filter(schema::builds::dsl::id.eq(build_id))
-                .get_result::<Job>(conn)?
-                .apply_log_offset(log_offset))
-        })
-        .await
-    }
-
-    pub async fn lookup_publish_job(
-        &self,
-        build_id: i32,
-        log_offset: Option<usize>,
-    ) -> Result<Job, ApiError> {
-        self.run(move |conn| {
-            use schema::builds::dsl::*;
-            use schema::jobs::dsl::*;
-
-            Ok(jobs
-                .inner_join(builds.on(publish_job_id.eq(schema::jobs::dsl::id.nullable())))
-                .select(schema::jobs::all_columns)
-                .filter(schema::builds::dsl::id.eq(build_id))
-                .get_result::<Job>(conn)?
-                .apply_log_offset(log_offset))
-        })
-        .await
-    }
-
     pub async fn start_commit_job(
         &self,
         build_id: i32,
@@ -298,6 +260,19 @@ impl Db {
             let (val, _) = RepoState::Purged.to_db();
             Ok(builds
                 .filter(repo_state.ne(val))
+                .filter(app_id.is_null())
+                .get_results::<Build>(conn)?)
+        })
+        .await
+    }
+
+    pub async fn list_builds_for_app(&self, for_app_id: String) -> Result<Vec<Build>, ApiError> {
+        self.run(move |conn| {
+            use schema::builds::dsl::*;
+            let (val, _) = RepoState::Purged.to_db();
+            Ok(builds
+                .filter(repo_state.ne(val))
+                .filter(app_id.eq(for_app_id))
                 .get_results::<Build>(conn)?)
         })
         .await

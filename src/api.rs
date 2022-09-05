@@ -1,7 +1,7 @@
 use actix::prelude::*;
 use actix_multipart::Multipart;
 use actix_web::middleware::BodyEncoding;
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{Data, Json, Path, Query};
 use actix_web::{error, http};
 use actix_web::{web, HttpRequest, HttpResponse, ResponseError, Result};
 use actix_web_actors::ws;
@@ -31,7 +31,7 @@ use crate::db::*;
 use crate::deltas::{DeltaGenerator, RemoteWorker};
 use crate::errors::ApiError;
 use crate::jobs::{JobQueue, ProcessJobs};
-use crate::models::{Job, JobKind, JobStatus, NewBuild, NewBuildRef};
+use crate::models::{Build, Job, JobKind, JobStatus, NewBuild, NewBuildRef};
 use crate::tokens::{self, ClaimsValidator};
 use askama::Template;
 
@@ -215,6 +215,7 @@ async fn get_job_async(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct CreateBuildArgs {
     repo: String,
     app_id: Option<String>,
@@ -235,17 +236,14 @@ async fn create_build_async(
     config: Data<Config>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    let repo1 = args.repo.clone();
-    let repo2 = args.repo.clone();
-
     req.has_token_claims("build", ClaimsScope::Build)?;
-    req.has_token_repo(&repo1)?;
+    req.has_token_repo(&args.repo)?;
 
     if let Some(app_id) = &args.app_id {
         req.has_token_prefix(app_id)?;
     }
 
-    let repoconfig = config.get_repoconfig(&repo2).map(|rc| rc.clone())?; // Ensure the repo exists
+    let repoconfig = config.get_repoconfig(&args.repo).map(|rc| rc.clone())?; // Ensure the repo exists
 
     let build = db
         .new_build(NewBuild {
@@ -267,17 +265,51 @@ async fn create_build_async(
     respond_with_url(&build, &req, "show_build", &[build.id.to_string()])
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ListBuildsArgs {
+    app_id: Option<String>,
+}
+
 pub fn builds(
+    query: Query<ListBuildsArgs>,
     db: Data<Db>,
     req: HttpRequest,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(builds_async(db, req)).compat()
+    Box::pin(builds_async(query, db, req)).compat()
 }
 
-async fn builds_async(db: Data<Db>, req: HttpRequest) -> Result<HttpResponse, ApiError> {
+async fn builds_async(
+    query: Query<ListBuildsArgs>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
     req.has_token_claims("build", ClaimsScope::Build)?;
-    let builds = db.list_builds().await?;
+
+    let builds = if let Some(app_id) = query.app_id.clone() {
+        req.has_token_prefix(&app_id)?;
+        db.list_builds_for_app(app_id).await?
+    } else {
+        db.list_builds().await?
+    };
+
     Ok(HttpResponse::Ok().json(builds))
+}
+
+fn has_token_for_build(req: &HttpRequest, build: &Build) -> Result<(), ApiError> {
+    req.has_token_repo(&build.repo)?;
+
+    if let Some(app_id) = &build.app_id {
+        req.has_token_prefix(app_id)
+            /* Hide the app ID of the build, since we can't access it */
+            .map_err(|_| {
+                ApiError::NotEnoughPermissions(
+                    "Build's app ID not matching prefix in token".to_string(),
+                )
+            })
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -301,7 +333,10 @@ async fn get_build_async(
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)
         /* We allow getting a build for uploaders too, as it is similar info, and useful */
         .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload))?;
+
     let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
     Ok(HttpResponse::Ok().json(build))
 }
 
@@ -325,6 +360,10 @@ async fn get_build_ref_async(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
+
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
     let build_ref = db.lookup_build_ref(params.id, params.ref_id).await?;
     Ok(HttpResponse::Ok().json(build_ref))
 }
@@ -361,21 +400,35 @@ fn has_object(build_id: i32, object: &str, config: &Data<Config>) -> bool {
 pub fn missing_objects(
     args: Json<MissingObjectsArgs>,
     params: Path<BuildPathParams>,
+    db: Data<Db>,
     config: Data<Config>,
     req: HttpRequest,
-) -> HttpResponse {
-    if let Err(e) = req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload) {
-        return e.error_response();
-    }
-    let mut missing = vec![];
-    for object in &args.wanted {
-        if !has_object(params.id, object, &config) {
-            missing.push(object.to_string());
-        }
-    }
-    HttpResponse::Ok()
+) -> impl Future<Item = HttpResponse, Error = ApiError> {
+    Box::pin(missing_objects_async(args, params, db, config, req)).compat()
+}
+
+async fn missing_objects_async(
+    args: Json<MissingObjectsArgs>,
+    params: Path<BuildPathParams>,
+    db: Data<Db>,
+    config: Data<Config>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
+
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
+    let missing = args
+        .wanted
+        .iter()
+        .filter(|object| !has_object(params.id, object, &config))
+        .map(|s| s.to_string())
+        .collect::<Vec<String>>();
+
+    Ok(HttpResponse::Ok()
         .encoding(http::header::ContentEncoding::Gzip)
-        .json(MissingObjectsResponse { missing })
+        .json(MissingObjectsResponse { missing }))
 }
 
 fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
@@ -435,7 +488,8 @@ async fn create_build_ref_async(
     let build_id = params.id;
     let build = db.lookup_build(params.id).await?;
 
-    req.has_token_repo(&build.repo)?;
+    has_token_for_build(&req, &build)?;
+
     let buildref = db
         .new_build_ref(NewBuildRef {
             build_id,
@@ -483,18 +537,16 @@ async fn add_extra_ids_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    let ids = args.ids.clone();
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
 
-    ids.iter().try_for_each(|id| validate_id(id))?;
+    args.ids.iter().try_for_each(|id| validate_id(id))?;
 
-    let req2 = req.clone();
-    let build_id = params.id;
     let build = db.lookup_build(params.id).await?;
-    /* Validate token */
-    req2.has_token_repo(&build.repo)?;
-    let build = db.add_extra_ids(build_id, args.ids.clone()).await?;
-    respond_with_url(&build, &req, "show_build", &[build_id.to_string()])
+
+    has_token_for_build(&req, &build)?;
+
+    let build = db.add_extra_ids(params.id, args.ids.clone()).await?;
+    respond_with_url(&build, &req, "show_build", &[params.id.to_string()])
 }
 
 fn is_all_lower_hexdigits(s: &str) -> bool {
@@ -692,9 +744,9 @@ async fn upload_async(
             .join("upload"),
     });
 
-    let req2 = req.clone();
     let build = db.lookup_build(params.id).await?;
-    req2.has_token_repo(&build.repo)?;
+    has_token_for_build(&req, &build)?;
+
     multipart
         .map_err(|e| ApiError::InternalServerError(e.to_string()))
         .map(move |field| save_file(field, &uploadstate).into_stream())
@@ -722,7 +774,13 @@ async fn get_commit_job_async(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-    let job = db.lookup_commit_job(params.id, args.log_offset).await?;
+
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
+    let job_id = build.commit_job_id.ok_or(ApiError::NotFound)?;
+    let job = db.lookup_job(job_id, args.log_offset).await?;
+
     Ok(HttpResponse::Ok().json(job))
 }
 
@@ -752,18 +810,18 @@ async fn commit_async(
 ) -> Result<HttpResponse, ApiError> {
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
 
-    let req2 = req.clone();
-    let build_id = params.id;
-    let build = db.lookup_build(build_id).await?;
-    req2.has_token_repo(&build.repo)?;
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
     let job = db
         .start_commit_job(
-            build_id,
+            params.id,
             args.endoflife.clone(),
             args.endoflife_rebase.clone(),
             args.token_type,
         )
         .await?;
+
     job_queue.do_send(ProcessJobs(None));
     respond_with_url(&job, &req, "show_commit_job", &[params.id.to_string()])
 }
@@ -784,7 +842,13 @@ async fn get_publish_job_async(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-    let job = db.lookup_publish_job(params.id, args.log_offset).await?;
+
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
+    let job_id = build.publish_job_id.ok_or(ApiError::NotFound)?;
+    let job = db.lookup_job(job_id, args.log_offset).await?;
+
     Ok(HttpResponse::Ok().json(job))
 }
 
@@ -809,13 +873,11 @@ async fn publish_async(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Publish)?;
-    let build_id = params.id;
-    let req2 = req.clone();
 
-    let build = db.lookup_build(build_id).await?;
-    req2.has_token_repo(&build.repo)?;
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
 
-    let job = db.start_publish_job(build_id, build.repo.clone()).await?;
+    let job = db.start_publish_job(params.id, build.repo.clone()).await?;
     job_queue.do_send(ProcessJobs(Some(build.repo)));
 
     respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
@@ -839,19 +901,16 @@ async fn purge_async(
     req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
 
     let build_repo_path = config.build_repo_base.join(params.id.to_string());
-    let build_id = params.id;
-    let req2 = req.clone();
-    let db2 = db.clone();
 
-    let build = db.lookup_build(build_id).await?;
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
 
-    req2.has_token_repo(&build.repo)?;
-    db.init_purge(build_id).await?;
+    db.init_purge(params.id).await?;
 
     let res = fs::remove_dir_all(&build_repo_path);
-    let build = db2
+    let build = db
         .finish_purge(
-            build_id,
+            params.id,
             match res {
                 Ok(()) => None,
                 Err(e) => Some(e.to_string()),
@@ -859,7 +918,7 @@ async fn purge_async(
         )
         .await?;
 
-    respond_with_url(&build, &req, "show_build", &[build_id.to_string()])
+    respond_with_url(&build, &req, "show_build", &[params.id.to_string()])
 }
 
 #[derive(Template)]

@@ -143,10 +143,15 @@ mod tests {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ClaimsScope {
+    // Permission to list all jobs in the system. Should not be given to untrusted parties.
     Jobs,
+    // Permission to create, list, and purge builds, to get a build's jobs, and to commit uploaded files to the build.
     Build,
+    // Permission to upload files and refs to builds.
     Upload,
+    // Permission to publish builds.
     Publish,
+    // Permission to upload deltas for a repo. Should not be given to untrusted parties.
     Generate,
     #[serde(other)]
     Unknown,
@@ -567,7 +572,7 @@ pub fn create_app(
                     .service(
                         web::resource("/build/{id}/missing_objects")
                             .data(web::JsonConfig::default().limit(1024 * 1024 * 10))
-                            .route(web::get().to(api::missing_objects)),
+                            .route(web::get().to_async(api::missing_objects)),
                     )
                     .service(
                         web::resource("/build/{id}/add_extra_ids")
@@ -617,8 +622,9 @@ pub fn create_app(
             )
             .service(
                 web::resource("/build-repo/{id}/{tail:.*}")
-                    .route(web::get().to(handle_build_repo))
-                    .route(web::head().to(handle_build_repo))
+                    .wrap(TokenParser::optional(&secret))
+                    .route(web::get().to_async(handle_build_repo))
+                    .route(web::head().to_async(handle_build_repo))
                     .to(HttpResponse::MethodNotAllowed),
             )
             .service(web::resource("/status").route(web::get().to_async(api::status)))

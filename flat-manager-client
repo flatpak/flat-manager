@@ -448,7 +448,7 @@ async def create_command(session, args):
         "repo": args.repo
     }
     if args.app_id is not None:
-        json["app_id"] = args.app_id
+        json["app-id"] = args.app_id
     resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json=json)
     async with resp:
         if resp.status != 200:
