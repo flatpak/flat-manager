@@ -53,7 +53,7 @@ fn main() {
         ap.refer(&mut scope).add_option(
             &["--scope"],
             List,
-            "Add scope (default if none: [build, upload, publish, jobs]",
+            "Add scope (default if none: [build, upload, download, publish, jobs]",
         );
         ap.refer(&mut prefixes).add_option(
             &["--prefix"],
@@ -88,6 +88,7 @@ fn main() {
         scope = vec![
             "build".to_string(),
             "upload".to_string(),
+            "download".to_string(),
             "publish".to_string(),
             "jobs".to_string(),
         ];

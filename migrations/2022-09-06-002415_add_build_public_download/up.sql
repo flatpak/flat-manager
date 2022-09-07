@@ -1,0 +1,1 @@
+ALTER TABLE builds ADD public_download BOOLEAN DEFAULT TRUE NOT NULL;

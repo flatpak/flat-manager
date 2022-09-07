@@ -1,0 +1,1 @@
+ALTER TABLE builds DROP COLUMN public_download;

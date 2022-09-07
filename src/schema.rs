@@ -20,6 +20,7 @@ table! {
         repo -> Text,
         extra_ids -> Array<Text>,
         app_id -> Nullable<Text>,
+        public_download -> Bool,
     }
 }
 

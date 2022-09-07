@@ -7,6 +7,7 @@ use actix_web::http::header::{HeaderValue, CACHE_CONTROL};
 use actix_web::web::Data;
 use actix_web::Responder;
 use actix_web::{self, http, middleware, web, App, HttpRequest, HttpResponse, HttpServer};
+use futures3::TryFutureExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -153,6 +154,8 @@ pub enum ClaimsScope {
     Publish,
     // Permission to upload deltas for a repo. Should not be given to untrusted parties.
     Generate,
+    // Permission to list builds and to download a build repo.
+    Download,
     #[serde(other)]
     Unknown,
 }
@@ -379,15 +382,44 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     Ok(config_data)
 }
 
+#[derive(Deserialize)]
+pub struct BuildRepoParams {
+    id: i32,
+    tail: String,
+}
+
 fn handle_build_repo(
     config: Data<Config>,
+    params: actix_web::web::Path<BuildRepoParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> impl Future<Item = HttpResponse, Error = actix_web::Error> {
+    Box::pin(handle_build_repo_async(config, params, db, req)).compat()
+}
+
+async fn handle_build_repo_async(
+    config: Data<Config>,
+    params: actix_web::web::Path<BuildRepoParams>,
+    db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, actix_web::Error> {
-    let tail = req.match_info().query("tail");
-    let id = req.match_info().query("id");
+    let build = db.lookup_build(params.id).await?;
+    if !build.public_download {
+        req.has_token_repo(&build.repo)?;
+        req.has_token_claims(&format!("build/{}", build.id), ClaimsScope::Download)?;
+        if let Some(app_id) = build.app_id {
+            req.has_token_prefix(&app_id)
+                /* Hide the app ID of the build, since we can't access it */
+                .map_err(|_| {
+                    ApiError::NotEnoughPermissions(
+                        "Build's app ID not matching prefix in token".to_string(),
+                    )
+                })?;
+        }
+    }
 
-    let relpath = canonicalize_path(tail.trim_start_matches('/'))?;
-    let realid = canonicalize_path(id)?;
+    let relpath = canonicalize_path(params.tail.trim_start_matches('/'))?;
+    let realid = canonicalize_path(&params.id.to_string())?;
     let path = Path::new(&config.build_repo_base)
         .join(&realid)
         .join(&relpath);
@@ -398,7 +430,7 @@ fn handle_build_repo(
     NamedFile::open(path)
         .or_else(|_e| {
             let fallback_path = Path::new(&config.build_repo_base)
-                .join(&id)
+                .join(&params.id.to_string())
                 .join("parent")
                 .join(&relpath);
             if fallback_path.is_dir() {

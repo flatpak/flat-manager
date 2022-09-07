@@ -449,6 +449,8 @@ async def create_command(session, args):
     }
     if args.app_id is not None:
         json["app-id"] = args.app_id
+    if args.public_download is not None:
+        json["public-download"] = args.public_download
     resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json=json)
     async with resp:
         if resp.status != 200:
@@ -634,6 +636,8 @@ if __name__ == '__main__':
     create_parser.add_argument('manager_url', help='remote repo manager url')
     create_parser.add_argument('repo', help='repo name')
     create_parser.add_argument('app_id', nargs='?', help='app ID')
+    create_parser.add_argument('--public_download', action='store_true', default=None, help='allow public read access to the build repo')
+    create_parser.add_argument('--no_public_download', action='store_false', dest='public_download', default=None, help='allow public read access to the build repo')
     create_parser.set_defaults(func=create_command)
 
     push_parser = subparsers.add_parser('push', help='Push to repo manager')
