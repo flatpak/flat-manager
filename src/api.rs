@@ -219,6 +219,7 @@ async fn get_job_async(
 pub struct CreateBuildArgs {
     repo: String,
     app_id: Option<String>,
+    public_download: Option<bool>,
 }
 
 pub fn create_build(
@@ -245,10 +246,17 @@ async fn create_build_async(
 
     let repoconfig = config.get_repoconfig(&args.repo).map(|rc| rc.clone())?; // Ensure the repo exists
 
+    // If public_download is not specified, it defaults to true if there is no app ID (old style builds) and false
+    // if there is one.
+    let public_download = args
+        .public_download
+        .unwrap_or_else(|| args.app_id.is_none());
+
     let build = db
         .new_build(NewBuild {
             repo: args.repo.clone(),
             app_id: args.app_id.clone(),
+            public_download,
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());
@@ -284,7 +292,9 @@ async fn builds_async(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims("build", ClaimsScope::Build)?;
+    req.has_token_claims("build", ClaimsScope::Build)
+        // also allow downloaders to list builds
+        .or_else(|_| req.has_token_claims("build", ClaimsScope::Download))?;
 
     let builds = if let Some(app_id) = query.app_id.clone() {
         req.has_token_prefix(&app_id)?;

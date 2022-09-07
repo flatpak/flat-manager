@@ -10,6 +10,7 @@ use std::{mem, time};
 pub struct NewBuild {
     pub repo: String,
     pub app_id: Option<String>,
+    pub public_download: bool,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]
@@ -29,6 +30,7 @@ pub struct Build {
     pub repo: String,
     pub extra_ids: Vec<String>,
     pub app_id: Option<String>,
+    pub public_download: bool,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
