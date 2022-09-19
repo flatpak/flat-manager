@@ -80,7 +80,7 @@ checksum = "9fade9bd4bb46bacde89f1e726c7a3dd230536092712f5d94d77ca57c087fca0"
 dependencies = [
  "actix-codec",
  "actix-rt",
- "actix-service",
+ "actix-service 0.4.2",
  "actix-utils",
  "derive_more 0.15.0",
  "either",
@@ -99,7 +99,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1ee66089e3453334aac7e96ed10c48b6659f21f407826b92014c8097e4c0511"
 dependencies = [
  "actix-http",
- "actix-service",
+ "actix-service 0.4.2",
  "actix-web",
  "bitflags",
  "bytes 0.4.12",
@@ -121,7 +121,7 @@ dependencies = [
  "actix-codec",
  "actix-connect",
  "actix-server-config",
- "actix-service",
+ "actix-service 0.4.2",
  "actix-threadpool",
  "actix-utils",
  "base64 0.10.1",
@@ -166,7 +166,7 @@ version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d91f0604a1bf3e628b4c3f516f07280f33a33cece27df514227f5ec30925bb55"
 dependencies = [
- "actix-service",
+ "actix-service 0.4.2",
  "actix-web",
  "bytes 0.4.12",
  "derive_more 0.15.0",
@@ -240,7 +240,7 @@ checksum = "dd626534af8d0a738e5f74901fe603af0445708f91b86a7d763d80df10d562a5"
 dependencies = [
  "actix-rt",
  "actix-server-config",
- "actix-service",
+ "actix-service 0.4.2",
  "futures 0.1.31",
  "log",
  "mio 0.6.23",
@@ -275,6 +275,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "actix-service"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0052435d581b5be835d11f4eb3bce417c8af18d87ddf8ace99f8e67e595882bb"
+dependencies = [
+ "futures-util",
+ "pin-project",
+]
+
+[[package]]
 name = "actix-testing"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -283,7 +293,7 @@ dependencies = [
  "actix-rt",
  "actix-server",
  "actix-server-config",
- "actix-service",
+ "actix-service 0.4.2",
  "futures 0.1.31",
  "log",
  "net2",
@@ -313,7 +323,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "908c3109948f5c37a8b57fd343a37dcad5bb1d90bfd06300ac96b17bbe017b95"
 dependencies = [
  "actix-codec",
- "actix-service",
+ "actix-service 0.4.2",
  "bytes 0.4.12",
  "either",
  "futures 0.1.31",
@@ -334,7 +344,7 @@ dependencies = [
  "actix-rt",
  "actix-server",
  "actix-server-config",
- "actix-service",
+ "actix-service 0.4.2",
  "actix-testing",
  "actix-threadpool",
  "actix-utils",
@@ -524,7 +534,7 @@ checksum = "5e995283278dd3bf0449e7534e77184adb1570c0de8b6a50bf7c9d01ad8db8c4"
 dependencies = [
  "actix-codec",
  "actix-http",
- "actix-service",
+ "actix-service 0.4.2",
  "base64 0.10.1",
  "bytes 0.4.12",
  "derive_more 0.15.0",
@@ -1005,7 +1015,7 @@ dependencies = [
  "actix-http",
  "actix-multipart",
  "actix-net",
- "actix-service",
+ "actix-service 1.0.6",
  "actix-web",
  "actix-web-actors",
  "argparse",
@@ -2232,6 +2242,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "pin-project"
+version = "0.4.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef0f924a5ee7ea9cbcea77529dba45f8a9ba9f622419fe3386ca581a3ae9d5a"
+dependencies = [
+ "pin-project-internal",
+]
+
+[[package]]
+name = "pin-project-internal"
+version = "0.4.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "851c8d0ce9bebe43790dedfc86614c23494ac9f423dd618d3a61fc693eafe61e"
+dependencies = [
+ "proc-macro2 1.0.42",
+ "quote 1.0.20",
+ "syn 1.0.98",
 ]
 
 [[package]]
