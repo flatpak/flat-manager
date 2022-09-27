@@ -31,7 +31,7 @@ from functools import reduce
 from urllib.parse import urljoin, urlparse, urlsplit, urlunparse, urlunsplit
 
 import aiohttp
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_fixed
+from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_random_exponential
 
 import gi
 gi.require_version('OSTree', '1.0')
@@ -181,6 +181,13 @@ def chunks(l, n):
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def missing_objects(session, build_url, token, wanted):
     missing=[]
     for chunk in chunks(wanted, 2000):
@@ -199,6 +206,13 @@ async def missing_objects(session, build_url, token, wanted):
             missing.extend(data["missing"])
     return missing
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def upload_files(session, build_url, token, files):
     if len(files) == 0:
         return
@@ -211,6 +225,7 @@ async def upload_files(session, build_url, token, files):
     async with resp:
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
+
 
 async def upload_deltas(session, repo_path, build_url, token, deltas, refs, ignore_delta):
     if not len(deltas):
@@ -258,6 +273,13 @@ async def upload_objects(session, repo_path, build_url, token, objects):
     # Upload any remainder
     await upload_files(session, build_url, token, req)
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def create_ref(session, build_url, token, ref, commit):
     print("Creating ref %s with commit %s" % (ref, commit))
     resp = await session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
@@ -268,6 +290,13 @@ async def create_ref(session, build_url, token, ref, commit):
         data = await resp.json()
         return data
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def add_extra_ids(session, build_url, token, extra_ids):
     print("Adding extra ids %s" % (extra_ids))
     resp = await session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
@@ -278,6 +307,13 @@ async def add_extra_ids(session, build_url, token, extra_ids):
         data = await resp.json()
         return data
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def get_build(session, build_url, token):
     resp = await session.get(build_url, headers={'Authorization': 'Bearer ' + token})
     if resp.status != 200:
@@ -290,6 +326,13 @@ def reparse_job_results(job):
     job["results"] = json.loads(job.get("results", "{}"))
     return job
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def get_job(session, job_url, token):
     resp = await session.get(job_url, headers={'Authorization': 'Bearer ' + token}, json={})
     async with resp:
@@ -298,6 +341,13 @@ async def get_job(session, job_url, token):
         data = await resp.json()
         return data
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def wait_for_job(session, job_url, token):
     reported_delay = False
     old_job_status  = 0
@@ -366,6 +416,13 @@ async def wait_for_job(session, job_url, token):
             sleep_time=60
         time.sleep(sleep_time)
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, token):
     print("Committing build %s" % (build_url))
     json = {
@@ -390,6 +447,13 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
         job["location"] = job_url
         return job
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def publish_build(session, build_url, wait, token):
     print("Publishing build %s" % (build_url))
     resp = await session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
@@ -418,6 +482,13 @@ async def publish_build(session, build_url, wait, token):
         job["location"] = job_url
         return job
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def purge_build(session, build_url, token):
     print("Purging build %s" % (build_url))
     resp = await session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
@@ -426,6 +497,13 @@ async def purge_build(session, build_url, token):
             raise ApiError(resp, await resp.text())
         return await resp.json()
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def create_token(session, manager_url, token, name, subject, scope, duration):
     token_url = urljoin(manager_url, "api/v1/token_subset")
     resp = await session.post(token_url, headers={'Authorization': 'Bearer ' + token}, json = {
@@ -442,6 +520,13 @@ async def create_token(session, manager_url, token, name, subject, scope, durati
 def get_object_multipart(repo_path, object):
     return AsyncNamedFilePart(repo_path + "/objects/" + object[:2] + "/" + object[2:], filename=object)
 
+
+@retry(
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
+    retry=retry_if_exception_type(ApiError),
+    reraise=True,
+)
 async def create_command(session, args):
     build_url = urljoin(args.manager_url, "api/v1/build")
     json = {
@@ -480,8 +565,8 @@ def build_url_to_api(build_url):
     return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
 
 @retry(
-    stop=stop_after_attempt(6),
-    wait=wait_fixed(10),
+    stop=stop_after_delay(300),
+    wait=wait_random_exponential(multiplier=1, max=60),
     retry=retry_if_exception_type(ApiError),
     reraise=True,
 )
