@@ -175,11 +175,12 @@ pub struct Claims {
     pub sub: String, // "build", "build/N", or user id for repo tokens
     pub exp: i64,
 
-    // Below are optional, and not used for repo tokens
     #[serde(default)]
     pub scope: Vec<ClaimsScope>,
     #[serde(default)]
     pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
+    #[serde(default)]
+    pub apps: Vec<String>, // like prefixes, but only exact matches
     #[serde(default)]
     pub repos: Vec<String>, // list of repo names or a '' for match all
     pub name: Option<String>, // for debug/logs only

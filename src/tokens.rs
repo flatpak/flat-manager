@@ -112,11 +112,14 @@ impl ClaimsValidator for HttpRequest {
     /* A token prefix is something like org.my.App, and should allow
      * you to create refs like org.my.App, org.my.App.Debug, and
      * org.my.App.Some.Long.Thing. However, it should not allow
-     * org.my.AppSuffix.
+     * org.my.AppSuffix. Also checks the "apps" field for exact matches
+     * only.
      */
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
         self.validate_claims(|claims| {
-            if !id_matches_one_prefix(id, &claims.prefixes) {
+            if !id_matches_one_prefix(id, &claims.prefixes)
+                && !claims.apps.contains(&id.to_string())
+            {
                 return Err(ApiError::NotEnoughPermissions(format!(
                     "Id {} not matching prefix in token",
                     id
