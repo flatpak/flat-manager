@@ -105,6 +105,7 @@ pub struct TokenSubsetArgs {
     scope: Vec<ClaimsScope>,
     duration: i64,
     prefixes: Option<Vec<String>>,
+    apps: Option<Vec<String>>,
     repos: Option<Vec<String>>,
     name: String,
 }
@@ -135,6 +136,13 @@ pub fn prefix_is_subset(
     }
 }
 
+pub fn apps_is_subset(maybe_subset_apps: Option<&[String]>, claimed_apps: &[String]) -> bool {
+    match maybe_subset_apps {
+        Some(subset_apps) => subset_apps.iter().all(|s| claimed_apps.contains(s)),
+        None => true,
+    }
+}
+
 pub fn token_subset(
     args: Json<TokenSubsetArgs>,
     config: Data<Config>,
@@ -148,6 +156,7 @@ pub fn token_subset(
             && tokens::sub_has_prefix(&args.sub, &claims.sub)
             && args.scope.iter().all(|s| claims.scope.contains(s))
             && prefix_is_subset(&args.prefixes, &claims.prefixes)
+            && apps_is_subset(args.apps.as_deref(), &claims.apps)
             && repos_is_subset(&args.repos, &claims.repos)
         {
             let new_claims = Claims {
@@ -159,6 +168,13 @@ pub fn token_subset(
                         prefixes.clone()
                     } else {
                         claims.prefixes.clone()
+                    }
+                },
+                apps: {
+                    if let Some(ref apps) = args.apps {
+                        apps.clone()
+                    } else {
+                        claims.apps.clone()
                     }
                 },
                 repos: {
