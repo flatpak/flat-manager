@@ -459,10 +459,12 @@ async def publish_build(session, build_url, wait, token):
     resp = await session.post(build_url + "/publish", headers={'Authorization': 'Bearer ' + token}, json= { } )
     async with resp:
         if resp.status == 400:
-            body = await resp.text()
+            body = await resp.json()
             try:
-                msg = json.loads(body)
-                if msg.get("current-state", "") == "published":
+                if isinstance(body, str):
+                    body = json.loads(body)
+
+                if body.get("current-state") == "published":
                     print("the build has been already published")
                     return {}
             except:
