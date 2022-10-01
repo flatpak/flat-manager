@@ -31,6 +31,7 @@ from functools import reduce
 from urllib.parse import urljoin, urlparse, urlsplit, urlunparse, urlunsplit
 
 import aiohttp
+import aiohttp.client_exceptions
 from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_random_exponential
 
 import gi
@@ -70,6 +71,10 @@ class ApiError(Exception):
     def __str__(self):
         return "Api call to %s failed with status %d, details: %s" % (self.url, self.status, self.body)
 
+
+TENACITY_RETRY_EXCEPTIONS = (retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError) | retry_if_exception_type(ApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerConnectionError))
+TENACITY_STOP_AFTER = stop_after_delay(300)
+TENACITY_WAIT_BETWEEN = wait_random_exponential(multiplier=1, max=60)
 
 # This is similar to the regular payload, but opens the file lazily
 class AsyncNamedFilePart(aiohttp.payload.Payload):
@@ -183,9 +188,9 @@ def chunks(l, n):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def missing_objects(session, build_url, token, wanted):
@@ -206,11 +211,10 @@ async def missing_objects(session, build_url, token, wanted):
             missing.extend(data["missing"])
     return missing
 
-
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=(retry_if_exception_type(ApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError)),
     reraise=True,
 )
 async def upload_files(session, build_url, token, files):
@@ -275,9 +279,9 @@ async def upload_objects(session, repo_path, build_url, token, objects):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def create_ref(session, build_url, token, ref, commit):
@@ -292,9 +296,9 @@ async def create_ref(session, build_url, token, ref, commit):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def add_extra_ids(session, build_url, token, extra_ids):
@@ -309,9 +313,9 @@ async def add_extra_ids(session, build_url, token, extra_ids):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def get_build(session, build_url, token):
@@ -328,9 +332,9 @@ def reparse_job_results(job):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def get_job(session, job_url, token):
@@ -343,9 +347,9 @@ async def get_job(session, job_url, token):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def wait_for_job(session, job_url, token):
@@ -418,9 +422,9 @@ async def wait_for_job(session, job_url, token):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, token):
@@ -449,9 +453,9 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def publish_build(session, build_url, wait, token):
@@ -486,9 +490,9 @@ async def publish_build(session, build_url, wait, token):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def purge_build(session, build_url, token):
@@ -501,9 +505,9 @@ async def purge_build(session, build_url, token):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def create_token(session, manager_url, token, name, subject, scope, duration):
@@ -524,9 +528,9 @@ def get_object_multipart(repo_path, object):
 
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def create_command(session, args):
@@ -567,9 +571,9 @@ def build_url_to_api(build_url):
     return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
 
 @retry(
-    stop=stop_after_delay(300),
-    wait=wait_random_exponential(multiplier=1, max=60),
-    retry=retry_if_exception_type(ApiError),
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def push_command(session, args):
