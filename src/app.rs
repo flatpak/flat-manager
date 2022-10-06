@@ -235,6 +235,7 @@ pub struct RepoConfig {
     pub gpg_key_content: Option<String>,
     pub base_url: Option<String>,
     pub runtime_repo_url: Option<String>,
+    #[serde(default)]
     pub subsets: HashMap<String, SubsetConfig>,
     pub post_publish_script: Option<String>,
     #[serde(default)]
@@ -255,6 +256,10 @@ fn default_numcpu() -> u32 {
     num_cpus::get() as u32
 }
 
+fn default_build_repo_base() -> PathBuf {
+    PathBuf::from("build-repo")
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
@@ -271,6 +276,7 @@ pub struct Config {
     #[serde(default, deserialize_with = "from_opt_base64")]
     pub repo_secret: Option<Vec<u8>>,
     pub repos: HashMap<String, RepoConfig>,
+    #[serde(default = "default_build_repo_base")]
     pub build_repo_base: PathBuf,
     pub build_gpg_key: Option<String>,
     #[serde(skip)]
