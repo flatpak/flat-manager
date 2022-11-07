@@ -43,6 +43,8 @@ pub struct StorefrontInfo {
     pub check_url_types: AllowList,
     /* Check the keys in the <custom/> section */
     pub check_custom_values: AllowList,
+    /* Blocklist of prefixes for custom values. This is done in addition to check_custom_values. */
+    pub reserve_custom_value_prefixes: Vec<String>,
 }
 
 impl StorefrontInfo {
@@ -110,7 +112,12 @@ impl StorefrontInfo {
                 "custom" => {
                     for custom_child in element.children() {
                         if let Some(key) = custom_child.get_attr("key") {
-                            if !self.check_custom_values.check(key) {
+                            if !self.check_custom_values.check(key)
+                                || self
+                                    .reserve_custom_value_prefixes
+                                    .iter()
+                                    .any(|prefix| key.starts_with(prefix))
+                            {
                                 return Err(format!(
                                     "Appstream <value key='{}'/> is not permitted.",
                                     key
@@ -358,6 +365,7 @@ mod tests {
 
         info.check_url_types.blocked = vec!["bugtracker".to_string()];
         info.check_custom_values.blocked = vec!["TestKey2".to_string()];
+        info.reserve_custom_value_prefixes = vec!["flathub".to_string()];
 
         info.check_xml_tags.allowed = Some(vec![
             "id".to_string(),
@@ -417,6 +425,24 @@ mod tests {
 </components>
         "#;
         run_error_test(INPUT, "Appstream <value key='TestKey2'/> is not permitted.");
+    }
+
+    #[test]
+    fn test_blocked_custom_value_prefix() {
+        const INPUT: &str = r#"
+<components>
+    <component>
+        <id>org.flatpak.Test</id>
+        <custom>
+            <value key="flathub::verification_method">website</value>
+        </custom>
+    </component>
+</components>
+        "#;
+        run_error_test(
+            INPUT,
+            "Appstream <value key='flathub::verification_method'/> is not permitted.",
+        );
     }
 
     #[test]
