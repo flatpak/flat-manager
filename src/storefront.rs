@@ -31,9 +31,9 @@ pub struct StorefrontInfo {
     pub token_type: Option<i32>,
 
     /* Values to add to the appstream <custom> section. */
-    pub add_custom_values: HashMap<String, String>,
+    pub add_custom_values: HashMap<String, Option<String>>,
     /* URLs to add to the appstream file. */
-    pub add_urls: HashMap<String, String>,
+    pub add_urls: HashMap<String, Option<String>>,
 
     /* Settings for validating uploaded appstream files. These settings don't affect anything added by the
     StorefrontInfo itself. */
@@ -83,6 +83,11 @@ impl StorefrontInfo {
                 id_tags[0].text()
             )
             .into());
+        }
+
+        /* Make sure there is only one <custom> section. Otherwise, adding/removing tags may not work correctly */
+        if component.find_all("custom").count() > 1 {
+            return Err("Duplicate <custom/> tag in appstream file".into());
         }
 
         for element in component.children() {
@@ -177,21 +182,46 @@ impl StorefrontInfo {
             }
         }
 
-        fn sort_hash_map(map: &HashMap<String, String>) -> Vec<(&String, &String)> {
+        fn remove_element<'a>(parent: &'a mut Element, tag: &'a str, attr: (&'_ str, &'_ str)) {
+            let mut to_remove = parent
+                .children()
+                .enumerate()
+                .filter(|(_idx, child)| {
+                    child.tag().name() == tag && child.get_attr(attr.0) == Some(attr.1)
+                })
+                .map(|(idx, _child)| idx)
+                .collect::<Vec<_>>();
+
+            to_remove.reverse();
+
+            for idx in to_remove {
+                parent.remove_child(idx);
+            }
+        }
+
+        fn sort_hash_map(map: &HashMap<String, Option<String>>) -> Vec<(&String, &Option<String>)> {
             /* Hash maps iterate in an arbitrary order. Sort them so that diffs are less cluttered and so the tests work
             reliably. */
-            let mut values = map.iter().collect::<Vec<(&String, &String)>>();
+            let mut values = map.iter().collect::<Vec<(&String, &Option<String>)>>();
             values.sort();
             values
         }
 
         for (key, value) in sort_hash_map(&self.add_custom_values) {
             let custom = find_or_create_element(component, "custom", None);
-            find_or_create_element(custom, "value", Some(("key", key))).set_text(value);
+            if let Some(value) = value {
+                find_or_create_element(custom, "value", Some(("key", key))).set_text(value);
+            } else {
+                remove_element(custom, "value", ("key", key));
+            }
         }
 
         for (key, value) in sort_hash_map(&self.add_urls) {
-            find_or_create_element(component, "url", Some(("type", key))).set_text(value);
+            if let Some(value) = value {
+                find_or_create_element(component, "url", Some(("type", key))).set_text(value);
+            } else {
+                remove_element(component, "url", ("type", key));
+            }
         }
 
         Ok(root.to_string()?)
@@ -205,14 +235,21 @@ mod tests {
     fn run_test(input: &str, expected: &str) {
         let mut info = StorefrontInfo::default();
         info.add_custom_values
-            .insert("TestKey".to_string(), "TestValue".to_string());
+            .insert("TestKey".to_string(), Some("TestValue".to_string()));
         info.add_custom_values
-            .insert("TestKey4".to_string(), "TestValue4".to_string());
+            .insert("TestKey4".to_string(), Some("TestValue4".to_string()));
+        info.add_custom_values
+            .insert("TestRemoveKey".to_string(), None);
 
-        info.add_urls
-            .insert("homepage".to_string(), "https://example.com".to_string());
-        info.add_urls
-            .insert("bugtracker".to_string(), "https://github.com".to_string());
+        info.add_urls.insert(
+            "homepage".to_string(),
+            Some("https://example.com".to_string()),
+        );
+        info.add_urls.insert(
+            "bugtracker".to_string(),
+            Some("https://github.com".to_string()),
+        );
+        info.add_urls.insert("remove_url".to_string(), None);
 
         info.validate_storefront_info("org.flatpak.Test", input)
             .unwrap();
@@ -285,10 +322,41 @@ mod tests {
         run_test(INPUT, EXPECTED);
     }
 
+    #[test]
+    fn test_remove_info() {
+        const INPUT: &str = r#"
+<components>
+    <component>
+        <id>org.flatpak.Test</id>
+        <url type="homepage">https://flatpak.org</url>
+        <url type="remove_url">https://example.com</url>
+        <custom>
+            <value key="TestKey1">TestValue1</value>
+            <value key="TestRemoveKey">TestValue3</value>
+            <value key="TestKey">TestValue2</value>
+            <value key="TestRemoveKey">TestValue3</value>
+        </custom>
+        <url type="remove_url">https://example.com</url>
+    </component>
+</components>"#;
+        const EXPECTED: &str = r#"<?xml version="1.0" encoding="utf-8"?><components>
+    <component>
+        <id>org.flatpak.Test</id>
+        <url type="homepage">https://example.com</url>
+        <custom>
+            <value key="TestKey1">TestValue1</value>
+            <value key="TestKey">TestValue</value>
+            <value key="TestKey4">TestValue4</value></custom>
+        <url type="bugtracker">https://github.com</url></component>
+</components>"#;
+
+        run_test(INPUT, EXPECTED);
+    }
+
     fn run_error_test(input: &str, expected_error: &str) {
         let mut info = StorefrontInfo::default();
 
-        info.check_url_types.blocked = vec!["bugtracker".to_string()].into();
+        info.check_url_types.blocked = vec!["bugtracker".to_string()];
         info.check_custom_values.blocked = vec!["TestKey2".to_string()];
 
         info.check_xml_tags.allowed = Some(vec![
