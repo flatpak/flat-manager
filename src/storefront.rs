@@ -109,7 +109,7 @@ impl StorefrontInfo {
                     }
                 }
 
-                "custom" => {
+                "custom" | "metadata" => {
                     for custom_child in element.children() {
                         if let Some(key) = custom_child.get_attr("key") {
                             if !self.check_custom_values.check(key)
