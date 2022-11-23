@@ -209,7 +209,7 @@ impl StorefrontInfo {
         fn sort_hash_map(map: &HashMap<String, Option<String>>) -> Vec<(&String, &Option<String>)> {
             /* Hash maps iterate in an arbitrary order. Sort them so that diffs are less cluttered and so the tests work
             reliably. */
-            let mut values = map.iter().collect::<Vec<(&String, &Option<String>)>>();
+            let mut values = map.iter().collect::<Vec<_>>();
             values.sort();
             values
         }
