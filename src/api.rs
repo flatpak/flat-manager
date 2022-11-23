@@ -153,7 +153,7 @@ pub fn token_subset(
             let new_claims = Claims {
                 sub: args.sub.clone(),
                 scope: args.scope.clone(),
-                name: Some(claims.name.unwrap_or_else(|| "".to_string()) + "/" + &args.name),
+                name: Some(claims.name.unwrap_or_default() + "/" + &args.name),
                 prefixes: {
                     if let Some(ref prefixes) = args.prefixes {
                         prefixes.clone()
@@ -620,7 +620,7 @@ fn filename_parse_delta(name: &str) -> Option<path::PathBuf> {
         path::Path::new("deltas")
             .join(&v[0][..2])
             .join(&v[0][2..])
-            .join(&v[1]),
+            .join(v[1]),
     )
 }
 
@@ -664,7 +664,7 @@ fn start_save(
     let absolute_path = state.repo_path.join(subpath);
 
     if let Some(parent) = absolute_path.parent() {
-        fs::create_dir_all(&parent)?;
+        fs::create_dir_all(parent)?;
     }
 
     let tmp_dir = state.repo_path.join("tmp");

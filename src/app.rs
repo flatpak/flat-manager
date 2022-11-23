@@ -65,7 +65,7 @@ where
 {
     use serde::de::Error;
     String::deserialize(deserializer)
-        .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
+        .and_then(|string| base64::decode(string).map_err(|err| Error::custom(err.to_string())))
 }
 
 fn from_opt_base64<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
@@ -74,7 +74,7 @@ where
 {
     use serde::de::Error;
     String::deserialize(deserializer)
-        .and_then(|string| base64::decode(&string).map_err(|err| Error::custom(err.to_string())))
+        .and_then(|string| base64::decode(string).map_err(|err| Error::custom(err.to_string())))
         .map(Some)
 }
 
@@ -94,7 +94,7 @@ fn match_glob(glob: &str, s: &str) -> bool {
         let glob_after_star = glob_chars.as_str();
 
         /* Consume at least one, fail if none */
-        if s_chars.next() == None {
+        if s_chars.next().is_none() {
             return false;
         }
 
@@ -102,7 +102,7 @@ fn match_glob(glob: &str, s: &str) -> bool {
             if match_glob(glob_after_star, s_chars.as_str()) {
                 return true;
             }
-            if s_chars.next() == None {
+            if s_chars.next().is_none() {
                 break;
             }
         }
@@ -421,7 +421,7 @@ async fn handle_build_repo_async(
     let relpath = canonicalize_path(params.tail.trim_start_matches('/'))?;
     let realid = canonicalize_path(&params.id.to_string())?;
     let path = Path::new(&config.build_repo_base)
-        .join(&realid)
+        .join(realid)
         .join(&relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
@@ -430,7 +430,7 @@ async fn handle_build_repo_async(
     NamedFile::open(path)
         .or_else(|_e| {
             let fallback_path = Path::new(&config.build_repo_base)
-                .join(&params.id.to_string())
+                .join(params.id.to_string())
                 .join("parent")
                 .join(&relpath);
             if fallback_path.is_dir() {
@@ -521,9 +521,9 @@ fn handle_repo(config: Data<Config>, req: HttpRequest) -> Result<HttpResponse, a
 
     let namepath = Path::new(&repoconfig.name);
     let relpath = tailpath
-        .strip_prefix(&namepath)
+        .strip_prefix(namepath)
         .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
-    let path = Path::new(&repoconfig.path).join(&relpath);
+    let path = Path::new(&repoconfig.path).join(relpath);
     if path.is_dir() {
         return Err(ErrorNotFound("Ignoring directory"));
     }
@@ -536,7 +536,7 @@ fn handle_repo(config: Data<Config>, req: HttpRequest) -> Result<HttpResponse, a
         .or_else(|e| {
             // Was this a delta, if so check the deltas queued for deletion
             if relpath.starts_with("deltas") {
-                let tmp_path = Path::new(&repoconfig.path).join("tmp").join(&relpath);
+                let tmp_path = Path::new(&repoconfig.path).join("tmp").join(relpath);
                 if tmp_path.is_dir() {
                     Err(ErrorNotFound("Ignoring directory"))
                 } else {

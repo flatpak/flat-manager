@@ -1,5 +1,3 @@
-#![allow(proc_macro_derive_resolution_fallback)]
-
 #[macro_use]
 extern crate diesel;
 #[macro_use]
@@ -40,8 +38,8 @@ pub use errors::DeltaGenerationError;
 type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
-    let config_data = app::load_config(&path)
-        .unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
+    let config_data =
+        app::load_config(path).unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
     Arc::new(config_data)
 }
 

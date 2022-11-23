@@ -765,7 +765,7 @@ pub struct Delta {
 }
 
 fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
-    let bytes = base64::decode(&part.replace('_', "/")).map_err(|err| {
+    let bytes = base64::decode(part.replace('_', "/")).map_err(|err| {
         OstreeError::InternalError(format!("Invalid delta part name '{}': {}", part, err))
     })?;
     Ok(bytes_to_object(&bytes))
@@ -773,7 +773,7 @@ fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
 
 fn hex_to_delta_part(hex: &str) -> OstreeResult<String> {
     let bytes = object_to_bytes(hex)?;
-    let part = base64::encode_config(&bytes, base64::STANDARD_NO_PAD);
+    let part = base64::encode_config(bytes, base64::STANDARD_NO_PAD);
     Ok(part.replace('/', "_"))
 }
 
@@ -883,7 +883,7 @@ mod tests {
 pub fn list_deltas(repo_path: &path::Path) -> Vec<Delta> {
     let deltas_dir = get_deltas_path(repo_path);
 
-    WalkDir::new(&deltas_dir)
+    WalkDir::new(deltas_dir)
         .min_depth(2)
         .max_depth(2)
         .into_iter()
@@ -919,7 +919,7 @@ pub fn calc_deltas_for_ref(repo_path: &path::Path, ref_name: &str, depth: u32) -
         if let Ok(commitinfo) = get_commit(repo_path, from_commit.as_ref().unwrap_or(&to_commit)) {
             res.push(Delta::new(from_commit.as_deref(), &to_commit));
             from_commit = commitinfo.parent;
-            if from_commit == None {
+            if from_commit.is_none() {
                 break;
             }
         } else {
@@ -1034,7 +1034,7 @@ pub fn generate_delta_async(
         cmd.arg("--generate-static-delta-from").arg(from.clone());
     };
 
-    cmd.arg(&repo_path);
+    cmd.arg(repo_path);
 
     log::info!("Generating delta {}", delta.to_string());
     Box::new(
