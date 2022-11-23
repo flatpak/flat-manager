@@ -124,12 +124,12 @@ Url={}
      * repo not a build repo.
      */
     if let Some(collection_id) = &repoconfig.collection_id {
-        if repoconfig.deploy_collection_id && maybe_build_id == None {
+        if repoconfig.deploy_collection_id && maybe_build_id.is_none() {
             writeln!(contents, "DeployCollectionID={}", collection_id).unwrap();
         }
     };
 
-    if maybe_build_id == None {
+    if maybe_build_id.is_none() {
         if let Some(suggested_name) = &repoconfig.suggested_repo_name {
             writeln!(contents, "SuggestRemoteName={}", suggested_name).unwrap();
         }
@@ -439,7 +439,7 @@ impl CommitJobInstance {
             };
 
             if let Some(endoflife_rebase_arg) = &endoflife_rebase_arg {
-                cmd.arg(&endoflife_rebase_arg);
+                cmd.arg(endoflife_rebase_arg);
             };
 
             if let Some(token_type) = self
@@ -487,8 +487,8 @@ impl CommitJobInstance {
                     config,
                     repoconfig,
                 );
-                let path = build_repo_path.join(&filename);
-                File::create(&path)?.write_all(contents.as_bytes())?;
+                let path = build_repo_path.join(filename);
+                File::create(path)?.write_all(contents.as_bytes())?;
             }
         }
 
@@ -598,7 +598,7 @@ impl CommitJobInstance {
 
                 /* Make sure all the file attributes are correct */
                 fileinfo.set_size(s.len().try_into().expect("integer overflow on file size"));
-                fileinfo.set_name(&format!("{}.xml.gz", app_id));
+                fileinfo.set_name(format!("{}.xml.gz", app_id));
                 fileinfo.set_file_type(FileType::Regular);
                 fileinfo.set_attribute_uint32("unix::uid", 0);
                 fileinfo.set_attribute_uint32("unix::gid", 0);
@@ -1051,7 +1051,7 @@ impl UpdateRepoJobInstance {
             let src = delta.delta_path(&repo_path)?;
             let dst = delta.tmp_delta_path(&repo_path)?;
             let dst_parent = dst.parent().unwrap();
-            fs::create_dir_all(&dst_parent)?;
+            fs::create_dir_all(dst_parent)?;
 
             job_log_and_info(
                 self.job_id,
