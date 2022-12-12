@@ -6,7 +6,7 @@ use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::str;
 
-use crate::app::{Config, RepoConfig};
+use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
 use crate::schema::*;
 

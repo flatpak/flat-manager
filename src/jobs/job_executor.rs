@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::app::Config;
+use crate::config::Config;
 use crate::deltas::DeltaGenerator;
 use crate::jobs::job_instance::new_job_instance;
 use crate::models;

@@ -1,4 +1,4 @@
-use crate::app::Config;
+use crate::config::Config;
 use crate::delayed::DelayedResult;
 use crate::errors::DeltaGenerationError;
 use crate::ostree;

@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use std::time;
 use walkdir::WalkDir;
 
-use crate::app::{Config, RepoConfig};
+use crate::config::{Config, RepoConfig};
 use crate::deltas::{DeltaGenerator, DeltaRequest, DeltaRequestSync};
 use crate::errors::{JobError, JobResult};
 use crate::models::{Job, UpdateRepoJob};
