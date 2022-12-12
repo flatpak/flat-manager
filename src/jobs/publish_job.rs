@@ -9,7 +9,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::process::Command;
 
-use crate::app::{Config, RepoConfig};
+use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
 use crate::models;
 use crate::models::{Job, PublishJob, PublishedState};

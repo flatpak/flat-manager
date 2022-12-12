@@ -26,7 +26,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 
-use crate::app::{Claims, ClaimsScope, Config};
+use crate::app::{Claims, ClaimsScope};
+use crate::config::Config;
 use crate::db::*;
 use crate::deltas::{DeltaGenerator, RemoteWorker};
 use crate::errors::ApiError;

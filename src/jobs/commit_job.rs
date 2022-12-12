@@ -10,7 +10,7 @@ use std::io::Write;
 use std::process::Command;
 use std::str;
 
-use crate::app::{Config, RepoConfig};
+use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
 use crate::models;
 use crate::models::{CommitJob, Job, RepoState};

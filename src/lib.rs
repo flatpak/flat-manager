@@ -5,6 +5,7 @@ extern crate diesel_migrations;
 
 mod api;
 mod app;
+mod config;
 mod db;
 mod delayed;
 mod deltas;
@@ -18,7 +19,7 @@ mod tokens;
 
 use actix::prelude::*;
 use actix_web::dev::Server;
-use app::Config;
+use config::Config;
 use deltas::{DeltaGenerator, StopDeltaGenerator};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, ManageConnection};
