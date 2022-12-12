@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 
 use crate::errors::ApiError;
 
@@ -32,6 +33,20 @@ pub struct SubsetConfig {
     pub base_url: Option<String>,
 }
 
+/// A command to run during the build/publish process. Given as an array of arguments, with the first argument being
+/// the path to the program. Arguments are not processed by a shell; they are passed directly to the program.
+#[derive(Deserialize, Debug, Default, Clone)]
+pub struct ConfigHook(Option<Vec<String>>);
+
+/// Defines a set of hook commands to run at certain points in the build/publish process.
+#[derive(Deserialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ConfigHooks {
+    /// Runs during publish jobs before the build is imported to the main repository. The hook is allowed to edit the
+    /// repository. The current directory is set to the build directory.
+    pub publish: ConfigHook,
+}
+
 fn default_depth() -> u32 {
     5
 }
@@ -57,6 +72,8 @@ pub struct RepoConfig {
     pub runtime_repo_url: Option<String>,
     pub subsets: HashMap<String, SubsetConfig>,
     pub post_publish_script: Option<String>,
+    #[serde(default)]
+    pub hooks: ConfigHooks,
     #[serde(default)]
     pub deltas: Vec<DeltaConfig>,
     #[serde(default = "default_depth")]
@@ -100,6 +117,19 @@ pub struct Config {
     #[serde(default = "default_numcpu")]
     pub local_delta_threads: u32,
     pub storefront_info_endpoint: Option<String>,
+}
+
+impl ConfigHook {
+    /// Creates a Command to execute this hook, if it is defined.
+    pub fn build_command<P: AsRef<Path>>(&self, current_dir: P) -> Option<Command> {
+        self.0.as_ref().and_then(|args| {
+            args.first().map(|program| {
+                let mut command = Command::new(program);
+                command.args(args.iter().skip(1)).current_dir(current_dir);
+                command
+            })
+        })
+    }
 }
 
 impl RepoConfig {
