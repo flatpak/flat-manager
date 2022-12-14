@@ -85,7 +85,7 @@ impl JobInstance for RepublishJobInstance {
             .join("republish-repos");
         fs::create_dir_all(tmp_dir)?;
         let tmp_repo_dir = TempDir::new_in(tmp_dir).map_err(|e| {
-            JobError::new(&format!("Failed to create temporary repo directory: {}", e))
+            JobError::new(&format!("Failed to create temporary repo directory: {e}"))
         })?;
 
         init_ostree_repo(tmp_repo_dir.path(), &repoconfig.get_abs_repo_path(), &None)?;
@@ -116,7 +116,7 @@ impl JobInstance for RepublishJobInstance {
                     .to_str()
                     .expect("repo paths should be valid unicode")
             ))
-            .arg(&format!("--src-ref={}", ref_name))
+            .arg(&format!("--src-ref={ref_name}"))
             .arg(tmp_repo_dir.path())
             .arg(&ref_name);
 

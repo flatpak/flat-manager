@@ -108,7 +108,7 @@ fn main() {
         match read_secret(filename) {
             Ok(contents) => secret_contents = contents,
             Err(e) => {
-                eprintln!("Error reading secrets: {}", e);
+                eprintln!("Error reading secrets: {e}");
                 process::exit(1)
             }
         }
@@ -137,5 +137,5 @@ fn main() {
     }
 
     let token = encode(&Header::default(), &claims, &key).unwrap();
-    println!("{}", token);
+    println!("{token}");
 }

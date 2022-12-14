@@ -71,10 +71,7 @@ impl PublishJobInstance {
 
         if let Some(collection_id) = &repoconfig.collection_id {
             for ref extra_id in build.extra_ids.iter() {
-                cmd.arg(format!(
-                    "--extra-collection-id={}.{}",
-                    collection_id, extra_id
-                ));
+                cmd.arg(format!("--extra-collection-id={collection_id}.{extra_id}"));
             }
         }
 

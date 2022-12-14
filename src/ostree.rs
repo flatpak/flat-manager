@@ -146,15 +146,13 @@ impl Variant {
         match type_string_element_len(&type_string) {
             None => {
                 return Err(OstreeError::InternalError(format!(
-                    "Invalid type string '{}'",
-                    type_string
+                    "Invalid type string '{type_string}'"
                 )));
             }
             Some(len) => {
                 if len != type_string.len() {
                     return Err(OstreeError::InternalError(format!(
-                        "Leftover text in type string '{}'",
-                        type_string
+                        "Leftover text in type string '{type_string}'"
                     )));
                 }
             }
@@ -220,8 +218,7 @@ impl<'a> SubVariant<'a> {
     fn read_frame_offset(&self, offset: usize, framing_size: usize) -> OstreeResult<usize> {
         if offset + framing_size > self.data.len() {
             return Err(OstreeError::InternalError(format!(
-                "Framing error: can't read frame offset at {}",
-                offset
+                "Framing error: can't read frame offset at {offset}"
             )));
         }
         let data = &self.data[offset..offset + framing_size];
@@ -241,15 +238,13 @@ impl<'a> SubVariant<'a> {
             }
             _ => {
                 return Err(OstreeError::InternalError(format!(
-                    "Framing error: Unexpected framing size {}",
-                    framing_size
+                    "Framing error: Unexpected framing size {framing_size}"
                 )))
             }
         };
         if offset > self.data.len() {
             return Err(OstreeError::InternalError(format!(
-                "Framing error: out of bounds offset at {}",
-                offset
+                "Framing error: out of bounds offset at {offset}"
             )));
         };
         Ok(offset)
@@ -272,8 +267,7 @@ impl<'a> SubVariant<'a> {
     ) -> OstreeResult<SubVariant<'a>> {
         if end < start || end > self.data.len() {
             return Err(OstreeError::InternalError(format!(
-                "Framing error: subset {}-{} out of bounds for {:?}",
-                start, end, self
+                "Framing error: subset {start}-{end} out of bounds for {self:?}"
             )));
         }
         Ok(SubVariant {
@@ -317,8 +311,7 @@ impl<'a> SubVariant<'a> {
                 t
             } else {
                 return Err(OstreeError::InternalError(format!(
-                    "Invalid type: {}",
-                    type_string_rest
+                    "Invalid type: {type_string_rest}"
                 )));
             };
 
@@ -512,7 +505,7 @@ fn bytes_to_object(bytes: &[u8]) -> String {
 
 fn object_to_bytes(object: &str) -> OstreeResult<Vec<u8>> {
     hex::decode(object)
-        .map_err(|e| OstreeError::InternalError(format!("Invalid object '{}: {}'", object, e)))
+        .map_err(|e| OstreeError::InternalError(format!("Invalid object '{object}: {e}'")))
 }
 
 fn maybe_bytes_to_object(bytes: &[u8]) -> Option<String> {
@@ -766,7 +759,7 @@ pub struct Delta {
 
 fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
     let bytes = base64::decode(part.replace('_', "/")).map_err(|err| {
-        OstreeError::InternalError(format!("Invalid delta part name '{}': {}", part, err))
+        OstreeError::InternalError(format!("Invalid delta part name '{part}': {err}"))
     })?;
     Ok(bytes_to_object(&bytes))
 }
@@ -960,7 +953,7 @@ pub fn pull_commit_async(
 
         cmd.arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
             .arg("pull")
-            .arg(&format!("--url={}", url))
+            .arg(&format!("--url={url}"))
             .arg("upstream")
             .arg(&commit);
 
@@ -1102,7 +1095,7 @@ min-free-space-size=500MB
 {}parent={}"#,
             match opt_collection_id {
                 Some((collection_id, build_id)) =>
-                    format!("collection-id={}.Build{}\n", collection_id, build_id),
+                    format!("collection-id={collection_id}.Build{build_id}\n"),
                 _ => "".to_string(),
             },
             parent_repo_absolute_path.display()

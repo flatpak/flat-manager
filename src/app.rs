@@ -84,7 +84,7 @@ pub enum ClaimsScope {
 
 impl Display for ClaimsScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", format!("{:?}", self).to_ascii_lowercase())
+        write!(f, "{}", format!("{self:?}").to_ascii_lowercase())
     }
 }
 
@@ -116,7 +116,7 @@ fn load_gpg_key(
         Some(gpg_key) => {
             let mut cmd = Command::new("gpg2");
             if let Some(gpg_homedir) = maybe_gpg_homedir {
-                cmd.arg(&format!("--homedir={}", gpg_homedir));
+                cmd.arg(&format!("--homedir={gpg_homedir}"));
             }
             cmd.arg("--export").arg(gpg_key);
 
@@ -266,7 +266,7 @@ fn verify_repo_token(
         .metadata
         .get("ostree.ref-binding")
         .ok_or_else(|| {
-            ApiError::InternalServerError(format!("No ref binding for commit {:?}", path))
+            ApiError::InternalServerError(format!("No ref binding for commit {path:?}"))
         })?
         .as_string_vec()?;
     let mut result = Ok(());

@@ -111,7 +111,7 @@ fn process_one_job(executor: &mut JobExecutor, conn: &PgConnection) -> bool {
                     (JobStatus::Ended, json.to_string())
                 }
                 Err(e) => {
-                    job_log_and_error(instance.get_job_id(), conn, &format!("Job failed: {}", e));
+                    job_log_and_error(instance.get_job_id(), conn, &format!("Job failed: {e}"));
                     (
                         JobStatus::Broken,
                         json!({"error-message": e.to_string()}).to_string(),
