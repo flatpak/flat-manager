@@ -5,6 +5,7 @@ use diesel::pg::PgConnection;
 use super::commit_job::CommitJobInstance;
 use super::job_executor::JobExecutor;
 use super::publish_job::PublishJobInstance;
+use super::republish_job::RepublishJobInstance;
 use super::update_repo_job::UpdateRepoJobInstance;
 
 pub fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance> {
@@ -14,6 +15,7 @@ pub fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance
         Some(JobKind::UpdateRepo) => {
             UpdateRepoJobInstance::new(job, executor.delta_generator.clone())
         }
+        Some(JobKind::Republish) => RepublishJobInstance::new(job),
         _ => InvalidJobInstance::new(job, JobError::new("Unknown job type")),
     }
 }

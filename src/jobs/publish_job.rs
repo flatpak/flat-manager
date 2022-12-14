@@ -18,8 +18,9 @@ use crate::schema::*;
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::job_queue::queue_update_job;
-use super::utils::{add_gpg_args, do_command, generate_flatpakref, job_log_and_info};
+use super::utils::{
+    add_gpg_args, do_command, generate_flatpakref, job_log_and_info, schedule_update_job,
+};
 
 #[derive(Debug)]
 pub struct PublishJobInstance {
@@ -131,30 +132,7 @@ impl PublishJobInstance {
             }
         }
 
-        /* Create update repo job */
-        let delay = config.delay_update_secs;
-        let (is_new, update_job) =
-            queue_update_job(delay, conn, &repoconfig.name, Some(self.job_id))?;
-        if is_new {
-            job_log_and_info(
-                self.job_id,
-                conn,
-                &format!(
-                    "Queued repository update job {}{}",
-                    update_job.id,
-                    match delay {
-                        0 => "".to_string(),
-                        _ => format!(" in {} secs", delay),
-                    }
-                ),
-            );
-        } else {
-            job_log_and_info(
-                self.job_id,
-                conn,
-                &format!("Piggy-backed on existing update job {}", update_job.id),
-            );
-        }
+        let update_job = schedule_update_job(config, repoconfig, conn, self.job_id)?;
 
         Ok(json!({
             "refs": commits,

@@ -1,5 +1,6 @@
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
+use diesel::result::Error as DieselError;
 use log::{error, info};
 use std::fmt::Write as _;
 use std::os::unix::process::CommandExt;
@@ -8,7 +9,10 @@ use std::str;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
+use crate::models::Job;
 use crate::schema::*;
+
+use super::job_queue::queue_update_job;
 
 pub fn generate_flatpakref(
     ref_name: &str,
@@ -140,4 +144,37 @@ pub fn do_command(mut cmd: Command) -> JobResult<()> {
         )));
     }
     Ok(())
+}
+
+pub fn schedule_update_job(
+    config: &Config,
+    repoconfig: &RepoConfig,
+    conn: &PgConnection,
+    job_id: i32,
+) -> Result<Job, DieselError> {
+    /* Create update repo job */
+    let delay = config.delay_update_secs;
+    let (is_new, update_job) = queue_update_job(delay, conn, &repoconfig.name, Some(job_id))?;
+    if is_new {
+        job_log_and_info(
+            job_id,
+            conn,
+            &format!(
+                "Queued repository update job {}{}",
+                update_job.id,
+                match delay {
+                    0 => "".to_string(),
+                    _ => format!(" in {} secs", delay),
+                }
+            ),
+        );
+    } else {
+        job_log_and_info(
+            job_id,
+            conn,
+            &format!("Piggy-backed on existing update job {}", update_job.id),
+        );
+    }
+
+    Ok(update_job)
 }
