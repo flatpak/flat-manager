@@ -96,8 +96,8 @@ impl UpdateRepoJobInstance {
 
         for (delta, result) in rx.iter().take(deltas.len()) {
             let message = match result {
-                Ok(()) => format!(" {}", delta),
-                Err(e) => format!(" failed to generate {}: {}", delta, e),
+                Ok(()) => format!(" {delta}"),
+                Err(e) => format!(" failed to generate {delta}: {e}"),
             };
             job_log_and_info(self.job_id, conn, &message);
         }

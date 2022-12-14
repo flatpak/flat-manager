@@ -88,7 +88,7 @@ impl CommitJobInstance {
             add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
             if let Some(endoflife) = &self.endoflife {
-                cmd.arg(format!("--end-of-life={}", endoflife));
+                cmd.arg(format!("--end-of-life={endoflife}"));
             };
 
             if let Some(endoflife_rebase_arg) = &endoflife_rebase_arg {
@@ -96,7 +96,7 @@ impl CommitJobInstance {
             };
 
             if let Some(token_type) = self.token_type {
-                cmd.arg(format!("--token-type={}", token_type));
+                cmd.arg(format!("--token-type={token_type}"));
             }
 
             let src_ref_arg = format!("--src-ref={}", build_ref.commit);

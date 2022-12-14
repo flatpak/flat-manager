@@ -515,8 +515,7 @@ impl Handler<DeltaRequest> for RemoteWorker {
                 Err(e) => {
                     return Box::new(
                         DelayedResult::err(DeltaGenerationError::new(&format!(
-                            "Can't get repoconfig: {}",
-                            e
+                            "Can't get repoconfig: {e}"
                         )))
                         .into_actor(self),
                     )

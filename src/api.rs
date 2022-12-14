@@ -49,8 +49,7 @@ where
             .header(http::header::LOCATION, url.to_string())
             .json(data)),
         Err(e) => Err(ApiError::InternalServerError(format!(
-            "Can't get url for {} {:?}: {}",
-            name, elements, e
+            "Can't get url for {name} {elements:?}: {e}"
         ))),
     }
 }
@@ -418,26 +417,17 @@ fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
     match ref_parts[0] {
         "screenshots" => {
             if ref_parts.len() != 2 {
-                return Err(ApiError::BadRequest(format!(
-                    "Invalid ref_name {}",
-                    ref_name
-                )));
+                return Err(ApiError::BadRequest(format!("Invalid ref_name {ref_name}")));
             }
             Ok(())
         }
         "app" | "runtime" => {
             if ref_parts.len() != 4 {
-                return Err(ApiError::BadRequest(format!(
-                    "Invalid ref_name {}",
-                    ref_name
-                )));
+                return Err(ApiError::BadRequest(format!("Invalid ref_name {ref_name}")));
             }
             req.has_token_prefix(ref_parts[1])
         }
-        _ => Err(ApiError::BadRequest(format!(
-            "Invalid ref_name {}",
-            ref_name
-        ))),
+        _ => Err(ApiError::BadRequest(format!("Invalid ref_name {ref_name}"))),
     }
 }
 
@@ -497,7 +487,7 @@ fn validate_id(id: &str) -> Result<(), ApiError> {
         .split('.')
         .all(|element| !element.is_empty() && element.chars().all(|ch| ch.is_alphanumeric()))
     {
-        Err(ApiError::BadRequest(format!("Invalid extra id {}", id)))
+        Err(ApiError::BadRequest(format!("Invalid extra id {id}")))
     } else {
         Ok(())
     }
@@ -956,9 +946,8 @@ struct JobStatusData {
 fn job_status_data(job: Job) -> JobStatusData {
     JobStatusData {
         id: job.id,
-        kind: JobKind::from_db(job.kind).map_or("Unknown".to_string(), |k| format!("{:?}", k)),
-        status: JobStatus::from_db(job.status)
-            .map_or("Unknown".to_string(), |s| format!("{:?}", s)),
+        kind: JobKind::from_db(job.kind).map_or("Unknown".to_string(), |k| format!("{k:?}")),
+        status: JobStatus::from_db(job.status).map_or("Unknown".to_string(), |s| format!("{s:?}")),
         contents: job.contents,
         results: job.results.unwrap_or_default(),
         log: job.log,

@@ -236,7 +236,7 @@ pub fn upload_delta(
     repo_path: &Path,
     delta: &ostree::Delta,
 ) -> impl Future<Item = (), Error = DeltaGenerationError> {
-    let url = format!("{}/api/v1/delta/upload/{}", base_url, repo);
+    let url = format!("{base_url}/api/v1/delta/upload/{repo}");
     let token = token.to_string();
 
     let mut mpart = MultipartRequest::default();
@@ -252,7 +252,7 @@ pub fn upload_delta(
                 header::CONTENT_TYPE,
                 format!("multipart/form-data; boundary={}", mpart.get_boundary()),
             )
-            .header(header::AUTHORIZATION, format!("Bearer {}", token))
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .timeout(UPLOAD_TIMEOUT)
             .method(http::Method::POST)
             .send_body(actix_http::body::BodyStream::new(mpart))
@@ -271,8 +271,7 @@ pub fn upload_delta(
                 Err(e) => {
                     error!("Unexpected upload error: {:?}", e);
                     Err(DeltaGenerationError::new(&format!(
-                        "Delta upload failed with error {}",
-                        e
+                        "Delta upload failed with error {e}"
                     )))
                 }
             })

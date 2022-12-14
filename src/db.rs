@@ -102,7 +102,7 @@ impl Db {
                 }
                 RepoState::Failed(s) => {
                     return Err(ApiError::WrongRepoState(
-                        format!("Commit already failed: {}", s),
+                        format!("Commit already failed: {s}"),
                         "uploading".to_string(),
                         "failed".to_string(),
                     ))
@@ -171,7 +171,7 @@ impl Db {
                 }
                 PublishedState::Failed(s) => {
                     return Err(ApiError::WrongPublishedState(
-                        format!("Previous publish failed: {}", s),
+                        format!("Previous publish failed: {s}"),
                         "unpublished".to_string(),
                         "failed".to_string(),
                     ))
@@ -198,7 +198,7 @@ impl Db {
                 RepoState::Ready => (),
                 RepoState::Failed(s) => {
                     return Err(ApiError::WrongRepoState(
-                        format!("Build failed: {}", s),
+                        format!("Build failed: {s}"),
                         "ready".to_string(),
                         "failed".to_string(),
                     ))
@@ -361,7 +361,7 @@ impl Db {
             let new_state = match error {
                 None => RepoState::Purged,
                 Some(err_string) => {
-                    RepoState::Failed(format!("Failed to Purge build: {}", err_string))
+                    RepoState::Failed(format!("Failed to Purge build: {err_string}"))
                 }
             };
             let (val, reason) = RepoState::to_db(&new_state);

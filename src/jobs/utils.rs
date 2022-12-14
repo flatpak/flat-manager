@@ -47,18 +47,17 @@ pub fn generate_flatpakref(
             Some(suggested_name) => suggested_name,
             None => &repoconfig.name,
         };
-        format!("{} from {}", app_id, reponame)
+        format!("{app_id} from {reponame}")
     };
 
     let mut contents = format!(
         r#"[Flatpak Ref]
-Name={}
-Branch={}
-Title={}
-IsRuntime={}
-Url={}
-"#,
-        app_id, branch, title, is_runtime, url
+Name={app_id}
+Branch={branch}
+Title={title}
+IsRuntime={is_runtime}
+Url={url}
+"#
     );
 
     /* We only want to deploy the collection ID if the flatpakref is being generated for the main
@@ -66,22 +65,22 @@ Url={}
      */
     if let Some(collection_id) = &repoconfig.collection_id {
         if repoconfig.deploy_collection_id && maybe_build_id.is_none() {
-            writeln!(contents, "DeployCollectionID={}", collection_id).unwrap();
+            writeln!(contents, "DeployCollectionID={collection_id}").unwrap();
         }
     };
 
     if maybe_build_id.is_none() {
         if let Some(suggested_name) = &repoconfig.suggested_repo_name {
-            writeln!(contents, "SuggestRemoteName={}", suggested_name).unwrap();
+            writeln!(contents, "SuggestRemoteName={suggested_name}").unwrap();
         }
     }
 
     if let Some(gpg_content) = maybe_gpg_content {
-        writeln!(contents, "GPGKey={}", gpg_content).unwrap();
+        writeln!(contents, "GPGKey={gpg_content}").unwrap();
     }
 
     if let Some(runtime_repo_url) = &repoconfig.runtime_repo_url {
-        writeln!(contents, "RuntimeRepo={}\n", runtime_repo_url).unwrap();
+        writeln!(contents, "RuntimeRepo={runtime_repo_url}\n").unwrap();
     }
 
     (filename, contents)
@@ -93,11 +92,11 @@ pub fn add_gpg_args(
     maybe_gpg_homedir: &Option<String>,
 ) {
     if let Some(gpg_homedir) = maybe_gpg_homedir {
-        cmd.arg(format!("--gpg-homedir={}", gpg_homedir));
+        cmd.arg(format!("--gpg-homedir={gpg_homedir}"));
     };
 
     if let Some(key) = maybe_gpg_key {
-        cmd.arg(format!("--gpg-sign={}", key));
+        cmd.arg(format!("--gpg-sign={key}"));
     };
 }
 
@@ -113,12 +112,12 @@ pub fn job_log(job_id: i32, conn: &PgConnection, output: &str) {
 
 pub fn job_log_and_info(job_id: i32, conn: &PgConnection, output: &str) {
     info!("#{}: {}", job_id, output);
-    job_log(job_id, conn, &format!("{}\n", output));
+    job_log(job_id, conn, &format!("{output}\n"));
 }
 
 pub fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
     error!("#{}: {}", job_id, output);
-    job_log(job_id, conn, &format!("{}\n", output));
+    job_log(job_id, conn, &format!("{output}\n"));
 }
 
 pub fn do_command(mut cmd: Command) -> JobResult<()> {
@@ -164,7 +163,7 @@ pub fn schedule_update_job(
                 update_job.id,
                 match delay {
                     0 => "".to_string(),
-                    _ => format!(" in {} secs", delay),
+                    _ => format!(" in {delay} secs"),
                 }
             ),
         );
