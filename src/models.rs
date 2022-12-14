@@ -167,6 +167,7 @@ pub enum JobKind {
     Commit,
     Publish,
     UpdateRepo,
+    Republish,
 }
 
 impl JobKind {
@@ -175,6 +176,7 @@ impl JobKind {
             JobKind::Commit => 0,
             JobKind::Publish => 1,
             JobKind::UpdateRepo => 2,
+            JobKind::Republish => 3,
         }
     }
 
@@ -183,6 +185,7 @@ impl JobKind {
             0 => Some(JobKind::Commit),
             1 => Some(JobKind::Publish),
             2 => Some(JobKind::UpdateRepo),
+            3 => Some(JobKind::Republish),
             _ => None,
         }
     }
@@ -252,6 +255,11 @@ pub struct CommitJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PublishJob {
     pub build: i32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RepublishJob {
+    pub app: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

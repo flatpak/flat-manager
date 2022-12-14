@@ -4,8 +4,7 @@ use futures::future;
 use futures::future::Either;
 use futures::Future;
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::num::NonZeroUsize;
 use std::os::unix::process::CommandExt as UnixCommandExt;
 use std::path;
@@ -13,6 +12,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::str;
 use std::{collections::HashMap, path::Path};
+use std::{fs, io};
 use tokio_process::CommandExt;
 use walkdir::WalkDir;
 
@@ -1067,4 +1067,47 @@ pub fn prune_async(repo_path: &Path) -> Box<dyn Future<Item = (), Error = Ostree
             .map_err(|e| OstreeError::ExecFailed("ostree prune".to_string(), e.to_string()))
             .and_then(|output| result_from_output(output, "ostree prune")),
     )
+}
+
+pub fn init_ostree_repo(
+    repo_path: &path::Path,
+    parent_repo_path: &path::Path,
+    opt_collection_id: &Option<(String, i32)>,
+) -> io::Result<()> {
+    let parent_repo_absolute_path = std::env::current_dir()?.join(parent_repo_path);
+
+    for &d in [
+        "extensions",
+        "objects",
+        "refs/heads",
+        "refs/mirrors",
+        "refs/remotes",
+        "state",
+        "tmp/cache",
+    ]
+    .iter()
+    {
+        fs::create_dir_all(repo_path.join(d))?;
+    }
+
+    std::os::unix::fs::symlink(&parent_repo_absolute_path, repo_path.join("parent"))?;
+
+    let mut file = fs::File::create(repo_path.join("config"))?;
+    file.write_all(
+        format!(
+            r#"[core]
+repo_version=1
+mode=archive-z2
+min-free-space-size=500MB
+{}parent={}"#,
+            match opt_collection_id {
+                Some((collection_id, build_id)) =>
+                    format!("collection-id={}.Build{}\n", collection_id, build_id),
+                _ => "".to_string(),
+            },
+            parent_repo_absolute_path.display()
+        )
+        .as_bytes(),
+    )?;
+    Ok(())
 }

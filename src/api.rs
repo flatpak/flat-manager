@@ -17,9 +17,7 @@ use std::cell::RefCell;
 use std::clone::Clone;
 use std::env;
 use std::fs;
-use std::io;
 use std::io::Write;
-use std::os::unix;
 use std::os::unix::fs::PermissionsExt;
 use std::path;
 use std::rc::Rc;
@@ -33,52 +31,9 @@ use crate::deltas::{DeltaGenerator, RemoteWorker};
 use crate::errors::ApiError;
 use crate::jobs::{JobQueue, ProcessJobs};
 use crate::models::{Build, Job, JobKind, JobStatus, NewBuild, NewBuildRef};
+use crate::ostree::init_ostree_repo;
 use crate::tokens::{self, ClaimsValidator};
 use askama::Template;
-
-fn init_ostree_repo(
-    repo_path: &path::Path,
-    parent_repo_path: &path::Path,
-    build_id: i32,
-    opt_collection_id: &Option<String>,
-) -> io::Result<()> {
-    let parent_repo_absolute_path = env::current_dir()?.join(parent_repo_path);
-
-    for &d in [
-        "extensions",
-        "objects",
-        "refs/heads",
-        "refs/mirrors",
-        "refs/remotes",
-        "state",
-        "tmp/cache",
-    ]
-    .iter()
-    {
-        fs::create_dir_all(repo_path.join(d))?;
-    }
-
-    unix::fs::symlink(&parent_repo_absolute_path, repo_path.join("parent"))?;
-
-    let mut file = fs::File::create(repo_path.join("config"))?;
-    file.write_all(
-        format!(
-            r#"[core]
-repo_version=1
-mode=archive-z2
-min-free-space-size=500MB
-{}parent={}"#,
-            match opt_collection_id {
-                Some(collection_id) =>
-                    format!("collection-id={}.Build{}\n", collection_id, build_id),
-                _ => "".to_string(),
-            },
-            parent_repo_absolute_path.display()
-        )
-        .as_bytes(),
-    )?;
-    Ok(())
-}
 
 fn respond_with_url<T>(
     data: &T,
@@ -282,10 +237,9 @@ async fn create_build_async(
     init_ostree_repo(
         &build_repo_path,
         &repoconfig.path,
-        build.id,
-        &repoconfig.collection_id,
+        &repoconfig.collection_id.map(|id| (id, build.id)),
     )?;
-    init_ostree_repo(&upload_path, &repoconfig.path, build.id, &None)?;
+    init_ostree_repo(&upload_path, &repoconfig.path, &None)?;
 
     respond_with_url(&build, &req, "show_build", &[build.id.to_string()])
 }
@@ -946,6 +900,45 @@ async fn purge_async(
         .await?;
 
     respond_with_url(&build, &req, "show_build", &[params.id.to_string()])
+}
+
+#[derive(Deserialize)]
+pub struct RepublishPathParams {
+    repo: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RepublishArgs {
+    app: String,
+}
+
+pub fn republish(
+    args: Json<RepublishArgs>,
+    params: Path<RepublishPathParams>,
+    job_queue: Data<Addr<JobQueue>>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> impl Future<Item = HttpResponse, Error = ApiError> {
+    Box::pin(republish_async(args, params, job_queue, db, req)).compat()
+}
+
+async fn republish_async(
+    args: Json<RepublishArgs>,
+    params: Path<RepublishPathParams>,
+    job_queue: Data<Addr<JobQueue>>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    req.has_token_claims("build", ClaimsScope::Republish)?;
+    req.has_token_prefix(&args.app)?;
+    req.has_token_repo(&params.repo)?;
+
+    let job = db
+        .start_republish_job(params.repo.clone(), args.app.clone())
+        .await?;
+    job_queue.do_send(ProcessJobs(Some(params.repo.clone())));
+
+    respond_with_url(&job, &req, "show_job", &[job.id.to_string()])
 }
 
 #[derive(Template)]

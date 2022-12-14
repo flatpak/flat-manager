@@ -234,6 +234,22 @@ impl Db {
         .await
     }
 
+    pub async fn start_republish_job(&self, repo: String, app: String) -> Result<Job, ApiError> {
+        self.run_in_transaction(move |conn| {
+            let job = diesel::insert_into(schema::jobs::table)
+                .values(NewJob {
+                    kind: JobKind::Republish.to_db(),
+                    start_after: None,
+                    repo: Some(repo.clone()),
+                    contents: json!(RepublishJob { app }).to_string(),
+                })
+                .get_result::<Job>(conn)?;
+
+            Ok(job)
+        })
+        .await
+    }
+
     /* Builds */
 
     pub async fn new_build(&self, a_build: NewBuild) -> Result<Build, ApiError> {

@@ -3,6 +3,7 @@ mod job_executor;
 mod job_instance;
 mod job_queue;
 mod publish_job;
+mod republish_job;
 mod update_repo_job;
 mod utils;
 
