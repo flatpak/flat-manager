@@ -19,7 +19,7 @@ use crate::ostree;
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::{add_gpg_args, do_command, job_log_and_info};
+use super::utils::{add_gpg_args, do_command};
 
 #[derive(Debug)]
 pub struct UpdateRepoJobInstance {
@@ -75,7 +75,7 @@ impl UpdateRepoJobInstance {
         repoconfig: &RepoConfig,
         conn: &PgConnection,
     ) -> JobResult<()> {
-        job_log_and_info(self.job_id, conn, "Generating deltas");
+        job_log_and_info!(self.job_id, conn, "Generating deltas");
 
         let (tx, rx) = mpsc::channel();
 
@@ -99,10 +99,10 @@ impl UpdateRepoJobInstance {
                 Ok(()) => format!(" {delta}"),
                 Err(e) => format!(" failed to generate {delta}: {e}"),
             };
-            job_log_and_info(self.job_id, conn, &message);
+            job_log_and_info!(self.job_id, conn, &message);
         }
 
-        job_log_and_info(self.job_id, conn, "All deltas generated");
+        job_log_and_info!(self.job_id, conn, "All deltas generated");
 
         Ok(())
     }
@@ -113,7 +113,7 @@ impl UpdateRepoJobInstance {
         repoconfig: &RepoConfig,
         conn: &PgConnection,
     ) -> JobResult<()> {
-        job_log_and_info(self.job_id, conn, "Cleaning out old deltas");
+        job_log_and_info!(self.job_id, conn, "Cleaning out old deltas");
         let repo_path = repoconfig.get_abs_repo_path();
         let deltas_dir = repo_path.join("deltas");
         let tmp_deltas_dir = repo_path.join("tmp/deltas");
@@ -133,7 +133,7 @@ impl UpdateRepoJobInstance {
             let dst_parent = dst.parent().unwrap();
             fs::create_dir_all(dst_parent)?;
 
-            job_log_and_info(
+            job_log_and_info!(
                 self.job_id,
                 conn,
                 &format!(
@@ -171,7 +171,7 @@ impl UpdateRepoJobInstance {
             .collect::<Vec<PathBuf>>();
 
         for dir in to_delete {
-            job_log_and_info(
+            job_log_and_info!(
                 self.job_id,
                 conn,
                 &format!(
@@ -191,7 +191,7 @@ impl UpdateRepoJobInstance {
         repoconfig: &RepoConfig,
         conn: &PgConnection,
     ) -> JobResult<()> {
-        job_log_and_info(self.job_id, conn, "Regenerating appstream branches");
+        job_log_and_info!(self.job_id, conn, "Regenerating appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut cmd = Command::new("flatpak");
@@ -209,7 +209,7 @@ impl UpdateRepoJobInstance {
         repoconfig: &RepoConfig,
         conn: &PgConnection,
     ) -> JobResult<()> {
-        job_log_and_info(self.job_id, conn, "Updating summary");
+        job_log_and_info!(self.job_id, conn, "Updating summary");
         let repo_path = repoconfig.get_abs_repo_path();
 
         let mut cmd = Command::new("flatpak");
@@ -226,14 +226,14 @@ impl UpdateRepoJobInstance {
             let repo_path = repoconfig.get_abs_repo_path();
             let mut cmd = Command::new(post_publish_script);
             cmd.arg(&repoconfig.name).arg(&repo_path);
-            job_log_and_info(self.job_id, conn, "Running post-publish script");
+            job_log_and_info!(self.job_id, conn, "Running post-publish script");
             do_command(cmd)?;
         };
         Ok(())
     }
 
     fn extract_appstream(&self, repoconfig: &RepoConfig, conn: &PgConnection) -> JobResult<()> {
-        job_log_and_info(self.job_id, conn, "Extracting appstream branches");
+        job_log_and_info!(self.job_id, conn, "Extracting appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
         let appstream_dir = repo_path.join("appstream");
         let appstream_refs = ostree::list_refs(&repoconfig.path, "appstream");

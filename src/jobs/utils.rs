@@ -110,14 +110,24 @@ pub fn job_log(job_id: i32, conn: &PgConnection, output: &str) {
     }
 }
 
-pub fn job_log_and_info(job_id: i32, conn: &PgConnection, output: &str) {
-    info!("#{}: {}", job_id, output);
-    job_log(job_id, conn, &format!("{output}\n"));
+macro_rules! job_log_and_info {
+    ( $job_id:expr, $conn:expr, $output:expr $(,)? ) => {{
+        let job_id = $job_id;
+        let conn = $conn;
+        let output = $output;
+        info!("#{}: {}", job_id, output);
+        crate::jobs::utils::job_log(job_id, conn, &format!("{output}\n"));
+    }};
 }
 
-pub fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
-    error!("#{}: {}", job_id, output);
-    job_log(job_id, conn, &format!("{output}\n"));
+macro_rules! job_log_and_error {
+    ( $job_id:expr, $conn:expr, $output:expr $(,)? ) => {{
+        let job_id = $job_id;
+        let conn = $conn;
+        let output = $output;
+        error!("#{}: {}", job_id, output);
+        crate::jobs::utils::job_log(job_id, conn, &format!("{output}\n"));
+    }};
 }
 
 /// Executes a command and returns its output. A JobError is returned if the command couldn't be executed, but not if
@@ -165,7 +175,7 @@ pub fn schedule_update_job(
     let delay = config.delay_update_secs;
     let (is_new, update_job) = queue_update_job(delay, conn, &repoconfig.name, Some(job_id))?;
     if is_new {
-        job_log_and_info(
+        job_log_and_info!(
             job_id,
             conn,
             &format!(
@@ -178,7 +188,7 @@ pub fn schedule_update_job(
             ),
         );
     } else {
-        job_log_and_info(
+        job_log_and_info!(
             job_id,
             conn,
             &format!("Piggy-backed on existing update job {}", update_job.id),
