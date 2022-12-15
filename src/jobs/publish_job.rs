@@ -52,7 +52,12 @@ impl PublishJobInstance {
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
 
         // Run the publish hook, if any
-        if let Some(hook) = repoconfig.hooks.publish.build_command(&build_repo_path) {
+        if let Some(hook) = repoconfig
+            .hooks
+            .publish
+            .as_ref()
+            .and_then(|x| x.build_command(&build_repo_path))
+        {
             job_log_and_info(self.job_id, conn, "Running publish hook");
             do_command(hook)?;
         }
