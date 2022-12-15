@@ -117,6 +117,10 @@ token with the gentoken command:
 
 The above matches the default secret, so can be used for testing.
 
+Some token privileges are for managing flat-manager and shouldn't be
+given to third parties who are just uploading apps. The token privileges
+are described in the ClaimsScope enum in `app.rs`.
+
 The client takes tokens via either the `--token` argument or in the
 `REPO_TOKEN` environment variable.
 
