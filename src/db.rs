@@ -86,14 +86,14 @@ impl Db {
                 RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
             match current_repo_state {
                 RepoState::Uploading => (),
-                RepoState::Verifying => {
+                RepoState::Committing => {
                     return Err(ApiError::WrongRepoState(
                         "Build is currently being commited".to_string(),
                         "uploading".to_string(),
-                        "verifying".to_string(),
+                        "committing".to_string(),
                     ))
                 }
-                RepoState::Ready => {
+                RepoState::Ready | RepoState::Validating => {
                     return Err(ApiError::WrongRepoState(
                         "Build is already commited".to_string(),
                         "uploading".to_string(),
@@ -115,7 +115,7 @@ impl Db {
                     ))
                 }
             }
-            let (val, reason) = RepoState::to_db(&RepoState::Verifying);
+            let (val, reason) = RepoState::to_db(&RepoState::Committing);
             let job = diesel::insert_into(schema::jobs::table)
                 .values(NewJob {
                     kind: JobKind::Commit.to_db(),
@@ -188,11 +188,18 @@ impl Db {
                         "uploading".to_string(),
                     ))
                 }
-                RepoState::Verifying => {
+                RepoState::Committing => {
                     return Err(ApiError::WrongRepoState(
                         "Build is not commited".to_string(),
                         "ready".to_string(),
-                        "verifying".to_string(),
+                        "committing".to_string(),
+                    ))
+                }
+                RepoState::Validating => {
+                    return Err(ApiError::WrongRepoState(
+                        "Build is still validating".to_string(),
+                        "ready".to_string(),
+                        "validating".to_string(),
                     ))
                 }
                 RepoState::Ready => (),
@@ -324,9 +331,10 @@ impl Db {
                 current_build.published_state,
                 &current_build.published_state_reason,
             );
-            if current_repo_state.same_state_as(&RepoState::Verifying)
-                || current_repo_state.same_state_as(&RepoState::Purging)
-                || current_published_state.same_state_as(&PublishedState::Publishing)
+            if matches!(
+                current_repo_state,
+                RepoState::Committing | RepoState::Purging | RepoState::Validating
+            ) || matches!(current_published_state, PublishedState::Publishing)
             {
                 /* Only allow pruning when we're not working on the build repo */
                 return Err(ApiError::BadRequest(

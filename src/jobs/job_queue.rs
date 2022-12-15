@@ -157,7 +157,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
     let conn = &pool.get().unwrap();
     {
         use schema::builds::dsl::*;
-        let (verifying, _) = RepoState::Verifying.to_db();
+        let (verifying, _) = RepoState::Committing.to_db();
         let (purging, _) = RepoState::Purging.to_db();
         let (failed, failed_reason) =
             RepoState::Failed("Server was restarted during job".to_string()).to_db();

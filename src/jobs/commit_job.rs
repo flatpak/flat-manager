@@ -1,6 +1,5 @@
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
-use diesel::result::Error as DieselError;
 use log::info;
 use serde_json::json;
 use std::collections::HashMap;
@@ -12,8 +11,9 @@ use std::str;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
-use crate::models;
-use crate::models::{CommitJob, Job, RepoState};
+use crate::models::{
+    self, Check, CheckJob, CheckStatus, CommitJob, Job, JobKind, NewJob, RepoState,
+};
 use crate::ostree;
 use crate::schema::*;
 
@@ -191,26 +191,81 @@ impl JobInstance for CommitJobInstance {
         }
 
         // Do the actual work
-
         let res = self.do_commit_build_refs(&build_refs, config, repoconfig, conn);
 
         // Update the build repo state in db
-
-        let new_repo_state = match &res {
-            Ok(_) => RepoState::Ready,
-            Err(e) => RepoState::Failed(e.to_string()),
-        };
-
-        conn.transaction::<models::Build, DieselError, _>(|| {
+        conn.transaction::<_, JobError, _>(|| {
             let current_build = builds::table
                 .filter(builds::id.eq(self.build_id))
+                .for_update()
                 .get_result::<models::Build>(conn)?;
             let current_repo_state =
                 RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
-            if !current_repo_state.same_state_as(&RepoState::Verifying) {
+
+            if !current_repo_state.same_state_as(&RepoState::Committing) {
                 // Something weird was happening, we expected this build to be in the verifying state
-                return Err(DieselError::RollbackTransaction);
+                return Err(JobError::new(&format!(
+                    "Expected repo to be in {:?} state upon commit job completion, but it was in {:?}",
+                    RepoState::Committing,
+                    RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason)
+                )));
             };
+
+            let new_repo_state = match &res {
+                Ok(_) => {
+                    if repoconfig.hooks.checks.is_empty() {
+                        RepoState::Ready
+                    } else {
+                        // Create a check job for each configured check hook
+                        let check_jobs = diesel::insert_into(jobs::table)
+                            .values(
+                                repoconfig
+                                    .hooks
+                                    .checks
+                                    .keys()
+                                    .map(|name| NewJob {
+                                        kind: JobKind::Check.to_db(),
+                                        start_after: None,
+                                        repo: None,
+                                        contents: json!(CheckJob {
+                                            build: self.build_id,
+                                            name: name.to_owned()
+                                        })
+                                        .to_string(),
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                            .get_results::<Job>(conn)?;
+
+                        // Create a check row for each new check job. This row ties the job to the build and records its status.
+                        let (pending_status, pending_status_msg) = CheckStatus::Pending.to_db();
+                        let checks = repoconfig
+                            .hooks
+                            .checks
+                            .keys()
+                            .zip(check_jobs.iter())
+                            .map(|(name, job)| Check {
+                                check_name: name.to_owned(),
+                                build_id: self.build_id,
+                                job_id: job.id,
+                                status: pending_status,
+                                status_reason: pending_status_msg.cloned(),
+                                results: None,
+                            })
+                            .collect::<Vec<_>>();
+
+                        diesel::insert_into(checks::table)
+                            .values(checks)
+                            .get_result::<Check>(conn)?;
+
+                        // Put the build in the Validating state. The last check job to finish will move the build
+                        // into the Ready or Failed state.
+                        RepoState::Validating
+                    }
+                }
+                Err(e) => RepoState::Failed(e.to_string()),
+            };
+
             let (val, reason) = RepoState::to_db(&new_repo_state);
             diesel::update(builds::table)
                 .filter(builds::id.eq(self.build_id))
@@ -218,7 +273,9 @@ impl JobInstance for CommitJobInstance {
                     builds::repo_state.eq(val),
                     builds::repo_state_reason.eq(reason),
                 ))
-                .get_result::<models::Build>(conn)
+                .get_result::<models::Build>(conn)?;
+
+            Ok(())
         })?;
 
         res

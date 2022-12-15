@@ -1,7 +1,7 @@
 /* see https://github.com/rust-lang/rust-clippy/issues/9014 */
 #![allow(clippy::extra_unused_lifetimes)]
 
-use crate::schema::{build_refs, builds, job_dependencies, jobs};
+use crate::schema::{build_refs, builds, checks, job_dependencies, jobs};
 use serde::{Deserialize, Serialize};
 use std::{mem, time};
 
@@ -73,11 +73,19 @@ impl PublishedState {
 
 #[derive(Deserialize, Debug)]
 pub enum RepoState {
+    /// The repo is newly created and objects can be uploaded.
     Uploading,
-    Verifying,
+    /// A commit job is queued for this build repo.
+    Committing,
+    /// The commit job is done and checks are still running or waiting for review.
+    Validating,
+    /// The commit job is done, any checks jobs have passed, and the build can be published.
     Ready,
+    /// One of the build's jobs failed.
     Failed(String),
+    /// The build repo is currently being deleted.
     Purging,
+    /// The build repo has been deleted.
     Purged,
 }
 
@@ -89,18 +97,19 @@ impl RepoState {
     pub fn to_db(&self) -> (i16, Option<String>) {
         match self {
             RepoState::Uploading => (0, None),
-            RepoState::Verifying => (1, None),
+            RepoState::Committing => (1, None),
             RepoState::Ready => (2, None),
             RepoState::Failed(s) => (3, Some(s.to_string())),
             RepoState::Purging => (4, None),
             RepoState::Purged => (5, None),
+            RepoState::Validating => (6, None),
         }
     }
 
     pub fn from_db(val: i16, reason: &Option<String>) -> Self {
         match val {
             0 => RepoState::Uploading,
-            1 => RepoState::Verifying,
+            1 => RepoState::Committing,
             2 => RepoState::Ready,
             3 => RepoState::Failed(
                 reason
@@ -110,6 +119,7 @@ impl RepoState {
             ),
             4 => RepoState::Purging,
             5 => RepoState::Purged,
+            6 => RepoState::Validating,
             _ => RepoState::Failed("Unknown state".to_string()),
         }
     }
@@ -144,9 +154,13 @@ allow_tables_to_appear_in_same_query!(jobs, job_dependencies_with_status,);
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub enum JobStatus {
+    /// The job is in the queue.
     New,
+    /// The job is running.
     Started,
+    /// The job has completed successfully.
     Ended,
+    /// The job encountered an error, or flat-manager was shut down before it could finish.
     Broken,
 }
 
@@ -168,6 +182,7 @@ pub enum JobKind {
     Publish,
     UpdateRepo,
     Republish,
+    Check,
 }
 
 impl JobKind {
@@ -177,6 +192,7 @@ impl JobKind {
             JobKind::Publish => 1,
             JobKind::UpdateRepo => 2,
             JobKind::Republish => 3,
+            JobKind::Check => 4,
         }
     }
 
@@ -186,6 +202,7 @@ impl JobKind {
             1 => Some(JobKind::Publish),
             2 => Some(JobKind::UpdateRepo),
             3 => Some(JobKind::Republish),
+            4 => Some(JobKind::Check),
             _ => None,
         }
     }
@@ -244,6 +261,67 @@ pub struct JobDependencyWithStatus {
     pub dependant_status: i16,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum CheckStatus {
+    Pending,
+    Passed,
+    PassedWithWarnings(String),
+    Failed(String),
+    ReviewRequired(String),
+}
+
+impl CheckStatus {
+    pub fn to_db(&self) -> (i16, Option<&String>) {
+        match self {
+            CheckStatus::Pending => (0, None),
+            CheckStatus::Passed => (1, None),
+            CheckStatus::PassedWithWarnings(s) => (2, Some(s)),
+            CheckStatus::Failed(s) => (3, Some(s)),
+            CheckStatus::ReviewRequired(s) => (4, Some(s)),
+        }
+    }
+
+    pub fn from_db(val: i16, msg: Option<String>) -> Option<Self> {
+        match val {
+            0 => Some(CheckStatus::Pending),
+            1 => Some(CheckStatus::Passed),
+            2 => Some(CheckStatus::PassedWithWarnings(msg.unwrap_or_default())),
+            3 => Some(CheckStatus::Failed(msg.unwrap_or_default())),
+            4 => Some(CheckStatus::ReviewRequired(msg.unwrap_or_default())),
+            _ => None,
+        }
+    }
+
+    /// Whether the state is a finish state. When all checks on a build are finished, the build is put into the Ready
+    /// or Failed state.
+    pub fn is_finished(&self) -> bool {
+        match self {
+            CheckStatus::Passed | CheckStatus::PassedWithWarnings(_) | CheckStatus::Failed(_) => {
+                true
+            }
+            CheckStatus::Pending | CheckStatus::ReviewRequired(_) => false,
+        }
+    }
+
+    /// Whether the check failed.
+    pub fn is_failed(&self) -> bool {
+        matches!(self, CheckStatus::Failed(_))
+    }
+}
+
+#[derive(Debug, Queryable, Insertable, Identifiable, Associations)]
+#[primary_key(check_name, build_id)]
+#[belongs_to(Build, foreign_key = "build_id")]
+#[belongs_to(Job, foreign_key = "job_id")]
+pub struct Check {
+    pub check_name: String,
+    pub build_id: i32,
+    pub job_id: i32,
+    pub status: i16,
+    pub status_reason: Option<String>,
+    pub results: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CommitJob {
     pub build: i32,
@@ -265,4 +343,10 @@ pub struct RepublishJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateRepoJob {
     pub repo: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CheckJob {
+    pub build: i32,
+    pub name: String,
 }
