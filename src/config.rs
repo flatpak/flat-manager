@@ -36,7 +36,7 @@ pub struct SubsetConfig {
 /// A command to run during the build/publish process. Given as an array of arguments, with the first argument being
 /// the path to the program. Arguments are not processed by a shell; they are passed directly to the program.
 #[derive(Deserialize, Debug, Default, Clone)]
-pub struct ConfigHook(Option<Vec<String>>);
+pub struct ConfigHook(Vec<String>);
 
 #[derive(Clone, Deserialize, Debug)]
 /// A hook that runs after the commit stage. All check hooks must pass for the build to be publishable.
@@ -56,7 +56,7 @@ pub struct CheckHook {
 pub struct ConfigHooks {
     /// Runs during publish jobs before the build is imported to the main repository. The hook is allowed to edit the
     /// repository. The current directory is set to the build directory.
-    pub publish: ConfigHook,
+    pub publish: Option<ConfigHook>,
 
     #[serde(default)]
     pub checks: HashMap<String, CheckHook>,
@@ -137,12 +137,10 @@ pub struct Config {
 impl ConfigHook {
     /// Creates a Command to execute this hook, if it is defined.
     pub fn build_command<P: AsRef<Path>>(&self, current_dir: P) -> Option<Command> {
-        self.0.as_ref().and_then(|args| {
-            args.first().map(|program| {
-                let mut command = Command::new(program);
-                command.args(args.iter().skip(1)).current_dir(current_dir);
-                command
-            })
+        self.0.first().map(|program| {
+            let mut command = Command::new(program);
+            command.args(self.0.iter().skip(1)).current_dir(current_dir);
+            command
         })
     }
 }
