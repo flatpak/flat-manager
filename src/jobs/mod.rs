@@ -1,3 +1,6 @@
+#[macro_use]
+mod utils;
+
 mod check_job;
 mod commit_job;
 mod job_executor;
@@ -6,7 +9,6 @@ mod job_queue;
 mod publish_job;
 mod republish_job;
 mod update_repo_job;
-mod utils;
 
 pub use job_executor::start_job_executor;
 pub use job_queue::{cleanup_started_jobs, JobQueue, ProcessJobs, StopJobQueue};

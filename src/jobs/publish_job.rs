@@ -18,9 +18,7 @@ use crate::schema::*;
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::{
-    add_gpg_args, do_command, generate_flatpakref, job_log_and_info, schedule_update_job,
-};
+use super::utils::{add_gpg_args, do_command, generate_flatpakref, schedule_update_job};
 
 #[derive(Debug)]
 pub struct PublishJobInstance {
@@ -58,7 +56,7 @@ impl PublishJobInstance {
             .as_ref()
             .and_then(|x| x.build_command(&build_repo_path))
         {
-            job_log_and_info(self.job_id, conn, "Running publish hook");
+            job_log_and_info!(self.job_id, conn, "Running publish hook");
             do_command(hook)?;
         }
 
@@ -82,7 +80,7 @@ impl PublishJobInstance {
 
         cmd.arg(&src_repo_arg).arg(&repoconfig.path);
 
-        job_log_and_info(
+        job_log_and_info!(
             self.job_id,
             conn,
             &format!("Importing build to repo {}", repoconfig.name),
@@ -107,7 +105,7 @@ impl PublishJobInstance {
                 let (filename, contents) =
                     generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
                 let path = appstream_dir.join(&filename);
-                job_log_and_info(self.job_id, conn, &format!("generating {}", &filename));
+                job_log_and_info!(self.job_id, conn, &format!("generating {}", &filename));
                 let old_contents = fs::read_to_string(&path).unwrap_or_default();
                 if contents != old_contents {
                     File::create(&path)?.write_all(contents.as_bytes())?;
@@ -117,7 +115,7 @@ impl PublishJobInstance {
 
         for build_ref in build_refs.iter() {
             if build_ref.ref_name.starts_with("screenshots/") {
-                job_log_and_info(
+                job_log_and_info!(
                     self.job_id,
                     conn,
                     &format!("extracting {}", build_ref.ref_name),

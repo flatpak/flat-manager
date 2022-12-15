@@ -19,7 +19,7 @@ use crate::schema::*;
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::{add_gpg_args, do_command, generate_flatpakref, job_log_and_info};
+use super::utils::{add_gpg_args, do_command, generate_flatpakref};
 
 #[derive(Debug)]
 pub struct CommitJobInstance {
@@ -106,7 +106,7 @@ impl CommitJobInstance {
                 .arg(&build_repo_path)
                 .arg(&build_ref.ref_name);
 
-            job_log_and_info(
+            job_log_and_info!(
                 self.job_id,
                 conn,
                 &format!(
@@ -144,10 +144,10 @@ impl CommitJobInstance {
 
         add_gpg_args(&mut cmd, &config.build_gpg_key, &config.gpg_homedir);
 
-        job_log_and_info(self.job_id, conn, "running build-update-repo");
+        job_log_and_info!(self.job_id, conn, "running build-update-repo");
         do_command(cmd)?;
 
-        job_log_and_info(self.job_id, conn, "Removing upload directory");
+        job_log_and_info!(self.job_id, conn, "Removing upload directory");
         fs::remove_dir_all(&upload_path)?;
 
         Ok(json!({ "refs": commits }))

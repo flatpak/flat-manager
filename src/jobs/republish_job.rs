@@ -15,7 +15,7 @@ use crate::ostree::init_ostree_repo;
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::{add_gpg_args, do_command, job_log_and_info};
+use super::utils::{add_gpg_args, do_command};
 
 #[derive(Debug)]
 pub struct RepublishJobInstance {
@@ -101,7 +101,7 @@ impl JobInstance for RepublishJobInstance {
 
         // Import commits to the temporary repo
         for (ref_name, _checksum) in refs {
-            job_log_and_info(self.job_id, conn, &format!("Re-publishing {}", &ref_name));
+            job_log_and_info!(self.job_id, conn, &format!("Re-publishing {}", &ref_name));
 
             let mut cmd = Command::new("flatpak");
             cmd.arg("build-commit-from")
@@ -130,7 +130,7 @@ impl JobInstance for RepublishJobInstance {
             .as_ref()
             .and_then(|x| x.build_command(tmp_repo_dir.path()))
         {
-            job_log_and_info(self.job_id, conn, "Running publish hook");
+            job_log_and_info!(self.job_id, conn, "Running publish hook");
             do_command(hook)?;
         }
 
@@ -144,7 +144,7 @@ impl JobInstance for RepublishJobInstance {
         src_repo_arg.push(tmp_repo_dir.path());
         cmd.arg(&src_repo_arg).arg(&repoconfig.path);
 
-        job_log_and_info(
+        job_log_and_info!(
             self.job_id,
             conn,
             &format!("Republishing refs to repo {}", repoconfig.name),

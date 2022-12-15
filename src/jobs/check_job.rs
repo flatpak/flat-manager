@@ -9,7 +9,7 @@ use crate::schema::{builds, checks};
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::{do_command_with_output, job_log_and_info};
+use super::utils::do_command_with_output;
 
 #[derive(Debug)]
 pub struct CheckJobInstance {
@@ -77,7 +77,7 @@ impl JobInstance for CheckJobInstance {
         };
 
         // Run the hook
-        job_log_and_info(self.job_id, conn, "Running check command");
+        job_log_and_info!(self.job_id, conn, "Running check command");
 
         let output = if let Some(mut cmd) = check_hook.command.build_command(build_repo_path) {
             do_command_with_output(&mut cmd)?
@@ -89,12 +89,12 @@ impl JobInstance for CheckJobInstance {
         };
 
         let new_status = if output.status.success() {
-            job_log_and_info(self.job_id, conn, "Check command exited successfully");
+            job_log_and_info!(self.job_id, conn, "Check command exited successfully");
             CheckStatus::Passed
         } else {
             let msg = format!("Check command exited with status code {}", output.status);
 
-            job_log_and_info(self.job_id, conn, &msg);
+            job_log_and_info!(self.job_id, conn, &msg);
 
             if check_hook.reviewable {
                 CheckStatus::ReviewRequired(msg)
