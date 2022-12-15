@@ -1,3 +1,4 @@
+mod check_job;
 mod commit_job;
 mod job_executor;
 mod job_instance;

@@ -25,6 +25,17 @@ table! {
 }
 
 table! {
+    checks (check_name, build_id) {
+        check_name -> Text,
+        build_id -> Int4,
+        job_id -> Int4,
+        status -> Int2,
+        status_reason -> Nullable<Text>,
+        results -> Nullable<Text>,
+    }
+}
+
+table! {
     job_dependencies (job_id, depends_on) {
         job_id -> Int4,
         depends_on -> Int4,
@@ -54,6 +65,15 @@ table! {
 }
 
 joinable!(build_refs -> builds (build_id));
+joinable!(checks -> builds (build_id));
+joinable!(checks -> jobs (job_id));
 joinable!(published_refs -> builds (build_id));
 
-allow_tables_to_appear_in_same_query!(build_refs, builds, job_dependencies, jobs, published_refs,);
+allow_tables_to_appear_in_same_query!(
+    build_refs,
+    builds,
+    checks,
+    job_dependencies,
+    jobs,
+    published_refs,
+);

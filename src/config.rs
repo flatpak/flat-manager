@@ -38,6 +38,18 @@ pub struct SubsetConfig {
 #[derive(Deserialize, Debug, Default, Clone)]
 pub struct ConfigHook(Option<Vec<String>>);
 
+#[derive(Clone, Deserialize, Debug)]
+/// A hook that runs after the commit stage. All check hooks must pass for the build to be publishable.
+pub struct CheckHook {
+    /// The command to run.
+    pub command: ConfigHook,
+
+    /// If reviewable is true, an nonzero exit code from the hook will put the check into ReviewRequired state instead
+    /// of Failed.
+    #[serde(default)]
+    pub reviewable: bool,
+}
+
 /// Defines a set of hook commands to run at certain points in the build/publish process.
 #[derive(Deserialize, Debug, Default, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -45,6 +57,9 @@ pub struct ConfigHooks {
     /// Runs during publish jobs before the build is imported to the main repository. The hook is allowed to edit the
     /// repository. The current directory is set to the build directory.
     pub publish: ConfigHook,
+
+    #[serde(default)]
+    pub checks: HashMap<String, CheckHook>,
 }
 
 fn default_depth() -> u32 {

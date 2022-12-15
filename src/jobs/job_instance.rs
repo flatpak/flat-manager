@@ -2,6 +2,7 @@ use crate::errors::{JobError, JobResult};
 use crate::models::{Job, JobKind};
 use diesel::pg::PgConnection;
 
+use super::check_job::CheckJobInstance;
 use super::commit_job::CommitJobInstance;
 use super::job_executor::JobExecutor;
 use super::publish_job::PublishJobInstance;
@@ -16,6 +17,7 @@ pub fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance
             UpdateRepoJobInstance::new(job, executor.delta_generator.clone())
         }
         Some(JobKind::Republish) => RepublishJobInstance::new(job),
+        Some(JobKind::Check) => CheckJobInstance::new(job),
         _ => InvalidJobInstance::new(job, JobError::new("Unknown job type")),
     }
 }

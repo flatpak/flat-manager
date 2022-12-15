@@ -4,7 +4,7 @@ use diesel::result::Error as DieselError;
 use log::{error, info};
 use std::fmt::Write as _;
 use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::str;
 
 use crate::config::{Config, RepoConfig};
@@ -120,7 +120,9 @@ pub fn job_log_and_error(job_id: i32, conn: &PgConnection, output: &str) {
     job_log(job_id, conn, &format!("{output}\n"));
 }
 
-pub fn do_command(mut cmd: Command) -> JobResult<()> {
+/// Executes a command and returns its output. A JobError is returned if the command couldn't be executed, but not if
+/// it exits with a status code.
+pub fn do_command_with_output(cmd: &mut Command) -> JobResult<Output> {
     let output = unsafe {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -135,6 +137,13 @@ pub fn do_command(mut cmd: Command) -> JobResult<()> {
             .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?
     };
 
+    Ok(output)
+}
+
+/// Executes a command. A JobError is returned if the command exits with an unsuccessful status code.
+pub fn do_command(mut cmd: Command) -> JobResult<()> {
+    let output = do_command_with_output(&mut cmd)?;
+
     if !output.status.success() {
         return Err(JobError::new(&format!(
             "Command {:?} exited unsuccesfully: {}",
@@ -142,6 +151,7 @@ pub fn do_command(mut cmd: Command) -> JobResult<()> {
             String::from_utf8_lossy(&output.stderr)
         )));
     }
+
     Ok(())
 }
 
