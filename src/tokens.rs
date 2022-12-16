@@ -6,10 +6,60 @@ use actix_web::{HttpMessage, HttpRequest, Result};
 use futures::future::{ok, Either, FutureResult};
 use futures::{Future, Poll};
 use jwt::{decode, DecodingKey, Validation};
+use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::rc::Rc;
 
-use crate::app::{Claims, ClaimsScope};
 use crate::errors::ApiError;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClaimsScope {
+    // Permission to list all jobs in the system. Should not be given to untrusted parties.
+    Jobs,
+    // Permission to create, list, and purge builds, to get a build's jobs, and to commit uploaded files to the build.
+    Build,
+    // Permission to upload files and refs to builds.
+    Upload,
+    // Permission to publish builds.
+    Publish,
+    // Permission to upload deltas for a repo. Should not be given to untrusted parties.
+    Generate,
+    // Permission to list builds and to download a build repo.
+    Download,
+    // Permission to republish an app (take it from the repo, re-run the publish hook, and publish it back). Should not
+    // be given to untrusted parties.
+    Republish,
+
+    #[serde(other)]
+    Unknown,
+}
+
+impl Display for ClaimsScope {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", format!("{self:?}").to_ascii_lowercase())
+    }
+}
+
+/* Claims are used in two forms, one for API calls, and one for
+ * general repo access, the second one is simpler and just uses scope
+ * for the allowed ids, and sub means the user doing the access (which
+ * is not verified). */
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Claims {
+    pub sub: String, // "build", "build/N", or user id for repo tokens
+    pub exp: i64,
+
+    #[serde(default)]
+    pub scope: Vec<ClaimsScope>,
+    #[serde(default)]
+    pub prefixes: Vec<String>, // [''] => all, ['org.foo'] => org.foo + org.foo.bar (but not org.foobar)
+    #[serde(default)]
+    pub apps: Vec<String>, // like prefixes, but only exact matches
+    #[serde(default)]
+    pub repos: Vec<String>, // list of repo names or a '' for match all
+    pub name: Option<String>, // for debug/logs only
+}
 
 pub trait ClaimsValidator {
     fn get_claims(&self) -> Option<Claims>;
