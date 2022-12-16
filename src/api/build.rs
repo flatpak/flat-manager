@@ -1,162 +1,33 @@
 use actix::prelude::*;
 use actix_multipart::Multipart;
+use actix_web::http;
 use actix_web::middleware::BodyEncoding;
 use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{error, http};
-use actix_web::{web, HttpRequest, HttpResponse, ResponseError, Result};
-use actix_web_actors::ws;
+use actix_web::{HttpRequest, HttpResponse, ResponseError, Result};
 
 use chrono::Utc;
-use futures::future;
 use futures::future::Future;
 use futures3::compat::Future01CompatExt;
 use futures3::TryFutureExt;
-use log::warn;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::clone::Clone;
-use std::env;
 use std::fs;
-use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path;
-use std::rc::Rc;
 use std::sync::Arc;
-use tempfile::NamedTempFile;
 
-use crate::app::{Claims, ClaimsScope};
 use crate::config::Config;
 use crate::db::*;
-use crate::deltas::{DeltaGenerator, RemoteWorker};
 use crate::errors::ApiError;
 use crate::jobs::{JobQueue, ProcessJobs};
-use crate::models::{Build, Job, JobKind, JobStatus, NewBuild, NewBuildRef};
+use crate::models::{Build, NewBuild, NewBuildRef};
 use crate::ostree::init_ostree_repo;
-use crate::tokens::{self, ClaimsValidator};
-use askama::Template;
+use crate::tokens::{self, Claims, ClaimsScope, ClaimsValidator};
 
-fn respond_with_url<T>(
-    data: &T,
-    req: &HttpRequest,
-    name: &str,
-    elements: &[String],
-) -> Result<HttpResponse, ApiError>
-where
-    T: Serialize,
-{
-    match req.url_for(name, elements) {
-        Ok(url) => Ok(HttpResponse::Ok()
-            .header(http::header::LOCATION, url.to_string())
-            .json(data)),
-        Err(e) => Err(ApiError::InternalServerError(format!(
-            "Can't get url for {name} {elements:?}: {e}"
-        ))),
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TokenSubsetArgs {
-    sub: String,
-    scope: Vec<ClaimsScope>,
-    duration: i64,
-    prefixes: Option<Vec<String>>,
-    apps: Option<Vec<String>>,
-    repos: Option<Vec<String>>,
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct TokenSubsetResponse {
-    token: String,
-}
-
-pub fn repos_is_subset(maybe_subset_repos: &Option<Vec<String>>, claimed_repos: &[String]) -> bool {
-    match maybe_subset_repos {
-        Some(subset_repos) => subset_repos
-            .iter()
-            .all(|subset_repo| tokens::repo_matches_one_claimed(subset_repo, claimed_repos)),
-        None => true,
-    }
-}
-
-pub fn prefix_is_subset(
-    maybe_subset_prefix: &Option<Vec<String>>,
-    claimed_prefixes: &[String],
-) -> bool {
-    match maybe_subset_prefix {
-        Some(subset_prefix) => subset_prefix
-            .iter()
-            .all(|s| tokens::id_matches_one_prefix(s, claimed_prefixes)),
-        None => true,
-    }
-}
-
-pub fn apps_is_subset(maybe_subset_apps: Option<&[String]>, claimed_apps: &[String]) -> bool {
-    match maybe_subset_apps {
-        Some(subset_apps) => subset_apps.iter().all(|s| claimed_apps.contains(s)),
-        None => true,
-    }
-}
-
-pub fn token_subset(
-    args: Json<TokenSubsetArgs>,
-    config: Data<Config>,
-    req: HttpRequest,
-) -> HttpResponse {
-    if let Some(claims) = req.get_claims() {
-        let new_exp = Utc::now()
-            .timestamp()
-            .saturating_add(i64::max(args.duration, 0));
-        if new_exp <= claims.exp
-            && tokens::sub_has_prefix(&args.sub, &claims.sub)
-            && args.scope.iter().all(|s| claims.scope.contains(s))
-            && prefix_is_subset(&args.prefixes, &claims.prefixes)
-            && apps_is_subset(args.apps.as_deref(), &claims.apps)
-            && repos_is_subset(&args.repos, &claims.repos)
-        {
-            let new_claims = Claims {
-                sub: args.sub.clone(),
-                scope: args.scope.clone(),
-                name: Some(claims.name.unwrap_or_default() + "/" + &args.name),
-                prefixes: {
-                    if let Some(ref prefixes) = args.prefixes {
-                        prefixes.clone()
-                    } else {
-                        claims.prefixes.clone()
-                    }
-                },
-                apps: {
-                    if let Some(ref apps) = args.apps {
-                        apps.clone()
-                    } else {
-                        claims.apps.clone()
-                    }
-                },
-                repos: {
-                    if let Some(ref repos) = args.repos {
-                        repos.clone()
-                    } else {
-                        claims.repos
-                    }
-                },
-                exp: new_exp,
-            };
-            return match jwt::encode(
-                &jwt::Header::default(),
-                &new_claims,
-                &jwt::EncodingKey::from_secret(config.secret.as_ref()),
-            ) {
-                Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse { token }),
-                Err(e) => ApiError::InternalServerError(e.to_string()).error_response(),
-            };
-        }
-    };
-    ApiError::NotEnoughPermissions("No token presented".to_string()).error_response()
-}
+use super::utils::{respond_with_url, save_file, UploadState};
 
 #[derive(Deserialize, Debug)]
 pub struct JobPathParams {
-    id: i32,
+    pub id: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -520,172 +391,104 @@ async fn add_extra_ids_async(
     respond_with_url(&build, &req, "show_build", &[params.id.to_string()])
 }
 
-fn is_all_lower_hexdigits(s: &str) -> bool {
-    s.chars()
-        .all(|c: char| c.is_ascii_hexdigit() && !c.is_uppercase())
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenSubsetArgs {
+    sub: String,
+    scope: Vec<ClaimsScope>,
+    duration: i64,
+    prefixes: Option<Vec<String>>,
+    apps: Option<Vec<String>>,
+    repos: Option<Vec<String>>,
+    name: String,
 }
 
-fn filename_parse_object(filename: &str) -> Option<path::PathBuf> {
-    let v: Vec<&str> = filename.split('.').collect();
-
-    if v.len() != 2 {
-        return None;
-    }
-
-    if v[0].len() != 64 || !is_all_lower_hexdigits(v[0]) {
-        return None;
-    }
-
-    if v[1] != "dirmeta" && v[1] != "dirtree" && v[1] != "filez" && v[1] != "commit" {
-        return None;
-    }
-
-    Some(
-        path::Path::new("objects")
-            .join(&filename[..2])
-            .join(&filename[2..]),
-    )
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TokenSubsetResponse {
+    token: String,
 }
 
-fn is_all_digits(s: &str) -> bool {
-    !s.contains(|c: char| !c.is_ascii_digit())
+pub fn repos_is_subset(maybe_subset_repos: &Option<Vec<String>>, claimed_repos: &[String]) -> bool {
+    match maybe_subset_repos {
+        Some(subset_repos) => subset_repos
+            .iter()
+            .all(|subset_repo| tokens::repo_matches_one_claimed(subset_repo, claimed_repos)),
+        None => true,
+    }
 }
 
-/* Delta part filenames with no slashes, ending with .{part}.delta.
- * Examples:
- * oS6QiSBxQF5nJZBVS6MJ6tCk_KN63I72Y7QipgUTh5w-sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.superblock.delta
- * oS6QiSBxQF5nJZBVS6MJ6tCk_KN63I72Y7QipgUTh5w-sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.0.delta
- * sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.superblock.delta
- * sdm_iU8hHZYwDpmzYBAP6cJQ5MX5VLxoGF+j+Q1OGPQ.0.delta
- */
-fn filename_parse_delta(name: &str) -> Option<path::PathBuf> {
-    let v: Vec<&str> = name.split('.').collect();
-
-    if v.len() != 3 {
-        return None;
+pub fn prefix_is_subset(
+    maybe_subset_prefix: &Option<Vec<String>>,
+    claimed_prefixes: &[String],
+) -> bool {
+    match maybe_subset_prefix {
+        Some(subset_prefix) => subset_prefix
+            .iter()
+            .all(|s| tokens::id_matches_one_prefix(s, claimed_prefixes)),
+        None => true,
     }
-
-    if v[2] != "delta" {
-        return None;
-    }
-
-    if v[1] != "superblock" && !is_all_digits(v[1]) {
-        return None;
-    }
-
-    if !(v[0].len() == 43 || (v[0].len() == 87 && v[0].chars().nth(43) == Some('-'))) {
-        return None;
-    }
-
-    Some(
-        path::Path::new("deltas")
-            .join(&v[0][..2])
-            .join(&v[0][2..])
-            .join(v[1]),
-    )
 }
 
-fn get_upload_subpath(
-    field: &actix_multipart::Field,
-    state: &Arc<UploadState>,
-) -> error::Result<path::PathBuf, ApiError> {
-    let cd = field.content_disposition().ok_or_else(|| {
-        ApiError::BadRequest("No content disposition for multipart item".to_string())
-    })?;
-    let filename = cd
-        .get_filename()
-        .ok_or_else(|| ApiError::BadRequest("No filename for multipart item".to_string()))?;
-    // We verify the format below, but just to make sure we never allow anything like a path
-    if filename.contains('/') {
-        return Err(ApiError::BadRequest("Invalid upload filename".to_string()));
+pub fn apps_is_subset(maybe_subset_apps: Option<&[String]>, claimed_apps: &[String]) -> bool {
+    match maybe_subset_apps {
+        Some(subset_apps) => subset_apps.iter().all(|s| claimed_apps.contains(s)),
+        None => true,
     }
-
-    if !state.only_deltas {
-        if let Some(path) = filename_parse_object(filename) {
-            return Ok(path);
-        }
-    }
-
-    if let Some(path) = filename_parse_delta(filename) {
-        return Ok(path);
-    }
-
-    Err(ApiError::BadRequest("Invalid upload filename".to_string()))
 }
 
-struct UploadState {
-    repo_path: path::PathBuf,
-    only_deltas: bool,
-}
-
-fn start_save(
-    subpath: &path::Path,
-    state: &Arc<UploadState>,
-) -> Result<(NamedTempFile, path::PathBuf)> {
-    let absolute_path = state.repo_path.join(subpath);
-
-    if let Some(parent) = absolute_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let tmp_dir = state.repo_path.join("tmp");
-    fs::create_dir_all(&tmp_dir)?;
-
-    let named_file = NamedTempFile::new_in(&tmp_dir)?;
-    Ok((named_file, absolute_path))
-}
-
-fn save_file(
-    field: actix_multipart::Field,
-    state: &Arc<UploadState>,
-) -> Box<dyn Future<Item = i64, Error = ApiError>> {
-    let repo_subpath = match get_upload_subpath(&field, state) {
-        Ok(subpath) => subpath,
-        Err(e) => return Box::new(future::err(e)),
-    };
-
-    let (named_file, object_file) = match start_save(&repo_subpath, state) {
-        Ok((named_file, object_file)) => (named_file, object_file),
-        Err(e) => return Box::new(future::err(ApiError::InternalServerError(e.to_string()))),
-    };
-
-    // We need file in two continuations below, so put it in a Rc+RefCell
-    let shared_file = Rc::new(RefCell::new(named_file));
-    let shared_file2 = shared_file.clone();
-    Box::new(
-        field
-            .fold(0i64, move |acc, bytes| {
-                let rt = shared_file
-                    .borrow_mut()
-                    .write_all(bytes.as_ref())
-                    .map(|_| acc + bytes.len() as i64)
-                    .map_err(|e| {
-                        actix_multipart::MultipartError::Payload(error::PayloadError::Io(e))
-                    });
-                future::result(rt)
-            })
-            .map_err(|e| ApiError::InternalServerError(e.to_string()))
-            .and_then(move |res| {
-                // persist consumes the named file, so we need to
-                // completely move it out of the shared Rc+RefCell
-                let named_file = Rc::try_unwrap(shared_file2).unwrap().into_inner();
-                match named_file.persist(&object_file) {
-                    Ok(persisted_file) => {
-                        if let Ok(metadata) = persisted_file.metadata() {
-                            let mut perms = metadata.permissions();
-                            perms.set_mode(0o644);
-                            if let Err(_e) = fs::set_permissions(&object_file, perms) {
-                                warn!("Can't change permissions on uploaded file");
-                            }
-                        } else {
-                            warn!("Can't get permissions on uploaded file");
-                        };
-                        future::result(Ok(res))
+pub fn token_subset(
+    args: Json<TokenSubsetArgs>,
+    config: Data<Config>,
+    req: HttpRequest,
+) -> HttpResponse {
+    if let Some(claims) = req.get_claims() {
+        let new_exp = Utc::now()
+            .timestamp()
+            .saturating_add(i64::max(args.duration, 0));
+        if new_exp <= claims.exp
+            && tokens::sub_has_prefix(&args.sub, &claims.sub)
+            && args.scope.iter().all(|s| claims.scope.contains(s))
+            && prefix_is_subset(&args.prefixes, &claims.prefixes)
+            && apps_is_subset(args.apps.as_deref(), &claims.apps)
+            && repos_is_subset(&args.repos, &claims.repos)
+        {
+            let new_claims = Claims {
+                sub: args.sub.clone(),
+                scope: args.scope.clone(),
+                name: Some(claims.name.unwrap_or_default() + "/" + &args.name),
+                prefixes: {
+                    if let Some(ref prefixes) = args.prefixes {
+                        prefixes.clone()
+                    } else {
+                        claims.prefixes.clone()
                     }
-                    Err(e) => future::err(ApiError::InternalServerError(e.to_string())),
-                }
-            }),
-    )
+                },
+                apps: {
+                    if let Some(ref apps) = args.apps {
+                        apps.clone()
+                    } else {
+                        claims.apps.clone()
+                    }
+                },
+                repos: {
+                    if let Some(ref repos) = args.repos {
+                        repos.clone()
+                    } else {
+                        claims.repos
+                    }
+                },
+                exp: new_exp,
+            };
+            return match jwt::encode(
+                &jwt::Header::default(),
+                &new_claims,
+                &jwt::EncodingKey::from_secret(config.secret.as_ref()),
+            ) {
+                Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse { token }),
+                Err(e) => ApiError::InternalServerError(e.to_string()).error_response(),
+            };
+        }
+    };
+    ApiError::NotEnoughPermissions("No token presented".to_string()).error_response()
 }
 
 pub fn upload(
@@ -929,127 +732,4 @@ async fn republish_async(
     job_queue.do_send(ProcessJobs(Some(params.repo.clone())));
 
     respond_with_url(&job, &req, "show_job", &[job.id.to_string()])
-}
-
-#[derive(Template)]
-#[template(path = "job.html")]
-struct JobStatusData {
-    id: i32,
-    kind: String,
-    status: String,
-    contents: String,
-    results: String,
-    log: String,
-    finished: bool,
-}
-
-fn job_status_data(job: Job) -> JobStatusData {
-    JobStatusData {
-        id: job.id,
-        kind: JobKind::from_db(job.kind).map_or("Unknown".to_string(), |k| format!("{k:?}")),
-        status: JobStatus::from_db(job.status).map_or("Unknown".to_string(), |s| format!("{s:?}")),
-        contents: job.contents,
-        results: job.results.unwrap_or_default(),
-        log: job.log,
-        finished: job.status >= JobStatus::Ended as i16,
-    }
-}
-
-pub fn job_status(
-    params: Path<JobPathParams>,
-    db: Data<Db>,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(job_status_async(params, db)).compat()
-}
-
-async fn job_status_async(
-    params: Path<JobPathParams>,
-    db: Data<Db>,
-) -> Result<HttpResponse, ApiError> {
-    let job = db.lookup_job(params.id, None).await?;
-    let s = job_status_data(job).render().unwrap();
-    Ok(HttpResponse::Ok().content_type("text/html").body(s))
-}
-
-#[derive(Template)]
-#[template(path = "status.html")]
-struct Status {
-    jobs: Vec<JobStatusData>,
-    version: String,
-}
-
-pub fn status(db: Data<Db>) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(status_async(db)).compat()
-}
-
-async fn status_async(db: Data<Db>) -> Result<HttpResponse, ApiError> {
-    let jobs = db.list_active_jobs().await?;
-
-    let s = Status {
-        jobs: jobs.into_iter().map(job_status_data).collect(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    }
-    .render()
-    .unwrap();
-    Ok(HttpResponse::Ok().content_type("text/html").body(s))
-}
-
-#[derive(Deserialize)]
-pub struct DeltaUploadParams {
-    repo: String,
-}
-
-pub fn delta_upload(
-    multipart: Multipart,
-    params: Path<DeltaUploadParams>,
-    req: HttpRequest,
-    config: Data<Config>,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    futures::done(req.has_token_claims("delta", ClaimsScope::Generate))
-        .and_then(move |_| futures::done(config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
-        .and_then(move |repoconfig| {
-            let uploadstate = Arc::new(UploadState {
-                only_deltas: true,
-                repo_path: repoconfig.get_abs_repo_path(),
-            });
-            multipart
-                .map_err(|e| ApiError::InternalServerError(e.to_string()))
-                .map(move |field| save_file(field, &uploadstate).into_stream())
-                .flatten()
-                .collect()
-                .map(|sizes| HttpResponse::Ok().json(sizes))
-        })
-}
-
-pub fn ws_delta(
-    req: HttpRequest,
-    config: Data<Config>,
-    delta_generator: Data<Addr<DeltaGenerator>>,
-    stream: web::Payload,
-) -> Result<HttpResponse, actix_web::Error> {
-    if let Err(e) = req.has_token_claims("delta", ClaimsScope::Generate) {
-        return Ok(e.error_response());
-    }
-    let remote = req
-        .connection_info()
-        .remote()
-        .unwrap_or("Unknown")
-        .to_string();
-    ws::start(
-        RemoteWorker::new(&config, &delta_generator, remote),
-        &req,
-        stream,
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_is_all_lower_hexdigits() {
-        assert!(is_all_lower_hexdigits("0123456789abcdef"));
-        assert!(!is_all_lower_hexdigits("0123456789Abcdef"));
-        assert!(!is_all_lower_hexdigits("?"));
-    }
 }
