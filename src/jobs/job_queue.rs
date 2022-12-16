@@ -132,22 +132,21 @@ impl Handler<StopJobQueue> for JobQueue {
     type Result = ActorResponse<JobQueue, (), ()>;
 
     fn handle(&mut self, _msg: StopJobQueue, _ctx: &mut Self::Context) -> Self::Result {
+        // Stop assigning jobs to executors
         self.running = false;
 
-        let executors: Vec<Addr<JobExecutor>> = self
+        // Send each executor a StopJobs message and wait for it to be run. Since the executors are single-threaded,
+        // and we aren't assigning any more jobs, we know that no jobs are in progress on an executor when its StopJobs
+        // message responds.
+        let stop_jobs = self
             .executors
             .values()
-            .map(|info| info.borrow().addr.clone())
-            .collect();
+            .map(|info| info.borrow().addr.send(StopJobs()).map_err(|_| ()));
+
+        // Wait for all the above futures to resolve
         ActorResponse::r#async(
-            futures::stream::iter_ok(executors)
+            futures::stream::futures_unordered(stop_jobs)
                 .into_actor(self)
-                .map(|executor: Addr<JobExecutor>, job_queue, _ctx| {
-                    executor
-                        .send(StopJobs())
-                        .into_actor(job_queue)
-                        .then(|_result, _job_queue, _ctx| actix::fut::ok::<_, (), _>(()))
-                })
                 .finish(),
         )
     }
