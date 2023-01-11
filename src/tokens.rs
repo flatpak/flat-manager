@@ -30,6 +30,9 @@ pub enum ClaimsScope {
     // Permission to republish an app (take it from the repo, re-run the publish hook, and publish it back). Should not
     // be given to untrusted parties.
     Republish,
+    // Permission to change the status of any build check (e.g. mark it as successful, failed, etc.) Should only be
+    // given to reviewers or passed to the check scripts themselves.
+    ReviewCheck,
 
     #[serde(other)]
     Unknown,

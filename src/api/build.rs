@@ -1,8 +1,8 @@
 use actix::prelude::*;
 use actix_multipart::Multipart;
-use actix_web::http;
 use actix_web::middleware::BodyEncoding;
 use actix_web::web::{Data, Json, Path, Query};
+use actix_web::{http, web};
 use actix_web::{HttpRequest, HttpResponse, ResponseError, Result};
 
 use chrono::Utc;
@@ -18,8 +18,8 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::db::*;
 use crate::errors::ApiError;
-use crate::jobs::{JobQueue, ProcessJobs};
-use crate::models::{Build, NewBuild, NewBuildRef};
+use crate::jobs::{update_build_status_after_check, JobQueue, ProcessJobs};
+use crate::models::{Build, CheckStatus, NewBuild, NewBuildRef};
 use crate::ostree::init_ostree_repo;
 use crate::tokens::{self, Claims, ClaimsScope, ClaimsValidator};
 
@@ -54,6 +54,44 @@ async fn get_job_async(
     req.has_token_claims("build", ClaimsScope::Jobs)?;
     let job = db.lookup_job(params.id, args.log_offset).await?;
     Ok(HttpResponse::Ok().json(job))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ReviewArgs {
+    new_status: CheckStatus,
+}
+
+pub fn review_check(
+    args: Json<ReviewArgs>,
+    params: Path<JobPathParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> impl Future<Item = HttpResponse, Error = ApiError> {
+    Box::pin(review_check_async(args, params, db, req)).compat()
+}
+
+async fn review_check_async(
+    args: Json<ReviewArgs>,
+    params: Path<JobPathParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    req.has_token_claims("build", ClaimsScope::ReviewCheck)?;
+
+    db.set_check_status(params.id, args.new_status.clone())
+        .await?;
+
+    let check = db.get_check_by_job_id(params.id).await?;
+    web::block(move || {
+        let conn = db.0.get()?;
+        update_build_status_after_check(check.build_id, &conn)
+            .map_err(|err| ApiError::InternalServerError(err.to_string()))
+    })
+    .compat()
+    .await?;
+
+    Ok(HttpResponse::NoContent().finish())
 }
 
 #[derive(Debug, Serialize, Deserialize)]

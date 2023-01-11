@@ -257,6 +257,33 @@ impl Db {
         .await
     }
 
+    /* Checks */
+
+    pub async fn get_check_by_job_id(&self, job: i32) -> Result<Check, ApiError> {
+        self.run(move |conn| {
+            use schema::checks::dsl::*;
+            Ok(checks.filter(job_id.eq(job)).get_result::<Check>(conn)?)
+        })
+        .await
+    }
+
+    pub async fn set_check_status(
+        &self,
+        job: i32,
+        new_status: CheckStatus,
+    ) -> Result<(), ApiError> {
+        self.run(move |conn| {
+            use schema::checks::dsl;
+            let (status, status_reason) = new_status.to_db();
+            diesel::update(dsl::checks)
+                .filter(dsl::job_id.eq(job))
+                .set((dsl::status.eq(status), dsl::status_reason.eq(status_reason)))
+                .execute(conn)?;
+            Ok(())
+        })
+        .await
+    }
+
     /* Builds */
 
     pub async fn new_build(&self, a_build: NewBuild) -> Result<Build, ApiError> {

@@ -79,28 +79,36 @@ impl JobInstance for CheckJobInstance {
         // Run the hook
         job_log_and_info!(self.job_id, conn, "Running check command");
 
-        let output = if let Some(mut cmd) = check_hook.command.build_command(build_repo_path) {
-            do_command_with_output(&mut cmd)?
+        let new_status = if let Some(mut cmd) = check_hook.command.build_command(build_repo_path) {
+            cmd.env("FLAT_MANAGER_BUILD_ID", self.build_id.to_string())
+                .env("FLAT_MANAGER_JOB_ID", self.job_id.to_string());
+
+            let output = do_command_with_output(&mut cmd)?;
+
+            if output.status.success() {
+                job_log_and_info!(self.job_id, conn, "Check command exited successfully");
+                CheckStatus::Passed
+            } else {
+                let msg = format!(
+                    "Check command {:?} exited unsuccessfully: {}, stderr: {}",
+                    cmd,
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+
+                job_log_and_info!(self.job_id, conn, &msg);
+
+                if check_hook.reviewable {
+                    CheckStatus::ReviewRequired(msg)
+                } else {
+                    CheckStatus::Failed(msg)
+                }
+            }
         } else {
             return Err(JobError::new(&format!(
                 "The '{}' check hook is defined, but it has no command",
                 self.name
             )));
-        };
-
-        let new_status = if output.status.success() {
-            job_log_and_info!(self.job_id, conn, "Check command exited successfully");
-            CheckStatus::Passed
-        } else {
-            let msg = format!("Check command exited with status code {}", output.status);
-
-            job_log_and_info!(self.job_id, conn, &msg);
-
-            if check_hook.reviewable {
-                CheckStatus::ReviewRequired(msg)
-            } else {
-                CheckStatus::Failed(msg)
-            }
         };
 
         conn.transaction::<_, JobError, _>(|| {
@@ -111,7 +119,9 @@ impl JobInstance for CheckJobInstance {
 
             // The command can edit its own check status by calling the API. If that happened and the command exited
             // successfully, don't change it.
-            if !output.status.success() || check.status == CheckStatus::Pending.to_db().0 {
+            if matches!(new_status, CheckStatus::Failed(_))
+                || check.status == CheckStatus::Pending.to_db().0
+            {
                 let (status, status_reason) = new_status.to_db();
                 diesel::update(checks::table)
                     .filter(checks::job_id.eq(self.job_id))
@@ -162,9 +172,9 @@ pub fn update_build_status_after_check(build_id: i32, conn: &PgConnection) -> Re
             .for_update()
             .get_result::<Build>(conn)?;
 
-        // Sanity check--make sure the build is still in Verifying state
+        // Sanity check--make sure the build is still in Validating state
         if !RepoState::from_db(build.repo_state, &build.repo_state_reason)
-            .same_state_as(&RepoState::Committing)
+            .same_state_as(&RepoState::Validating)
         {
             return Err(JobError::new(&format!(
                 "Expected repo to be in {:?} state upon check completion, but it was in {:?}",
