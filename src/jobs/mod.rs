@@ -10,6 +10,7 @@ mod publish_job;
 mod republish_job;
 mod update_repo_job;
 
+pub use check_job::update_build_status_after_check;
 pub use job_executor::start_job_executor;
 pub use job_queue::{cleanup_started_jobs, JobQueue, ProcessJobs, StopJobQueue};
 

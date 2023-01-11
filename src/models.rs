@@ -261,7 +261,8 @@ pub struct JobDependencyWithStatus {
     pub dependant_status: i16,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "status", content = "reason")]
 pub enum CheckStatus {
     Pending,
     Passed,

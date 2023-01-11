@@ -97,6 +97,11 @@ pub fn create_app(
                             .route(web::get().to_async(api::build::get_job)),
                     )
                     .service(
+                        web::resource("/job/{id}/check/review")
+                            .name("review_check")
+                            .route(web::post().to_async(api::build::review_check)),
+                    )
+                    .service(
                         web::resource("/build")
                             .route(web::post().to_async(api::build::create_build))
                             .route(web::get().to_async(api::build::builds)),
