@@ -47,6 +47,27 @@ The source repository contains an `example.env` and an
     cp example-config.json config.json
     # edit config.json
 
+### Hooks
+
+flat-manager can be configured to run hook scripts during the upload
+and publish processes. These are configured per-repository in the
+config file; see `example-config.json`.
+
+The publish hook runs in the build directory before a build is published
+to a main repository. It can modify the build, for example by rewriting
+the appstream files in the commits.
+
+Check scripts are run after a build is uploaded. Builds may not be
+published unless all checks have passed. The check is marked as failed
+if the command exits with a nonzero code (or marked as requiring review
+if `"reviewable": true` is set).
+
+Check scripts may also set their own status via the flat-manager API,
+though this will be overridden if the command exits with a nonzero code.
+To facilitate this, check scripts are run with `FLAT_MANAGER_BUILD_ID` and
+`FLAT_MANAGER_JOB_ID` environment variables to pass to the API. The same
+endpoint can be used by other systems for manual reviews.
+
 ## Database
 
 flat-manager uses a PostgreSQL database to store information, and

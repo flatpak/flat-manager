@@ -24,6 +24,15 @@
             "suggested-repo-name": "testrepo-beta",
             "runtime-repo-url": "https://dl.flathub.org/repo/flathub.flatpakrepo",
             "gpg-key": null,
+            "hooks": {
+                "publish": ["true"],
+                "checks": {
+                    "example-check": {
+                        "command": ["true"],
+                        "reviewable": true
+                    }
+                }
+            },
             "subsets": {
                 "all": {
                     "collection-id": "org.test.Beta",
