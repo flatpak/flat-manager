@@ -7,6 +7,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && \
 ADD . /src
 RUN cd /src && /root/.cargo/bin/cargo build --release
 
+RUN git clone https://github.com/jameswestman/flathub-hooks.git
+RUN cd flathub-hooks && /root/.cargo/bin/cargo build --release
+
 FROM ubuntu:22.04
 
 RUN apt-get update && apt-get install -y flatpak ostree libpq5 ca-certificates && \
@@ -17,6 +20,7 @@ RUN chmod +x /usr/local/bin/catatonit
 
 COPY --from=builder /src/target/release/flat-manager /usr/local/bin/flat-manager
 COPY --from=builder /src/target/release/delta-generator-client /usr/local/bin/delta-generator-client
+COPY --from=builder /flathub-hooks/target/release/flathub-hooks /usr/local/bin/flathub-hooks
 
 ENV RUST_BACKTRACE=1
 
