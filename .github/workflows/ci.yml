@@ -90,7 +90,7 @@ jobs:
     name: Build Docker image
     runs-on: ubuntu-latest
     concurrency:
-      group: docker
+      group: ${{ github.ref }}
       cancel-in-progress: true
     if: success()
     steps:
