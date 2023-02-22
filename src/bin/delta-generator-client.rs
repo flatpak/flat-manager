@@ -71,6 +71,7 @@ gpg-verify-summary=false
 struct Manager {
     fs_pool: FsPool,
     url: String,
+    cdn_url: Option<String>,
     token: String,
     client: Option<Addr<DeltaClient>>,
     capacity: u32,
@@ -106,6 +107,7 @@ impl Manager {
                     let capacity = manager.capacity;
                     let repo = manager.repo.clone();
                     let url = manager.url.clone();
+                    let cdn_url = manager.cdn_url.clone();
                     let token = manager.token.clone();
                     let fs_pool = manager.fs_pool.clone();
                     let (sink, stream) = framed.split();
@@ -116,6 +118,7 @@ impl Manager {
                             writer: SinkWrite::new(sink, ctx),
                             manager: addr,
                             url,
+                            cdn_url,
                             token,
                             capacity,
                             repo,
@@ -157,6 +160,7 @@ struct DeltaClient {
     writer: SinkWrite<SplitSink<Framed<awc::BoxedSocket, Codec>>>,
     manager: Addr<Manager>,
     url: String,
+    cdn_url: Option<String>,
     token: String,
     capacity: u32,
     repo: PathBuf,
@@ -358,6 +362,12 @@ impl DeltaClient {
         let path2 = self.repo.clone();
         let delta2 = delta.clone();
         let base_url = self.url.clone();
+        // if we have set a CDN_URL, let's use it for the download.
+        let cdn_url = if let Some(ref cdn_url) = self.cdn_url {
+            cdn_url.clone()
+        } else {
+            url
+        };
         let token = self.token.clone();
         let reponame = repo;
         let fs_pool = self.fs_pool.clone();
@@ -369,7 +379,7 @@ impl DeltaClient {
                 .read()
                 .into_actor(self)
                 .then(move |guard, client, _ctx| {
-                    pull_and_generate_delta_async(&path, &url, &delta)
+                    pull_and_generate_delta_async(&path, &cdn_url, &delta)
                         .and_then(move |_| {
                             upload_delta(&fs_pool, &base_url, &token, &reponame, &path2, &delta2)
                         })
@@ -438,6 +448,8 @@ fn main() {
 
     let token = env::var("REPO_TOKEN").expect("No token, set REPO_TOKEN in env or .env");
     let url = env::var("MANAGER_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    // CDN_URL to download delta from. By default same as MANAGER_URL.
+    let cdn_url = env::var("CDN_URL").ok();
     let capacity: u32 = env::var("CAPACITY")
         .map(|s| s.parse().expect("Failed to parse $CAPACITY"))
         .unwrap_or_else(|_| num_cpus::get() as u32);
@@ -454,6 +466,7 @@ fn main() {
     let _addr = Manager {
         fs_pool: FsPool::default(),
         url,
+        cdn_url,
         token,
         client: None,
         capacity,
