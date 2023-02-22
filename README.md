@@ -19,6 +19,10 @@ need to be installed first. On Fedora, this is done with:
 
     sudo dnf install postgresql-devel
 
+You also need ostree. On Fedora, this is done with:
+
+    sudo dnf install ostree-devel
+
 Then build the server by running:
 
     cargo build
