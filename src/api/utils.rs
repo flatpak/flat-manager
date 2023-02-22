@@ -145,7 +145,7 @@ pub fn start_save(
         fs::create_dir_all(parent)?;
     }
 
-    let tmp_dir = state.repo_path.join("tmp");
+    let tmp_dir = state.repo_path.join("deltas/.tmp");
     fs::create_dir_all(&tmp_dir)?;
 
     let named_file = NamedTempFile::new_in(&tmp_dir)?;
