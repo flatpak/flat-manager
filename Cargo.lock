@@ -73,12 +73,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "actix-codec"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78d1833b3838dbe990df0f1f87baf640cf6146e898166afe401839d1b001e570"
+dependencies = [
+ "bitflags",
+ "bytes 0.5.6",
+ "futures-core",
+ "futures-sink",
+ "log",
+ "pin-project",
+ "tokio 0.2.25",
+ "tokio-util 0.3.1",
+]
+
+[[package]]
 name = "actix-connect"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fade9bd4bb46bacde89f1e726c7a3dd230536092712f5d94d77ca57c087fca0"
 dependencies = [
- "actix-codec",
+ "actix-codec 0.1.2",
  "actix-rt",
  "actix-service",
  "actix-utils",
@@ -118,7 +134,7 @@ version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fcb50f77cd28240d344fd54afd205bae8760a3b0ad448b1716a2aa31e24db139"
 dependencies = [
- "actix-codec",
+ "actix-codec 0.1.2",
  "actix-connect",
  "actix-server-config",
  "actix-service",
@@ -312,7 +328,7 @@ version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "908c3109948f5c37a8b57fd343a37dcad5bb1d90bfd06300ac96b17bbe017b95"
 dependencies = [
- "actix-codec",
+ "actix-codec 0.1.2",
  "actix-service",
  "bytes 0.4.12",
  "either",
@@ -328,7 +344,7 @@ version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af3a1b967cdbacb903c4b9ae71257a7f098d881b25eb483d0c468b7dac579b03"
 dependencies = [
- "actix-codec",
+ "actix-codec 0.1.2",
  "actix-http",
  "actix-router",
  "actix-rt",
@@ -364,7 +380,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42ebee30be1864aa8dfccea853468516ae4c82303c73df96563728284e246f3b"
 dependencies = [
  "actix 0.8.3",
- "actix-codec",
+ "actix-codec 0.1.2",
  "actix-http",
  "actix-web",
  "bytes 0.4.12",
@@ -522,7 +538,7 @@ version = "0.2.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e995283278dd3bf0449e7534e77184adb1570c0de8b6a50bf7c9d01ad8db8c4"
 dependencies = [
- "actix-codec",
+ "actix-codec 0.1.2",
  "actix-http",
  "actix-service",
  "base64 0.10.1",
@@ -1000,7 +1016,7 @@ name = "flat-manager"
 version = "0.4.1"
 dependencies = [
  "actix 0.8.3",
- "actix-codec",
+ "actix-codec 0.3.0",
  "actix-files",
  "actix-http",
  "actix-multipart",
@@ -1386,7 +1402,7 @@ dependencies = [
  "indexmap",
  "slab",
  "tokio 1.20.1",
- "tokio-util",
+ "tokio-util 0.7.3",
  "tracing",
 ]
 
@@ -2232,6 +2248,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6796ad771acdc0123d2a88dc428b5e38ef24456743ddb1744ed628f9815c096"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "pin-project"
+version = "0.4.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ef0f924a5ee7ea9cbcea77529dba45f8a9ba9f622419fe3386ca581a3ae9d5a"
+dependencies = [
+ "pin-project-internal",
+]
+
+[[package]]
+name = "pin-project-internal"
+version = "0.4.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "851c8d0ce9bebe43790dedfc86614c23494ac9f423dd618d3a61fc693eafe61e"
+dependencies = [
+ "proc-macro2 1.0.42",
+ "quote 1.0.20",
+ "syn 1.0.98",
 ]
 
 [[package]]
@@ -3405,6 +3441,20 @@ dependencies = [
  "tokio-codec",
  "tokio-io",
  "tokio-reactor",
+]
+
+[[package]]
+name = "tokio-util"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be8242891f2b6cbef26a2d7e8605133c2c554cd35b3e4948ea892d6d68436499"
+dependencies = [
+ "bytes 0.5.6",
+ "futures-core",
+ "futures-sink",
+ "log",
+ "pin-project-lite 0.1.12",
+ "tokio 0.2.25",
 ]
 
 [[package]]

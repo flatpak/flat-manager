@@ -14,7 +14,7 @@ path = "src/lib.rs"
 env_logger = "0.8"
 
 actix = "0.8"
-actix-codec = "0.1.2"
+actix-codec = "0.3.0"
 actix-files = "0.1"
 actix-http = "0.2"
 actix-multipart = "0.1.5"
