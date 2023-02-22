@@ -533,7 +533,7 @@ fn get_deltas_path(repo_path: &path::Path) -> path::PathBuf {
 fn get_tmp_deltas_path(repo_path: &path::Path) -> path::PathBuf {
     let mut ref_dir = std::env::current_dir().unwrap_or_default();
     ref_dir.push(repo_path);
-    ref_dir.push("tmp/deltas");
+    ref_dir.push("deltas/.tmp");
     ref_dir
 }
 
