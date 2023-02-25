@@ -116,7 +116,7 @@ impl UpdateRepoJobInstance {
         job_log_and_info!(self.job_id, conn, "Cleaning out old deltas");
         let repo_path = repoconfig.get_abs_repo_path();
         let deltas_dir = repo_path.join("deltas");
-        let tmp_deltas_dir = repo_path.join("deltas/.tmp/old");
+        let tmp_deltas_dir = repo_path.join("deltas/.tmp");
         fs::create_dir_all(&tmp_deltas_dir)?;
 
         let now = time::SystemTime::now();
