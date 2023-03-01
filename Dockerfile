@@ -15,6 +15,8 @@ FROM ubuntu:22.04
 RUN apt-get update && apt-get install -y flatpak ostree libpq5 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
+RUN ln -s /usr/bin/gpg /usr/bin/gpg2
+
 ADD https://github.com/openSUSE/catatonit/releases/download/v0.1.7/catatonit.x86_64 /usr/local/bin/catatonit
 RUN chmod +x /usr/local/bin/catatonit
 
