@@ -1,7 +1,4 @@
-#[macro_use]
-extern crate diesel;
-#[macro_use]
-extern crate diesel_migrations;
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
 mod api;
 mod app;
@@ -42,15 +39,15 @@ pub fn load_config(path: &path::Path) -> Arc<Config> {
         app::load_config(path).unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
     Arc::new(config_data)
 }
-
-embed_migrations!();
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 
 fn connect_to_db(config: &Arc<Config>) -> r2d2::Pool<ConnectionManager<PgConnection>> {
     let manager = ConnectionManager::<PgConnection>::new(config.database_url.clone());
-
     {
-        let conn = manager.connect().unwrap();
-        embedded_migrations::run_with_output(&conn, &mut std::io::stdout()).unwrap();
+        let mut conn = manager.connect().unwrap();
+        log::info!("Running DB Migrations...");
+        conn.run_pending_migrations(MIGRATIONS)
+            .expect("Failed to run migrations");
     }
 
     r2d2::Pool::builder()

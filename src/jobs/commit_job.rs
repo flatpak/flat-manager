@@ -51,7 +51,7 @@ impl CommitJobInstance {
         build_refs: &[models::BuildRef],
         config: &Config,
         repoconfig: &RepoConfig,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
         let upload_path = build_repo_path.join("upload");
@@ -162,7 +162,7 @@ impl JobInstance for CommitJobInstance {
     fn handle_job(
         &mut self,
         executor: &JobExecutor,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         info!("#{}: Handling Job Commit: build: {}, end-of-life: {}, eol-rebase: {}, token-type: {:?}",
               &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()), self.endoflife_rebase.as_ref().unwrap_or(&"".to_string()), self.token_type);
@@ -194,7 +194,7 @@ impl JobInstance for CommitJobInstance {
         let res = self.do_commit_build_refs(&build_refs, config, repoconfig, conn);
 
         // Update the build repo state in db
-        conn.transaction::<_, JobError, _>(|| {
+        conn.transaction::<_, JobError, _>(|conn| {
             let current_build = builds::table
                 .filter(builds::id.eq(self.build_id))
                 .for_update()

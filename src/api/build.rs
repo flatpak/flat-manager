@@ -84,8 +84,8 @@ async fn review_check_async(
 
     let check = db.get_check_by_job_id(params.id).await?;
     web::block(move || {
-        let conn = db.0.get()?;
-        update_build_status_after_check(check.build_id, &conn)
+        let mut conn = db.0.get()?;
+        update_build_status_after_check(check.build_id, &mut conn)
             .map_err(|err| ApiError::InternalServerError(err.to_string()))
     })
     .compat()

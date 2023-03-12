@@ -73,7 +73,7 @@ impl UpdateRepoJobInstance {
         &self,
         deltas: &HashSet<ostree::Delta>,
         repoconfig: &RepoConfig,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<()> {
         job_log_and_info!(self.job_id, conn, "Generating deltas");
 
@@ -111,7 +111,7 @@ impl UpdateRepoJobInstance {
         &self,
         deltas: &HashSet<ostree::Delta>,
         repoconfig: &RepoConfig,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<()> {
         job_log_and_info!(self.job_id, conn, "Cleaning out old deltas");
         let repo_path = repoconfig.get_abs_repo_path();
@@ -189,7 +189,7 @@ impl UpdateRepoJobInstance {
         &self,
         config: &Config,
         repoconfig: &RepoConfig,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<()> {
         job_log_and_info!(self.job_id, conn, "Regenerating appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
@@ -207,7 +207,7 @@ impl UpdateRepoJobInstance {
         &self,
         config: &Config,
         repoconfig: &RepoConfig,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<()> {
         job_log_and_info!(self.job_id, conn, "Updating summary");
         let repo_path = repoconfig.get_abs_repo_path();
@@ -221,7 +221,7 @@ impl UpdateRepoJobInstance {
         Ok(())
     }
 
-    fn run_post_publish(&self, repoconfig: &RepoConfig, conn: &PgConnection) -> JobResult<()> {
+    fn run_post_publish(&self, repoconfig: &RepoConfig, conn: &mut PgConnection) -> JobResult<()> {
         if let Some(post_publish_script) = &repoconfig.post_publish_script {
             let repo_path = repoconfig.get_abs_repo_path();
             let mut cmd = Command::new(post_publish_script);
@@ -232,7 +232,7 @@ impl UpdateRepoJobInstance {
         Ok(())
     }
 
-    fn extract_appstream(&self, repoconfig: &RepoConfig, conn: &PgConnection) -> JobResult<()> {
+    fn extract_appstream(&self, repoconfig: &RepoConfig, conn: &mut PgConnection) -> JobResult<()> {
         job_log_and_info!(self.job_id, conn, "Extracting appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
         let appstream_dir = repo_path.join("appstream");
@@ -265,7 +265,7 @@ impl JobInstance for UpdateRepoJobInstance {
     fn handle_job(
         &mut self,
         executor: &JobExecutor,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job UpdateRepo: repo: {}",

@@ -15,7 +15,7 @@ impl Db {
     async fn run<Func, T>(&self, func: Func) -> Result<T, ApiError>
     where
         Func: FnOnce(
-            &r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::PgConnection>>,
+            &mut r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::PgConnection>>,
         ) -> Result<T, ApiError>,
         Func: Send + 'static,
         T: Send + 'static,
@@ -23,8 +23,8 @@ impl Db {
         let p = self.0.clone();
         Compat01As03::new(
             web::block(move || {
-                let conn = p.get()?;
-                func(&conn)
+                let mut conn = p.get()?;
+                func(&mut conn)
             })
             .map_err(ApiError::from),
         )
@@ -34,12 +34,12 @@ impl Db {
     async fn run_in_transaction<Func, T>(&self, func: Func) -> Result<T, ApiError>
     where
         Func: FnOnce(
-            &r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::PgConnection>>,
+            &mut r2d2::PooledConnection<diesel::r2d2::ConnectionManager<diesel::PgConnection>>,
         ) -> Result<T, ApiError>,
         Func: Send + 'static,
         T: Send + 'static,
     {
-        self.run(move |conn| conn.transaction::<T, ApiError, _>(|| func(conn)))
+        self.run(move |conn| conn.transaction::<T, ApiError, _>(|conn| func(conn)))
             .await
     }
 

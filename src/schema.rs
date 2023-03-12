@@ -1,4 +1,4 @@
-table! {
+diesel::table! {
     build_refs (id) {
         id -> Int4,
         build_id -> Int4,
@@ -7,7 +7,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     builds (id) {
         id -> Int4,
         created_at -> Timestamp,
@@ -24,7 +24,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     checks (check_name, build_id) {
         check_name -> Text,
         build_id -> Int4,
@@ -35,14 +35,14 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     job_dependencies (job_id, depends_on) {
         job_id -> Int4,
         depends_on -> Int4,
     }
 }
 
-table! {
+diesel::table! {
     jobs (id) {
         id -> Int4,
         kind -> Int2,
@@ -55,7 +55,7 @@ table! {
     }
 }
 
-table! {
+diesel::table! {
     published_refs (id) {
         id -> Int4,
         build_id -> Int4,
@@ -64,12 +64,12 @@ table! {
     }
 }
 
-joinable!(build_refs -> builds (build_id));
-joinable!(checks -> builds (build_id));
-joinable!(checks -> jobs (job_id));
-joinable!(published_refs -> builds (build_id));
+diesel::joinable!(build_refs -> builds (build_id));
+diesel::joinable!(checks -> builds (build_id));
+diesel::joinable!(checks -> jobs (job_id));
+diesel::joinable!(published_refs -> builds (build_id));
 
-allow_tables_to_appear_in_same_query!(
+diesel::allow_tables_to_appear_in_same_query!(
     build_refs,
     builds,
     checks,
