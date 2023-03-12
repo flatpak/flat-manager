@@ -226,9 +226,7 @@ impl Inner {
     }
 
     fn validate_claims(&self, token: String) -> Result<Claims, ApiError> {
-        let validation = Validation {
-            ..Validation::default()
-        };
+        let validation = Validation::default();
 
         let token_data = match decode::<Claims>(
             &token,

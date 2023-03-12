@@ -1,5 +1,5 @@
 use diesel::pg::PgConnection;
-use libostree::gio::NONE_CANCELLABLE;
+use libostree::gio;
 use log::info;
 use serde_json::json;
 use std::ffi::OsString;
@@ -74,7 +74,7 @@ impl JobInstance for RepublishJobInstance {
             .map_err(|_e| JobError::new(&format!("Can't find repo {}", &self.repo)))?;
 
         let repo = libostree::Repo::new_for_path(repoconfig.get_abs_repo_path());
-        repo.open(NONE_CANCELLABLE)
+        repo.open(gio::Cancellable::NONE)
             .map_err(|e| JobError::new(&format!("Failed to open repo {}: {}", &self.repo, e)))?;
 
         /* Create a temporary repo to use while editing commits, so that intermediate commits don't clutter the main
@@ -95,7 +95,7 @@ impl JobInstance for RepublishJobInstance {
             .list_refs_ext(
                 Some(&format!("app/{}", self.app_id)),
                 libostree::RepoListRefsExtFlags::NONE,
-                NONE_CANCELLABLE,
+                gio::Cancellable::NONE,
             )
             .map_err(|e| JobError::new(&format!("Failed to load repo {}: {}", &self.repo, e)))?;
 

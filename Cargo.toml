@@ -11,7 +11,7 @@ name = "flatmanager"
 path = "src/lib.rs"
 
 [dependencies]
-env_logger = "0.8"
+env_logger = "0.10"
 
 actix = "0.8"
 actix-codec = "0.1.2"
@@ -23,7 +23,7 @@ actix-service = "0.4"
 actix-web = "1.0"
 actix-web-actors = "1.0"
 argparse = "0.2.2"
-askama = "0.7"
+askama = "0.12"
 awc = "0.2"
 base64 = "0.13"
 byteorder = "1.3"
@@ -32,7 +32,7 @@ chrono = { version = "0.4.6", features = ["serde"] }
 diesel = { version = "^1.3.0", features = ["postgres", "chrono", "serde_json", "r2d2"] }
 diesel_migrations = { version = "^1.3.0" }
 dotenv = "0.15"
-elementtree = "0.7.0"
+elementtree = "1.2"
 failure = "0.1.2"
 filetime = "0.2"
 flate2 = "1.0"
@@ -41,12 +41,12 @@ futures3 = { package = "futures", version = "0.3", features = ["compat"] }
 futures-fs = "0.0"
 futures-locks = "0.3"
 hex = "0.4"
-jwt = {package = "jsonwebtoken", version = "7"}
+jwt = {package = "jsonwebtoken", version = "8.2"}
 libc = "0.2"
 log = "0.4"
 mpart-async = "0.2"
 num_cpus = "1.0"
-libostree = { package = "ostree", version = "0.15", features = ["v2021_5"] }
+libostree = { package = "ostree", version = "0.17", features = ["v2021_5"] }
 r2d2 = "0.8"
 rand = "0.8"
 reqwest = { version = "0.11", features = ["json", "blocking"] }
