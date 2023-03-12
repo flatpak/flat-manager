@@ -45,7 +45,7 @@ impl PublishJobInstance {
         build_refs: &[models::BuildRef],
         config: &Config,
         repoconfig: &RepoConfig,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
 
@@ -154,7 +154,7 @@ impl JobInstance for PublishJobInstance {
     fn handle_job(
         &mut self,
         executor: &JobExecutor,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job Publish: build: {}",
@@ -193,7 +193,7 @@ impl JobInstance for PublishJobInstance {
             Err(e) => PublishedState::Failed(e.to_string()),
         };
 
-        conn.transaction::<models::Build, DieselError, _>(|| {
+        conn.transaction::<models::Build, DieselError, _>(|conn| {
             let current_build = builds::table
                 .filter(builds::id.eq(self.build_id))
                 .get_result::<models::Build>(conn)?;

@@ -2,11 +2,12 @@
 #![allow(clippy::extra_unused_lifetimes)]
 
 use crate::schema::{build_refs, builds, checks, job_dependencies, jobs};
+use diesel::{Associations, Identifiable, Insertable, Queryable};
 use serde::{Deserialize, Serialize};
 use std::{mem, time};
 
 #[derive(Deserialize, Insertable, Debug)]
-#[table_name = "builds"]
+#[diesel(table_name =  builds)]
 pub struct NewBuild {
     pub repo: String,
     pub app_id: Option<String>,
@@ -126,7 +127,7 @@ impl RepoState {
 }
 
 #[derive(Deserialize, Insertable, Debug)]
-#[table_name = "build_refs"]
+#[diesel(table_name =  build_refs)]
 pub struct NewBuildRef {
     pub build_id: i32,
     pub ref_name: String,
@@ -134,7 +135,7 @@ pub struct NewBuildRef {
 }
 
 #[derive(Identifiable, Associations, Serialize, Queryable, Eq, PartialEq, Debug)]
-#[belongs_to(Build)]
+#[diesel(belongs_to(Build))]
 pub struct BuildRef {
     pub id: i32,
     pub build_id: i32,
@@ -142,7 +143,7 @@ pub struct BuildRef {
     pub commit: String,
 }
 
-table! {
+diesel::table! {
     job_dependencies_with_status (job_id, depends_on) {
         job_id -> Int4,
         depends_on -> Int4,
@@ -150,7 +151,7 @@ table! {
     }
 }
 
-allow_tables_to_appear_in_same_query!(jobs, job_dependencies_with_status,);
+diesel::allow_tables_to_appear_in_same_query!(jobs, job_dependencies_with_status,);
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
 pub enum JobStatus {
@@ -209,7 +210,7 @@ impl JobKind {
 }
 
 #[derive(Deserialize, Insertable, Debug)]
-#[table_name = "jobs"]
+#[diesel(table_name =  jobs)]
 pub struct NewJob {
     pub kind: i16,
     pub contents: String,
@@ -243,18 +244,18 @@ impl Job {
 }
 
 #[derive(Insertable, Debug, Queryable, Identifiable, Associations)]
-#[table_name = "job_dependencies"]
-#[primary_key(job_id, depends_on)]
-#[belongs_to(Job, foreign_key = "job_id")]
+#[diesel(table_name =  job_dependencies)]
+#[diesel(primary_key(job_id, depends_on))]
+#[diesel(belongs_to(Job, foreign_key = job_id))]
 pub struct JobDependency {
     pub job_id: i32,
     pub depends_on: i32,
 }
 
 #[derive(Debug, Queryable, Identifiable, Associations)]
-#[table_name = "job_dependencies_with_status"]
-#[primary_key(job_id, depends_on)]
-#[belongs_to(Job, foreign_key = "job_id")]
+#[diesel(table_name =  job_dependencies_with_status)]
+#[diesel(primary_key(job_id, depends_on))]
+#[diesel(belongs_to(Job, foreign_key = job_id))]
 pub struct JobDependencyWithStatus {
     pub job_id: i32,
     pub depends_on: i32,
@@ -311,9 +312,9 @@ impl CheckStatus {
 }
 
 #[derive(Debug, Queryable, Insertable, Identifiable, Associations)]
-#[primary_key(check_name, build_id)]
-#[belongs_to(Build, foreign_key = "build_id")]
-#[belongs_to(Job, foreign_key = "job_id")]
+#[diesel(primary_key(check_name, build_id))]
+#[diesel(belongs_to(Build, foreign_key = build_id))]
+#[diesel(belongs_to(Job, foreign_key = job_id))]
 pub struct Check {
     pub check_name: String,
     pub build_id: i32,

@@ -45,7 +45,7 @@ impl JobInstance for CheckJobInstance {
     fn handle_job(
         &mut self,
         executor: &JobExecutor,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job Check: name: {}, build: {}",
@@ -111,7 +111,7 @@ impl JobInstance for CheckJobInstance {
             )));
         };
 
-        conn.transaction::<_, JobError, _>(|| {
+        conn.transaction::<_, JobError, _>(|conn| {
             let check = checks::table
                 .filter(checks::job_id.eq(self.job_id))
                 .for_update()
@@ -143,8 +143,11 @@ impl JobInstance for CheckJobInstance {
 
 /// When all checks have completed, the build should be moved to the Ready state if the checks all passed or Failed
 /// if any did not.
-pub fn update_build_status_after_check(build_id: i32, conn: &PgConnection) -> Result<(), JobError> {
-    conn.transaction(|| {
+pub fn update_build_status_after_check(
+    build_id: i32,
+    conn: &mut PgConnection,
+) -> Result<(), JobError> {
+    conn.transaction(|conn| {
         // Get all the checks for the given build
         let check_statuses = checks::table
             .filter(checks::build_id.eq(build_id))

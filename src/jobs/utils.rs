@@ -100,7 +100,7 @@ pub fn add_gpg_args(
     };
 }
 
-pub fn job_log(job_id: i32, conn: &PgConnection, output: &str) {
+pub fn job_log(job_id: i32, conn: &mut PgConnection, output: &str) {
     if let Err(e) = diesel::update(jobs::table)
         .filter(jobs::id.eq(job_id))
         .set((jobs::log.eq(jobs::log.concat(&output)),))
@@ -113,20 +113,18 @@ pub fn job_log(job_id: i32, conn: &PgConnection, output: &str) {
 macro_rules! job_log_and_info {
     ( $job_id:expr, $conn:expr, $output:expr $(,)? ) => {{
         let job_id = $job_id;
-        let conn = $conn;
         let output = $output;
         info!("#{}: {}", job_id, output);
-        crate::jobs::utils::job_log(job_id, conn, &format!("{output}\n"));
+        crate::jobs::utils::job_log(job_id, $conn, &format!("{output}\n"));
     }};
 }
 
 macro_rules! job_log_and_error {
     ( $job_id:expr, $conn:expr, $output:expr $(,)? ) => {{
         let job_id = $job_id;
-        let conn = $conn;
         let output = $output;
         error!("#{}: {}", job_id, output);
-        crate::jobs::utils::job_log(job_id, conn, &format!("{output}\n"));
+        crate::jobs::utils::job_log(job_id, $conn, &format!("{output}\n"));
     }};
 }
 
@@ -168,7 +166,7 @@ pub fn do_command(mut cmd: Command) -> JobResult<()> {
 pub fn schedule_update_job(
     config: &Config,
     repoconfig: &RepoConfig,
-    conn: &PgConnection,
+    conn: &mut PgConnection,
     job_id: i32,
 ) -> Result<Job, DieselError> {
     /* Create update repo job */

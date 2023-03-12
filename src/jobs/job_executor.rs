@@ -34,7 +34,7 @@ impl Actor for JobExecutor {
 
 fn pick_next_job(
     executor: &mut JobExecutor,
-    conn: &PgConnection,
+    conn: &mut PgConnection,
 ) -> Result<Box<dyn JobInstance>, DieselError> {
     use diesel::dsl::exists;
     use diesel::dsl::not;
@@ -47,7 +47,7 @@ fn pick_next_job(
         .build_transaction()
         .serializable()
         .deferrable()
-        .run(|| {
+        .run(|conn| {
             let ready_job_filter = jobs::status
                 .eq(JobStatus::New as i16)
                 .and(jobs::start_after.is_null().or(jobs::start_after.lt(now)))
@@ -99,7 +99,7 @@ fn pick_next_job(
     }
 }
 
-fn process_one_job(executor: &mut JobExecutor, conn: &PgConnection) -> bool {
+fn process_one_job(executor: &mut JobExecutor, conn: &mut PgConnection) -> bool {
     let new_instance = pick_next_job(executor, conn);
 
     match new_instance {
@@ -165,8 +165,8 @@ impl Handler<ProcessOneJob> for JobExecutor {
     type Result = Result<bool, ()>;
 
     fn handle(&mut self, _msg: ProcessOneJob, _ctx: &mut Self::Context) -> Self::Result {
-        let conn = &self.pool.get().map_err(|_e| ())?;
-        Ok(process_one_job(self, conn))
+        let mut conn = self.pool.get().map_err(|_e| ())?;
+        Ok(process_one_job(self, &mut conn))
     }
 }
 

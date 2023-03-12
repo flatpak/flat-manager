@@ -30,7 +30,7 @@ pub trait JobInstance {
     fn handle_job(
         &mut self,
         executor: &JobExecutor,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value>;
 }
 
@@ -57,7 +57,7 @@ impl JobInstance for InvalidJobInstance {
     fn handle_job(
         &mut self,
         _executor: &JobExecutor,
-        _conn: &PgConnection,
+        _conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         Err(self.error.clone())
     }

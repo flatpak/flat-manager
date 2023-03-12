@@ -60,7 +60,7 @@ impl JobInstance for RepublishJobInstance {
     fn handle_job(
         &mut self,
         executor: &JobExecutor,
-        conn: &PgConnection,
+        conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job Republish: repo: {}, app: {}",

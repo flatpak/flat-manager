@@ -153,7 +153,7 @@ impl Handler<StopJobQueue> for JobQueue {
 }
 
 pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
-    let conn = &pool.get().unwrap();
+    let mut conn = pool.get().unwrap();
     {
         use schema::builds::dsl::*;
         let (verifying, _) = RepoState::Committing.to_db();
@@ -163,7 +163,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
         let n_updated = diesel::update(builds)
             .filter(repo_state.eq(verifying).or(repo_state.eq(purging)))
             .set((repo_state.eq(failed), repo_state_reason.eq(failed_reason)))
-            .execute(conn)?;
+            .execute(&mut conn)?;
         if n_updated != 0 {
             error!(
                 "Marked {} builds as failed due to in progress jobs on startup",
@@ -179,7 +179,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
                 published_state.eq(failed_publish),
                 published_state_reason.eq(failed_publish_reason),
             ))
-            .execute(conn)?;
+            .execute(&mut conn)?;
         if n_updated2 != 0 {
             error!(
                 "Marked {} builds as failed to publish due to in progress jobs on startup",
@@ -192,7 +192,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
         let updated = diesel::update(jobs)
             .filter(status.eq(JobStatus::Started as i16))
             .set((status.eq(JobStatus::Broken as i16),))
-            .get_results::<Job>(conn)?;
+            .get_results::<Job>(&mut conn)?;
         if !updated.is_empty() {
             error!(
                 "Marked {} jobs as broken due to being started already at startup",
@@ -208,7 +208,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
                 }
                 for reponame in queue_update_for_repos {
                     info!("Queueing new update job for repo {:?}", reponame);
-                    let _update_job = queue_update_job(0, conn, &reponame, None);
+                    let _update_job = queue_update_job(0, &mut conn, &reponame, None);
                 }
             }
         }
@@ -218,7 +218,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
 
 pub fn queue_update_job(
     delay_secs: u64,
-    conn: &PgConnection,
+    conn: &mut PgConnection,
     repo: &str,
     starting_job_id: Option<i32>,
 ) -> Result<(bool, Job), DieselError> {
@@ -232,7 +232,7 @@ pub fn queue_update_job(
         .build_transaction()
         .serializable()
         .deferrable()
-        .run(|| {
+        .run(|conn| {
             let mut old_update_started_job = None;
             let mut old_update_new_job = None;
 
