@@ -1097,7 +1097,7 @@ dependencies = [
  "argparse",
  "askama",
  "awc",
- "base64 0.13.1",
+ "base64 0.21.0",
  "byteorder",
  "bytes 0.4.12",
  "chrono",

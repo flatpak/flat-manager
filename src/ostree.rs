@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine as _};
 use byteorder::{ByteOrder, LittleEndian, NativeEndian};
 use failure::Fail;
 use futures::future;
@@ -758,15 +759,17 @@ pub struct Delta {
 }
 
 fn delta_part_to_hex(part: &str) -> OstreeResult<String> {
-    let bytes = base64::decode(part.replace('_', "/")).map_err(|err| {
-        OstreeError::InternalError(format!("Invalid delta part name '{part}': {err}"))
-    })?;
+    let bytes = general_purpose::STANDARD_NO_PAD
+        .decode(part.replace('_', "/"))
+        .map_err(|err| {
+            OstreeError::InternalError(format!("Invalid delta part name '{part}': {err}"))
+        })?;
     Ok(bytes_to_object(&bytes))
 }
 
 fn hex_to_delta_part(hex: &str) -> OstreeResult<String> {
     let bytes = object_to_bytes(hex)?;
-    let part = base64::encode_config(bytes, base64::STANDARD_NO_PAD);
+    let part = general_purpose::STANDARD_NO_PAD.encode(bytes);
     Ok(part.replace('/', "_"))
 }
 
