@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine as _};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -241,8 +242,11 @@ where
     D: serde::Deserializer<'de>,
 {
     use serde::de::Error;
-    String::deserialize(deserializer)
-        .and_then(|string| base64::decode(string).map_err(|err| Error::custom(err.to_string())))
+    String::deserialize(deserializer).and_then(|string| {
+        general_purpose::STANDARD
+            .decode(string)
+            .map_err(|err| Error::custom(err.to_string()))
+    })
 }
 
 fn from_opt_base64<'de, D>(deserializer: D) -> Result<Option<Vec<u8>>, D::Error>
@@ -251,7 +255,11 @@ where
 {
     use serde::de::Error;
     String::deserialize(deserializer)
-        .and_then(|string| base64::decode(string).map_err(|err| Error::custom(err.to_string())))
+        .and_then(|string| {
+            general_purpose::STANDARD
+                .decode(string)
+                .map_err(|err| Error::custom(err.to_string()))
+        })
         .map(Some)
 }
 

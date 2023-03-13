@@ -3,6 +3,7 @@ use actix_service::Service;
 use actix_web::dev::Server;
 use actix_web::web::Data;
 use actix_web::{self, http, middleware, web, App, HttpResponse, HttpServer};
+use base64::{engine::general_purpose, Engine as _};
 use std::io;
 use std::path::Path;
 use std::process::Command;
@@ -32,7 +33,7 @@ fn load_gpg_key(
 
             let output = cmd.output()?;
             if output.status.success() {
-                Ok(Some(base64::encode(&output.stdout)))
+                Ok(Some(general_purpose::STANDARD.encode(&output.stdout)))
             } else {
                 Err(io::Error::new(io::ErrorKind::Other, "gpg2 --export failed"))
             }
