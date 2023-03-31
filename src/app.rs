@@ -90,7 +90,7 @@ pub fn create_app(
             ))
             .service(
                 web::scope("/api/v1")
-                    .wrap(TokenParser::new(db.clone(), &secret))
+                    .wrap(TokenParser::new(db.clone(), &c, &secret))
                     .service(
                         web::resource("/tokens/get_list")
                             .route(web::post().to_async(api::tokens::get_tokens)),
@@ -175,7 +175,7 @@ pub fn create_app(
             )
             .service(
                 web::scope("/repo")
-                    .wrap(TokenParser::optional(db.clone(), &repo_secret))
+                    .wrap(TokenParser::optional(db.clone(), &c, &repo_secret))
                     .wrap_fn(|req, srv| {
                         srv.call(req).map(|mut resp| {
                             apply_extra_headers(&mut resp);
@@ -192,7 +192,7 @@ pub fn create_app(
             )
             .service(
                 web::resource("/build-repo/{id}/{tail:.*}")
-                    .wrap(TokenParser::optional(db.clone(), &secret))
+                    .wrap(TokenParser::optional(db.clone(), &c, &secret))
                     .route(web::get().to_async(api::repo::handle_build_repo))
                     .route(web::head().to_async(api::repo::handle_build_repo))
                     .to(HttpResponse::MethodNotAllowed),
