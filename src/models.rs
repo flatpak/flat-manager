@@ -1,7 +1,7 @@
 /* see https://github.com/rust-lang/rust-clippy/issues/9014 */
 #![allow(clippy::extra_unused_lifetimes)]
 
-use crate::schema::{build_refs, builds, checks, job_dependencies, jobs};
+use crate::schema::{build_refs, builds, checks, job_dependencies, jobs, tokens};
 use diesel::{Associations, Identifiable, Insertable, Queryable};
 use serde::{Deserialize, Serialize};
 use std::{mem, time};
@@ -355,4 +355,28 @@ pub struct UpdateRepoJob {
 pub struct CheckJob {
     pub build: i32,
     pub name: String,
+}
+
+#[derive(Identifiable, Queryable, Debug, Serialize)]
+#[diesel(primary_key(token_id))]
+pub struct Token {
+    pub token_id: String,
+    pub expires: Option<chrono::NaiveDateTime>,
+    pub last_used: Option<chrono::NaiveDateTime>,
+    pub revoked_at: Option<chrono::NaiveDateTime>,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = tokens)]
+pub struct NewToken {
+    pub token_id: String,
+    pub expires: chrono::NaiveDateTime,
+    pub last_used: chrono::NaiveDateTime,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = tokens)]
+pub struct NewRevokedToken {
+    pub token_id: String,
+    pub revoked_at: chrono::NaiveDateTime,
 }

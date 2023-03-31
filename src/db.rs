@@ -1,6 +1,9 @@
 use actix::prelude::*;
 use actix_web::*;
+use chrono::Utc;
 use diesel::prelude::*;
+use diesel::sql_types::Nullable;
+use diesel::sql_types::Timestamp;
 use futures3::compat::Compat01As03;
 use serde_json::json;
 
@@ -9,6 +12,7 @@ use crate::models::*;
 use crate::schema;
 use crate::Pool;
 
+#[derive(Clone)]
 pub struct Db(pub Pool);
 
 impl Db {
@@ -458,6 +462,85 @@ impl Db {
             Ok(build_refs
                 .filter(build_id.eq(the_build_id))
                 .get_results::<BuildRef>(conn)?)
+        })
+        .await
+    }
+
+    /// Checks whether the given token has been revoked. If it hasn't, update its last used time.
+    pub async fn check_token(&self, jti: String, expires_at: i64) -> Result<(), ApiError> {
+        self.run_in_transaction(move |conn| {
+            use schema::tokens::dsl::*;
+
+            let token = tokens
+                .filter(token_id.eq(jti.clone()))
+                .for_update()
+                .get_result::<Token>(conn)
+                .optional()?;
+
+            let expires_at_datetime = chrono::NaiveDateTime::from_timestamp_opt(expires_at, 0).unwrap();
+
+            if let Some(token) = token {
+                if Some(expires_at_datetime) != token.expires {
+                    log::warn!("Token expiry mismatch (old: {:?}, new: {expires_at_datetime}) for token '{jti}'. Have multiple tokens been issued with the same ID?", token.expires);
+                }
+
+                if token.revoked_at.is_some() {
+                    return Err(ApiError::InvalidToken("Token has been revoked".to_string()));
+                } else {
+                    diesel::update(tokens)
+                        .filter(token_id.eq(jti))
+                        .set(last_used.eq(diesel::dsl::now))
+                        .execute(conn)?;
+                }
+            } else {
+                diesel::insert_into(tokens)
+                    .values(NewToken {
+                        token_id: jti,
+                        expires: expires_at_datetime,
+                        last_used: Utc::now().naive_utc(),
+                    })
+                    .execute(conn)?;
+            }
+
+            Ok(())
+        })
+        .await
+    }
+
+    /// Gets the tokens with the given IDs. If a token is not found, it is ignored.
+    pub async fn get_tokens(&self, jtis: Vec<String>) -> Result<Vec<Token>, ApiError> {
+        self.run(move |conn| {
+            use schema::tokens::dsl::*;
+
+            Ok(tokens
+                .filter(token_id.eq_any(jtis))
+                .get_results::<Token>(conn)?)
+        })
+        .await
+    }
+
+    /// Revokes the given tokens.
+    pub async fn revoke_tokens(&self, jtis: Vec<String>) -> Result<(), ApiError> {
+        self.run(move |conn| {
+            use schema::tokens::dsl::*;
+
+            sql_function! { fn coalesce(x: Nullable<Timestamp>, y: Timestamp) -> Timestamp; }
+
+            diesel::insert_into(tokens)
+                .values(
+                    jtis.into_iter()
+                        .map(|jti| NewRevokedToken {
+                            token_id: jti,
+                            revoked_at: Utc::now().naive_utc(),
+                        })
+                        .collect::<Vec<_>>(),
+                )
+                .on_conflict(token_id)
+                .do_update()
+                .set(revoked_at.eq(coalesce(revoked_at, diesel::dsl::now).nullable()))
+                .execute(conn)?;
+
+            Ok(())
         })
         .await
     }
