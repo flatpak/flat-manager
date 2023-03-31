@@ -119,10 +119,14 @@ pub struct Config {
     #[serde(default)]
     pub base_url: String,
     pub gpg_homedir: Option<String>,
+
     #[serde(deserialize_with = "from_base64")]
     pub secret: Vec<u8>,
     #[serde(default, deserialize_with = "from_opt_base64")]
     pub repo_secret: Option<Vec<u8>>,
+    /* If token_prefix is set, auth tokens may optionally be prefixed with it. */
+    pub token_prefix: Option<String>,
+
     pub repos: HashMap<String, RepoConfig>,
     pub build_repo_base: PathBuf,
     pub build_gpg_key: Option<String>,

@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
 
+use crate::config::Config;
 use crate::db::Db;
 use crate::errors::ApiError;
 
@@ -200,11 +201,12 @@ impl ClaimsValidator for HttpRequest {
 
 pub struct Inner {
     db: Db,
+    prefix: Option<String>,
     secret: Vec<u8>,
     optional: bool,
 }
 
-fn parse_authorization(header: &HeaderValue) -> Result<String, ApiError> {
+fn parse_authorization(prefix: Option<String>, header: &HeaderValue) -> Result<String, ApiError> {
     // "Bearer *" length
     if header.len() < 8 {
         return Err(ApiError::InvalidToken(
@@ -225,9 +227,13 @@ fn parse_authorization(header: &HeaderValue) -> Result<String, ApiError> {
         }
     }
 
-    let token = parts
+    let mut token = parts
         .next()
         .ok_or_else(|| ApiError::InvalidToken("No token value in header".to_string()))?;
+
+    if let Some(prefix) = prefix {
+        token = token.strip_prefix(&prefix).unwrap_or(token);
+    }
 
     Ok(token.to_string())
 }
@@ -250,16 +256,18 @@ fn validate_claims(secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
 pub struct TokenParser(Rc<Inner>);
 
 impl TokenParser {
-    pub fn new(db: Db, secret: &[u8]) -> TokenParser {
+    pub fn new(db: Db, config: &Config, secret: &[u8]) -> TokenParser {
         TokenParser(Rc::new(Inner {
             db,
+            prefix: config.token_prefix.clone(),
             secret: secret.to_vec(),
             optional: false,
         }))
     }
-    pub fn optional(db: Db, secret: &[u8]) -> TokenParser {
+    pub fn optional(db: Db, config: &Config, secret: &[u8]) -> TokenParser {
         TokenParser(Rc::new(Inner {
             db,
+            prefix: config.token_prefix.clone(),
             secret: secret.to_vec(),
             optional: true,
         }))
@@ -293,7 +301,11 @@ pub struct TokenParserMiddleware<S> {
     inner: Rc<Inner>,
 }
 
-fn get_token(optional: bool, req: &ServiceRequest) -> Result<Option<String>, ApiError> {
+fn get_token(
+    optional: bool,
+    prefix: Option<String>,
+    req: &ServiceRequest,
+) -> Result<Option<String>, ApiError> {
     let header = match req.headers().get(AUTHORIZATION) {
         Some(h) => h,
         None => {
@@ -305,7 +317,7 @@ fn get_token(optional: bool, req: &ServiceRequest) -> Result<Option<String>, Api
             ));
         }
     };
-    let token = parse_authorization(header)?;
+    let token = parse_authorization(prefix, header)?;
     Ok(Some(token))
 }
 
@@ -350,9 +362,10 @@ where
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
         let srv = self.service.clone();
         let secret = self.inner.secret.clone();
+        let prefix = self.inner.prefix.clone();
         let db = self.inner.db.clone();
 
-        let token = get_token(self.inner.optional, &req)
+        let token = get_token(self.inner.optional, prefix, &req)
             .into_future()
             .and_then(|token| token.map(|t| check_token(db, secret, t)));
 
