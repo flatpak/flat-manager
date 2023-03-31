@@ -64,6 +64,15 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    tokens (token_id) {
+        token_id -> Text,
+        expires -> Nullable<Timestamp>,
+        last_used -> Nullable<Timestamp>,
+        revoked_at -> Nullable<Timestamp>,
+    }
+}
+
 diesel::joinable!(build_refs -> builds (build_id));
 diesel::joinable!(checks -> builds (build_id));
 diesel::joinable!(checks -> jobs (job_id));
@@ -76,4 +85,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     job_dependencies,
     jobs,
     published_refs,
+    tokens,
 );

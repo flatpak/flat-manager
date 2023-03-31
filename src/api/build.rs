@@ -494,6 +494,7 @@ pub fn token_subset(
                 sub: args.sub.clone(),
                 scope: args.scope.clone(),
                 name: Some(claims.name.unwrap_or_default() + "/" + &args.name),
+                jti: claims.jti.clone(),
                 prefixes: {
                     if let Some(ref prefixes) = args.prefixes {
                         prefixes.clone()

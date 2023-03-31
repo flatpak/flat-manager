@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
 
+use crate::db::Db;
 use crate::errors::ApiError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +36,9 @@ pub enum ClaimsScope {
     // Permission to change the status of any build check (e.g. mark it as successful, failed, etc.) Should only be
     // given to reviewers or passed to the check scripts themselves.
     ReviewCheck,
+    // Permission to get usage information for any token and to revoke any token. Should not be given to untrusted
+    // parties.
+    TokenManagement,
 
     #[serde(other)]
     Unknown,
@@ -52,8 +56,9 @@ impl Display for ClaimsScope {
  * is not verified). */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String, // "build", "build/N", or user id for repo tokens
+    pub sub: String, // "build", "build/N", user id for repo tokens, or "" for certain management tokens
     pub exp: i64,
+    pub jti: Option<String>, // an unique ID for the token, for revocation.
 
     #[serde(default)]
     pub scope: Vec<ClaimsScope>,
@@ -194,6 +199,7 @@ impl ClaimsValidator for HttpRequest {
 }
 
 pub struct Inner {
+    db: Db,
     secret: Vec<u8>,
     optional: bool,
 }
@@ -244,14 +250,16 @@ fn validate_claims(secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
 pub struct TokenParser(Rc<Inner>);
 
 impl TokenParser {
-    pub fn new(secret: &[u8]) -> TokenParser {
+    pub fn new(db: Db, secret: &[u8]) -> TokenParser {
         TokenParser(Rc::new(Inner {
+            db,
             secret: secret.to_vec(),
             optional: false,
         }))
     }
-    pub fn optional(secret: &[u8]) -> TokenParser {
+    pub fn optional(db: Db, secret: &[u8]) -> TokenParser {
         TokenParser(Rc::new(Inner {
+            db,
             secret: secret.to_vec(),
             optional: true,
         }))
@@ -301,16 +309,26 @@ fn get_token(optional: bool, req: &ServiceRequest) -> Result<Option<String>, Api
     Ok(Some(token))
 }
 
-async fn check_token_async(secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
+async fn check_token_async(db: Db, secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
     let claims = validate_claims(secret, token)?;
+
+    /* If the token has an ID, make sure it has not been revoked. */
+    if let Some(jti) = &claims.jti {
+        if let Err(e) = db.check_token(jti.clone(), claims.exp).await {
+            log::warn!("Attempt to use a revoked token: '{jti}'");
+            return Err(e);
+        }
+    }
+
     Ok(claims)
 }
 
 fn check_token(
+    db: Db,
     secret: Vec<u8>,
     token: String,
 ) -> impl futures::Future<Item = Claims, Error = ApiError> {
-    Box::pin(check_token_async(secret, token)).compat()
+    Box::pin(check_token_async(db, secret, token)).compat()
 }
 
 impl<S, B> Service for TokenParserMiddleware<S>
@@ -332,10 +350,11 @@ where
     fn call(&mut self, req: ServiceRequest) -> Self::Future {
         let srv = self.service.clone();
         let secret = self.inner.secret.clone();
+        let db = self.inner.db.clone();
 
         let token = get_token(self.inner.optional, &req)
             .into_future()
-            .and_then(|token| token.map(|t| check_token(secret, t)));
+            .and_then(|token| token.map(|t| check_token(db, secret, t)));
 
         let fut = token.then(move |maybe_claims| {
             let maybe_claims = match maybe_claims {
