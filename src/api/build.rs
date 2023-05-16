@@ -60,6 +60,7 @@ async fn get_job_async(
 #[serde(rename_all = "kebab-case")]
 pub struct ReviewArgs {
     new_status: CheckStatus,
+    new_results: Option<String>,
 }
 
 pub fn review_check(
@@ -79,7 +80,7 @@ async fn review_check_async(
 ) -> Result<HttpResponse, ApiError> {
     req.has_token_claims("build", ClaimsScope::ReviewCheck)?;
 
-    db.set_check_status(params.id, args.new_status.clone())
+    db.set_check_status(params.id, args.new_status.clone(), args.new_results.clone())
         .await?;
 
     let check = db.get_check_by_job_id(params.id).await?;
