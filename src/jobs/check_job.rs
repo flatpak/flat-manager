@@ -137,7 +137,7 @@ impl JobInstance for CheckJobInstance {
             Ok(())
         })?;
 
-        Ok(json! {()})
+        Ok(json!({}))
     }
 }
 
@@ -172,13 +172,18 @@ pub fn update_build_status_after_check(build_id: i32, conn: &PgConnection) -> Re
             .for_update()
             .get_result::<Build>(conn)?;
 
+        let repo_state = RepoState::from_db(build.repo_state, &build.repo_state_reason);
+
+        if matches!(repo_state, RepoState::Failed(_)) {
+            /* If the build has already failed, don't change its status */
+            return Ok(());
+        }
+
         // Sanity check--make sure the build is still in Validating state
-        if !RepoState::from_db(build.repo_state, &build.repo_state_reason)
-            .same_state_as(&RepoState::Validating)
-        {
+        if !matches!(repo_state, RepoState::Validating) {
             return Err(JobError::new(&format!(
                 "Expected repo to be in {:?} state upon check completion, but it was in {:?}",
-                RepoState::Committing,
+                RepoState::Validating,
                 RepoState::from_db(build.repo_state, &build.repo_state_reason)
             )));
         }
