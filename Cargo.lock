@@ -1127,7 +1127,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tempfile",
- "time 0.1.45",
+ "time 0.3.20",
  "tokio 1.26.0",
  "tokio-compat",
  "tokio-process",
