@@ -72,6 +72,20 @@ class ApiError(Exception):
         return "Api call to %s failed with status %d, details: %s" % (self.url, self.status, self.body)
 
 
+class FailedJobError(Exception):
+    def __init__(self, job):
+        self.job = job
+
+    def repr(self):
+        return {
+            "type": "job",
+            "job": self.job
+        }
+
+    def __str__(self):
+        return "Job failed: %s" % (self.job)
+
+
 TENACITY_RETRY_EXCEPTIONS = (retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError) | retry_if_exception_type(ApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerConnectionError))
 TENACITY_STOP_AFTER = stop_after_delay(300)
 TENACITY_WAIT_BETWEEN = wait_random_exponential(multiplier=1, max=60)
@@ -390,6 +404,7 @@ async def wait_for_job(session, job_url, token):
                             print("\ Job completed successfully")
                         else:
                             print("\ Job failed")
+                            raise FailedJobError(job)
                         return job
                 else:
                     iterations_since_change=4 # Start at 4 so we ramp up the delay faster
@@ -827,7 +842,7 @@ if __name__ == '__main__':
         # Something called sys.exit(), lets just exit
         res = 1
         raise # Pass on regular exit callse
-    except ApiError as e:
+    except (ApiError, FailedJobError) as e:
         eprint(str(e))
         output = {
             "command": args.subparser_name,
