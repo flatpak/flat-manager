@@ -228,7 +228,7 @@ async def missing_objects(session, build_url, token, wanted):
 @retry(
     stop=TENACITY_STOP_AFTER,
     wait=TENACITY_WAIT_BETWEEN,
-    retry=(retry_if_exception_type(ApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError)),
+    retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
 async def upload_files(session, build_url, token, files):
