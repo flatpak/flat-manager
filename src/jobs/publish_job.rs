@@ -90,8 +90,8 @@ impl PublishJobInstance {
         let appstream_dir = repoconfig.path.join("appstream");
         fs::create_dir_all(&appstream_dir)?;
 
-        let screenshots_dir = repoconfig.path.join("screenshots");
-        fs::create_dir_all(&screenshots_dir)?;
+        let media_dir = repoconfig.path.join("media");
+        fs::create_dir_all(&media_dir)?;
 
         let mut commits = HashMap::new();
         for build_ref in build_refs.iter() {
@@ -127,7 +127,7 @@ impl PublishJobInstance {
                     .arg("--bareuseronly-dirs")
                     .arg("--union")
                     .arg(&build_ref.ref_name)
-                    .arg(&screenshots_dir);
+                    .arg(&media_dir);
                 do_command(cmd)?;
             }
         }
