@@ -59,7 +59,11 @@ config file; see `example-config.json`.
 
 The publish hook runs in the build directory before a build is published
 to a main repository. It can modify the build, for example by rewriting
-the appstream files in the commits.
+the appstream files in the commits. It receives the `FLAT_MANAGER_IS_REPUBLISH`
+environment variable, which is `true` if the publish was triggered by the
+republish endpoint or `false` if the publish is part of a build.
+If the publish is part of the build, the hook also receives the
+`FLAT_MANAGER_BUILD_ID` environment variable.
 
 Check scripts are run after a build is uploaded. Builds may not be
 published unless all checks have passed. The check is marked as failed
