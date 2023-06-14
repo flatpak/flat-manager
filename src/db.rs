@@ -284,6 +284,16 @@ impl Db {
         .await
     }
 
+    pub async fn lookup_checks(&self, build: i32) -> Result<Vec<Check>, ApiError> {
+        self.run(move |conn| {
+            use schema::checks::dsl::*;
+            Ok(checks
+                .filter(build_id.eq(build))
+                .get_results::<Check>(conn)?)
+        })
+        .await
+    }
+
     /* Builds */
 
     pub async fn new_build(&self, a_build: NewBuild) -> Result<Build, ApiError> {
@@ -336,8 +346,8 @@ impl Db {
 
             let mut new_ids = current_build.extra_ids;
             for new_id in ids.iter() {
-                if !new_ids.contains(new_id) {
-                    new_ids.push(new_id.to_string())
+                if !new_ids.iter().any(|id| id.as_ref() == Some(new_id)) {
+                    new_ids.push(Some(new_id.to_string()))
                 }
             }
             Ok(diesel::update(schema::builds::table)
@@ -436,7 +446,6 @@ impl Db {
         .await
     }
 
-    #[allow(dead_code)]
     pub async fn lookup_build_refs(&self, the_build_id: i32) -> Result<Vec<BuildRef>, ApiError> {
         self.run(move |conn| {
             use schema::build_refs::dsl::*;
