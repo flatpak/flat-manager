@@ -124,13 +124,16 @@ impl JobInstance for RepublishJobInstance {
         }
 
         // Run the publish hook, if any
-        if let Some(hook) = repoconfig
+        if let Some(mut hook) = repoconfig
             .hooks
             .publish
             .as_ref()
             .and_then(|x| x.build_command(tmp_repo_dir.path()))
         {
             job_log_and_info!(self.job_id, conn, "Running publish hook");
+
+            hook.env("FLAT_MANAGER_IS_REPUBLISH", "true");
+
             do_command(hook)?;
         }
 
