@@ -298,9 +298,13 @@ async def upload_objects(session, repo_path, build_url, token, objects):
     retry=TENACITY_RETRY_EXCEPTIONS,
     reraise=True,
 )
-async def create_ref(session, build_url, token, ref, commit):
+async def create_ref(session, build_url, token, ref, commit, build_log_url=None):
     print("Creating ref %s with commit %s" % (ref, commit))
-    resp = await session.post(build_url + "/build_ref", headers={'Authorization': 'Bearer ' + token}, json= { "ref": ref, "commit": commit} )
+    resp = await session.post(
+        build_url + "/build_ref",
+        headers={ 'Authorization': 'Bearer ' + token },
+        json= { "ref": ref, "commit": commit, "build-log-url": build_log_url }
+    )
     async with resp:
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
@@ -557,6 +561,8 @@ async def create_command(session, args):
         json["app-id"] = args.app_id
     if args.public_download is not None:
         json["public-download"] = args.public_download
+    if args.build_log_url is not None:
+        json["build-log-url"] = args.build_log_url
     resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json=json)
     async with resp:
         if resp.status != 200:
@@ -645,7 +651,7 @@ async def push_command(session, args):
 
     # Then the refs
     for ref, commit in refs.items():
-        await create_ref(session, args.build_url, token, ref, commit)
+        await create_ref(session, args.build_url, token, ref, commit, build_log_url=args.build_log_url)
 
     # Then any extra ids
     if args.extra_id:
@@ -744,6 +750,7 @@ if __name__ == '__main__':
     create_parser.add_argument('app_id', nargs='?', help='app ID')
     create_parser.add_argument('--public_download', action='store_true', default=None, help='allow public read access to the build repo')
     create_parser.add_argument('--no_public_download', action='store_false', dest='public_download', default=None, help='allow public read access to the build repo')
+    create_parser.add_argument('--build-log-url', help='Set URL of the build log for the whole build')
     create_parser.set_defaults(func=create_command)
 
     push_parser = subparsers.add_parser('push', help='Push to repo manager')
@@ -765,6 +772,7 @@ if __name__ == '__main__':
     push_parser.add_argument('--end-of-life', help='Set end of life')
     push_parser.add_argument('--end-of-life-rebase', help='Set new ID which will supercede the current one')
     push_parser.add_argument('--token-type', help='Set token type', type=int)
+    push_parser.add_argument('--build-log-url', help='Set URL of the build log for each uploaded ref')
     push_parser.set_defaults(func=push_command)
 
     commit_parser = subparsers.add_parser('commit', help='Commit build')

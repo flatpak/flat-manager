@@ -113,6 +113,11 @@ pub fn create_app(
                             .route(web::get().to_async(api::build::get_build)),
                     )
                     .service(
+                        web::resource("/build/{id}/extended")
+                            .name("show_build_extended")
+                            .route(web::get().to_async(api::build::get_build_extended)),
+                    )
+                    .service(
                         web::resource("/build/{id}/build_ref")
                             .route(web::post().to_async(api::build::create_build_ref)),
                     )

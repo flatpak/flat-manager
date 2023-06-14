@@ -1,9 +1,12 @@
+// @generated automatically by Diesel CLI.
+
 diesel::table! {
     build_refs (id) {
         id -> Int4,
         build_id -> Int4,
         ref_name -> Text,
         commit -> Text,
+        build_log_url -> Nullable<Text>,
     }
 }
 
@@ -18,9 +21,10 @@ diesel::table! {
         commit_job_id -> Nullable<Int4>,
         publish_job_id -> Nullable<Int4>,
         repo -> Text,
-        extra_ids -> Array<Text>,
+        extra_ids -> Array<Nullable<Text>>,
         app_id -> Nullable<Text>,
         public_download -> Bool,
+        build_log_url -> Nullable<Text>,
     }
 }
 
