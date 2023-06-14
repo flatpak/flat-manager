@@ -19,7 +19,7 @@ use crate::config::Config;
 use crate::db::*;
 use crate::errors::ApiError;
 use crate::jobs::{update_build_status_after_check, JobQueue, ProcessJobs};
-use crate::models::{Build, CheckStatus, NewBuild, NewBuildRef};
+use crate::models::{Build, BuildRef, Check, CheckStatus, NewBuild, NewBuildRef};
 use crate::ostree::init_ostree_repo;
 use crate::tokens::{self, Claims, ClaimsScope, ClaimsValidator};
 
@@ -101,6 +101,7 @@ pub struct CreateBuildArgs {
     repo: String,
     app_id: Option<String>,
     public_download: Option<bool>,
+    build_log_url: Option<String>,
 }
 
 pub fn create_build(
@@ -138,6 +139,7 @@ async fn create_build_async(
             repo: args.repo.clone(),
             app_id: args.app_id.clone(),
             public_download,
+            build_log_url: args.build_log_url.clone(),
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());
@@ -228,6 +230,42 @@ async fn get_build_async(
     has_token_for_build(&req, &build)?;
 
     Ok(HttpResponse::Ok().json(build))
+}
+
+pub fn get_build_extended(
+    params: Path<BuildPathParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> impl Future<Item = HttpResponse, Error = ApiError> {
+    Box::pin(get_build_extended_async(params, db, req)).compat()
+}
+
+#[derive(Debug, Serialize)]
+pub struct BuildExtended {
+    build: Build,
+    build_refs: Vec<BuildRef>,
+    checks: Vec<Check>,
+}
+
+async fn get_build_extended_async(
+    params: Path<BuildPathParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)
+        .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload))?;
+
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
+    let build_refs = db.lookup_build_refs(params.id).await?;
+    let checks = db.lookup_checks(params.id).await?;
+
+    Ok(HttpResponse::Ok().json(BuildExtended {
+        build,
+        build_refs,
+        checks,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -342,10 +380,12 @@ fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct CreateBuildRefArgs {
     #[serde(rename = "ref")]
     ref_name: String,
     commit: String,
+    build_log_url: Option<String>,
 }
 
 pub fn create_build_ref(
@@ -376,6 +416,7 @@ async fn create_build_ref_async(
             build_id,
             ref_name: args.ref_name.clone(),
             commit: args.commit.clone(),
+            build_log_url: args.build_log_url.clone(),
         })
         .await?;
 

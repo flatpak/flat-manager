@@ -12,6 +12,7 @@ pub struct NewBuild {
     pub repo: String,
     pub app_id: Option<String>,
     pub public_download: bool,
+    pub build_log_url: Option<String>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]
@@ -29,9 +30,10 @@ pub struct Build {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub publish_job_id: Option<i32>,
     pub repo: String,
-    pub extra_ids: Vec<String>,
+    pub extra_ids: Vec<Option<String>>,
     pub app_id: Option<String>,
     pub public_download: bool,
+    pub build_log_url: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
@@ -132,6 +134,7 @@ pub struct NewBuildRef {
     pub build_id: i32,
     pub ref_name: String,
     pub commit: String,
+    pub build_log_url: Option<String>,
 }
 
 #[derive(Identifiable, Associations, Serialize, Queryable, Eq, PartialEq, Debug)]
@@ -141,6 +144,7 @@ pub struct BuildRef {
     pub build_id: i32,
     pub ref_name: String,
     pub commit: String,
+    pub build_log_url: Option<String>,
 }
 
 diesel::table! {
@@ -311,7 +315,7 @@ impl CheckStatus {
     }
 }
 
-#[derive(Debug, Queryable, Insertable, Identifiable, Associations)]
+#[derive(Debug, Queryable, Insertable, Identifiable, Associations, Serialize)]
 #[diesel(primary_key(check_name, build_id))]
 #[diesel(belongs_to(Build, foreign_key = build_id))]
 #[diesel(belongs_to(Job, foreign_key = job_id))]

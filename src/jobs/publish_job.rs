@@ -73,7 +73,8 @@ impl PublishJobInstance {
         add_gpg_args(&mut cmd, &repoconfig.gpg_key, &config.gpg_homedir);
 
         if let Some(collection_id) = &repoconfig.collection_id {
-            for ref extra_id in build.extra_ids.iter() {
+            for extra_id in build.extra_ids.iter() {
+                let extra_id = extra_id.as_ref().expect("extra_id is null");
                 cmd.arg(format!("--extra-collection-id={collection_id}.{extra_id}"));
             }
         }
