@@ -455,7 +455,7 @@ async def wait_for_checks(session, build_url, token):
 
         for check in build["checks"]:
             print("Waiting for check: %s" % (check["check_name"]))
-            job_url = build_url_to_api(build_url) + "/job/" + str(check["job_id"])
+            job_url = build_url + "/check/" + check["check_name"] + "/job"
             await wait_for_job(session, job_url, token)
 
 @retry(
