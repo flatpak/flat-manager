@@ -152,6 +152,11 @@ pub fn create_app(
                             .route(web::get().to_async(api::build::get_publish_job)),
                     )
                     .service(
+                        web::resource("/build/{id}/check/{check_name}/job")
+                            .name("show_check_job")
+                            .route(web::get().to_async(api::build::get_check_job)),
+                    )
+                    .service(
                         web::resource("/build/{id}/purge")
                             .route(web::post().to_async(api::build::purge)),
                     )

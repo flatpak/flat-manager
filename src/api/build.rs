@@ -737,6 +737,45 @@ async fn publish_async(
     respond_with_url(&job, &req, "show_publish_job", &[params.id.to_string()])
 }
 
+#[derive(Deserialize)]
+pub struct BuildCheckPathParams {
+    id: i32,
+    check_name: String,
+}
+
+pub fn get_check_job(
+    args: Json<JobArgs>,
+    params: Path<BuildCheckPathParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> impl Future<Item = HttpResponse, Error = ApiError> {
+    Box::pin(get_check_job_async(args, params, db, req)).compat()
+}
+
+async fn get_check_job_async(
+    args: Json<JobArgs>,
+    params: Path<BuildCheckPathParams>,
+    db: Data<Db>,
+    req: HttpRequest,
+) -> Result<HttpResponse, ApiError> {
+    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
+
+    let build = db.lookup_build(params.id).await?;
+    has_token_for_build(&req, &build)?;
+
+    let checks = db.lookup_checks(build.id).await?;
+    let check = checks
+        .iter()
+        .find(|check| check.check_name == params.check_name);
+
+    if let Some(check) = check {
+        let job = db.lookup_job(check.job_id, args.log_offset).await?;
+        Ok(HttpResponse::Ok().json(job))
+    } else {
+        Err(ApiError::NotFound)
+    }
+}
+
 pub fn purge(
     params: Path<BuildPathParams>,
     db: Data<Db>,
