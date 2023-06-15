@@ -140,7 +140,10 @@ impl JobInstance for CheckJobInstance {
                 job_log_and_info!(
                     self.job_id,
                     conn,
-                    format!("Check status updated to {:?}", check.status)
+                    format!(
+                        "Check status updated to {:?}",
+                        CheckStatus::from_db(check.status, check.status_reason)
+                    )
                 );
             }
 
