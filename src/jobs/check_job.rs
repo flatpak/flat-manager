@@ -130,6 +130,18 @@ impl JobInstance for CheckJobInstance {
                         checks::status_reason.eq(status_reason),
                     ))
                     .get_result::<Check>(conn)?;
+
+                job_log_and_info!(
+                    self.job_id,
+                    conn,
+                    format!("Check status updated to {new_status:?}")
+                );
+            } else {
+                job_log_and_info!(
+                    self.job_id,
+                    conn,
+                    format!("Check status updated to {:?}", check.status)
+                );
             }
 
             update_build_status_after_check(self.build_id, conn)?;
