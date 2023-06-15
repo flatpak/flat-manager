@@ -439,6 +439,24 @@ async def wait_for_job(session, job_url, token):
             sleep_time=60
         time.sleep(sleep_time)
 
+@retry(
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
+    reraise=True,
+)
+async def wait_for_checks(session, build_url, token):
+    print("Waiting for checks, if any...")
+    resp = await session.get(build_url + "/extended", headers={'Authorization': 'Bearer ' + token})
+    async with resp:
+        if resp.status != 200:
+            raise ApiError(resp, await resp.text())
+        build = await resp.json()
+
+        for check in build["checks"]:
+            print("Waiting for check: %s" % (check["check_name"]))
+            job_url = build_url_to_api(build_url) + "/job/" + str(check["job_id"])
+            await wait_for_job(session, job_url, token)
 
 @retry(
     stop=TENACITY_STOP_AFTER,
@@ -464,7 +482,9 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
 
         if wait:
             print("Waiting for commit job")
-            job = await wait_for_job(session, job_url, token);
+            job = await wait_for_job(session, job_url, token)
+
+            await wait_for_checks(session, build_url, token)
 
         reparse_job_results(job)
         job["location"] = job_url
@@ -487,11 +507,16 @@ async def publish_build(session, build_url, wait, token):
                 if isinstance(body, str):
                     body = json.loads(body)
 
-                if body.get("current-state") == "published":
+                current_state = body.get("current-state", None)
+
+                if current_state == "published":
                     print("the build has been already published")
                     return {}
-                elif body.get("current-state") == "failed":
+                elif current_state == "failed":
                     print("the build has failed")
+                    return {}
+                elif current_state == "validating":
+                    print("the build is still being validated")
                     return {}
             except:
                 pass
