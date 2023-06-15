@@ -271,13 +271,19 @@ impl Db {
         &self,
         job: i32,
         new_status: CheckStatus,
+        new_results: Option<String>,
     ) -> Result<(), ApiError> {
         self.run(move |conn| {
             use schema::checks::dsl;
             let (status, status_reason) = new_status.to_db();
+
             diesel::update(dsl::checks)
                 .filter(dsl::job_id.eq(job))
-                .set((dsl::status.eq(status), dsl::status_reason.eq(status_reason)))
+                .set((
+                    dsl::status.eq(status),
+                    dsl::status_reason.eq(status_reason),
+                    new_results.map(|r| dsl::results.eq(r)),
+                ))
                 .execute(conn)?;
             Ok(())
         })
