@@ -490,6 +490,9 @@ async def publish_build(session, build_url, wait, token):
                 if body.get("current-state") == "published":
                     print("the build has been already published")
                     return {}
+                elif body.get("current-state") == "failed":
+                    print("the build has failed")
+                    return {}
             except:
                 pass
 
