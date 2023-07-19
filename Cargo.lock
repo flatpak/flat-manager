@@ -1083,7 +1083,6 @@ dependencies = [
  "failure",
  "filetime",
  "flate2",
- "futures 0.1.31",
  "futures 0.3.28",
  "futures-fs",
  "futures-locks",
