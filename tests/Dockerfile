@@ -1,4 +1,4 @@
-FROM fedora:36
+FROM quay.io/fedora/fedora:latest
 
 # Install Rust, Cargo, and run-tests.py's dependencies
 RUN dnf install -y rust cargo flatpak flatpak-builder python3-pip python3-gobject ostree-devel libpq-devel
