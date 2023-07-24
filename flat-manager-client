@@ -449,6 +449,9 @@ async def wait_for_checks(session, build_url, token):
     print("Waiting for checks, if any...")
     resp = await session.get(build_url + "/extended", headers={'Authorization': 'Bearer ' + token})
     async with resp:
+        if resp.status == 404:
+            return
+
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
         build = await resp.json()
