@@ -9,6 +9,7 @@ use futures::{Async, Future, Poll};
 use std::marker::PhantomData;
 use std::rc::Rc;
 
+
 use crate::tokens::ClaimsValidator;
 
 pub struct Logger(Rc<Inner>);
