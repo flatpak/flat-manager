@@ -344,6 +344,8 @@ pub struct PublishJob {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RepublishJob {
     pub app: String,
+    pub endoflife: Option<String>,
+    pub endoflife_rebase: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

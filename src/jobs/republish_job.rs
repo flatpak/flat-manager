@@ -22,6 +22,8 @@ pub struct RepublishJobInstance {
     pub job_id: i32,
     pub app_id: String,
     pub repo: String,
+    pub endoflife: Option<String>,
+    pub endoflife_rebase: Option<String>,
 }
 
 impl RepublishJobInstance {
@@ -41,6 +43,8 @@ impl RepublishJobInstance {
                 job_id: job.id,
                 repo,
                 app_id: publish_job.app,
+                endoflife: publish_job.endoflife,
+                endoflife_rebase: publish_job.endoflife_rebase,
             })
         } else {
             InvalidJobInstance::new(job, JobError::new("Can't parse republish job"))
@@ -146,6 +150,16 @@ impl JobInstance for RepublishJobInstance {
         let mut src_repo_arg = OsString::from("--src-repo=");
         src_repo_arg.push(tmp_repo_dir.path());
         cmd.arg(&src_repo_arg).arg(&repoconfig.path);
+
+        if let Some(endoflife) = &self.endoflife {
+            cmd.arg(format!("--end-of-life={endoflife}"));
+        };
+        if let Some(endoflife_rebase) = &self.endoflife_rebase {
+            cmd.arg(format!(
+                "--end-of-life-rebase={}={}",
+                self.app_id, endoflife_rebase
+            ));
+        }
 
         job_log_and_info!(
             self.job_id,

@@ -823,6 +823,8 @@ pub struct RepublishPathParams {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RepublishArgs {
     app: String,
+    endoflife: Option<String>,
+    endoflife_rebase: Option<String>,
 }
 
 pub fn republish(
@@ -847,7 +849,12 @@ async fn republish_async(
     req.has_token_repo(&params.repo)?;
 
     let job = db
-        .start_republish_job(params.repo.clone(), args.app.clone())
+        .start_republish_job(
+            params.repo.clone(),
+            args.app.clone(),
+            args.endoflife.clone(),
+            args.endoflife_rebase.clone(),
+        )
         .await?;
     job_queue.do_send(ProcessJobs(Some(params.repo.clone())));
 
