@@ -486,10 +486,11 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
         job_url = resp.headers['location'];
 
         if wait:
-            print("Waiting for commit job")
-            job = await wait_for_job(session, job_url, token)
+            pass
 
-            await wait_for_checks(session, build_url, token)
+        print("Waiting for commit job")
+        job = await wait_for_job(session, job_url, token)
+        await wait_for_checks(session, build_url, token)
 
         reparse_job_results(job)
         job["location"] = job_url
