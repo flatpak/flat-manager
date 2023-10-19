@@ -552,6 +552,8 @@ async def purge_build(session, build_url, token):
     print("Purging build %s" % (build_url))
     resp = await session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
     async with resp:
+        if resp.status == 404:
+            return "build not found"
         if resp.status != 200:
             raise ApiError(resp, await resp.text())
         return await resp.json()
