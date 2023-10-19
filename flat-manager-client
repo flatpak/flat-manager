@@ -459,7 +459,9 @@ async def wait_for_checks(session, build_url, token):
         for check in build["checks"]:
             print("Waiting for check: %s" % (check["check_name"]))
             job_url = build_url + "/check/" + check["check_name"] + "/job"
-            await wait_for_job(session, job_url, token)
+            check_job = await wait_for_job(session, job_url, token)
+            if check_job["status"] == 3:
+                raise FailedJobError(check_job)
 
 @retry(
     stop=TENACITY_STOP_AFTER,
