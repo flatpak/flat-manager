@@ -71,6 +71,10 @@ class ApiError(Exception):
     def __str__(self):
         return "Api call to %s failed with status %d, details: %s" % (self.url, self.status, self.body)
 
+class ServerApiError(ApiError):
+    def __init__(self, response, body):
+        super().__init__(response, body)
+
 
 class FailedJobError(Exception):
     def __init__(self, job):
@@ -86,7 +90,7 @@ class FailedJobError(Exception):
         return "Job failed: %s" % (self.job)
 
 
-TENACITY_RETRY_EXCEPTIONS = (retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError) | retry_if_exception_type(ApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerConnectionError) | retry_if_exception_type(aiohttp.client_exceptions.ClientOSError))
+TENACITY_RETRY_EXCEPTIONS = (retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError) | retry_if_exception_type(ServerApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerConnectionError) | retry_if_exception_type(aiohttp.client_exceptions.ClientOSError))
 TENACITY_STOP_AFTER = stop_after_delay(300)
 TENACITY_WAIT_BETWEEN = wait_random_exponential(multiplier=1, max=60)
 
@@ -241,7 +245,9 @@ async def upload_files(session, build_url, token, files):
     writer.headers['Authorization'] = 'Bearer ' + token
     resp = await session.request("post", build_url + '/upload', data=writer, headers=writer.headers)
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
 
 
@@ -306,7 +312,9 @@ async def create_ref(session, build_url, token, ref, commit, build_log_url=None)
         json= { "ref": ref, "commit": commit, "build-log-url": build_log_url }
     )
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
 
         data = await resp.json()
@@ -323,7 +331,9 @@ async def add_extra_ids(session, build_url, token, extra_ids):
     print("Adding extra ids %s" % (extra_ids))
     resp = await session.post(build_url + "/add_extra_ids", headers={'Authorization': 'Bearer ' + token}, json= { "ids": extra_ids} )
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
 
         data = await resp.json()
@@ -339,7 +349,10 @@ async def add_extra_ids(session, build_url, token, extra_ids):
 async def get_build(session, build_url, token):
     resp = await session.get(build_url, headers={'Authorization': 'Bearer ' + token})
     if resp.status != 200:
-        raise ApiError(resp, await resp.text())
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
+            raise ApiError(resp, await resp.text())
     data = await resp.json()
     return data
 
@@ -358,7 +371,9 @@ def reparse_job_results(job):
 async def get_job(session, job_url, token):
     resp = await session.get(job_url, headers={'Authorization': 'Bearer ' + token}, json={})
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
         data = await resp.json()
         return data
@@ -452,16 +467,17 @@ async def wait_for_checks(session, build_url, token):
         if resp.status == 404:
             return
 
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
+
         build = await resp.json()
 
         for check in build["checks"]:
             print("Waiting for check: %s" % (check["check_name"]))
             job_url = build_url + "/check/" + check["check_name"] + "/job"
-            check_job = await wait_for_job(session, job_url, token)
-            if check_job["status"] == 3:
-                raise FailedJobError(check_job)
+            await wait_for_job(session, job_url, token)
 
 @retry(
     stop=TENACITY_STOP_AFTER,
@@ -479,7 +495,9 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
         json['token_type'] = token_type
     resp = await session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json=json)
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
 
         job = await resp.json()
@@ -489,8 +507,8 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
             pass
 
         print("Waiting for commit job")
-        job = await wait_for_job(session, job_url, token)
         await wait_for_checks(session, build_url, token)
+        job = await wait_for_job(session, job_url, token)
 
         reparse_job_results(job)
         job["location"] = job_url
@@ -552,7 +570,9 @@ async def purge_build(session, build_url, token):
     print("Purging build %s" % (build_url))
     resp = await session.post(build_url + "/purge", headers={'Authorization': 'Bearer ' + token}, json= {} )
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
         return await resp.json()
 
@@ -572,7 +592,9 @@ async def create_token(session, manager_url, token, name, subject, scope, durati
         "duration": duration,
     })
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
         return await resp.json()
 
@@ -599,7 +621,9 @@ async def create_command(session, args):
         json["build-log-url"] = args.build_log_url
     resp = await session.post(build_url, headers={'Authorization': 'Bearer ' + args.token}, json=json)
     async with resp:
-        if resp.status != 200:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
             raise ApiError(resp, await resp.text())
         data = await resp.json()
         data["location"] = resp.headers['location']
