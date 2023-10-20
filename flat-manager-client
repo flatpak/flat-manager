@@ -466,7 +466,6 @@ async def wait_for_checks(session, build_url, token):
     async with resp:
         if resp.status == 404:
             return
-
         if resp.status >= 500:
             raise ServerApiError(resp, await resp.text())
         elif resp.status != 200:
@@ -478,6 +477,21 @@ async def wait_for_checks(session, build_url, token):
             print("Waiting for check: %s" % (check["check_name"]))
             job_url = build_url + "/check/" + check["check_name"] + "/job"
             await wait_for_job(session, job_url, token)
+
+    resp = await session.get(build_url + "/extended", headers={'Authorization': 'Bearer ' + token})
+    async with resp:
+        if resp.status == 404:
+            return
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
+            raise ApiError(resp, await resp.text())
+
+        build = await resp.json()
+        for check in build["checks"]:
+            if check["status"] == 2:
+                print("\ Check {} has failed".format(check["check_name"]))
+                raise FailedJobError(check)
 
 @retry(
     stop=TENACITY_STOP_AFTER,
