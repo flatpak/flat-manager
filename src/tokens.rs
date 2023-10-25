@@ -61,6 +61,8 @@ pub struct Claims {
     pub exp: i64,
     pub jti: Option<String>, // an unique ID for the token, for revocation.
 
+    pub builder_id: Option<String>,
+
     #[serde(default)]
     pub scope: Vec<ClaimsScope>,
     #[serde(default)]

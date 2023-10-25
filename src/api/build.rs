@@ -140,6 +140,7 @@ async fn create_build_async(
             app_id: args.app_id.clone(),
             public_download,
             build_log_url: args.build_log_url.clone(),
+            builder_id: req.get_claims().unwrap().builder_id.clone(),
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());
@@ -536,6 +537,7 @@ pub fn token_subset(
                 scope: args.scope.clone(),
                 name: Some(claims.name.unwrap_or_default() + "/" + &args.name),
                 jti: claims.jti.clone(),
+                builder_id: claims.builder_id.clone(),
                 prefixes: {
                     if let Some(ref prefixes) = args.prefixes {
                         prefixes.clone()

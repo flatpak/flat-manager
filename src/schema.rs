@@ -25,6 +25,7 @@ diesel::table! {
         app_id -> Nullable<Text>,
         public_download -> Bool,
         build_log_url -> Nullable<Text>,
+        builder_id -> Nullable<Text>,
     }
 }
 

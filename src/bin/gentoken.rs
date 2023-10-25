@@ -16,6 +16,8 @@ struct Claims {
     prefixes: Vec<String>,
     repos: Vec<String>,
     exp: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    builder_id: Option<String>,
 }
 
 fn read_secret(filename: String) -> io::Result<String> {
@@ -40,6 +42,7 @@ fn main() {
     let mut scope: Vec<String> = vec![];
     let mut prefixes: Vec<String> = vec![];
     let mut repos: Vec<String> = vec![];
+    let mut builder_id: Option<String> = None;
 
     {
         let mut ap = ArgumentParser::new();
@@ -78,6 +81,11 @@ fn main() {
             &["--duration"],
             Store,
             "Duration for key in seconds (default 1 year)",
+        );
+        ap.refer(&mut builder_id).add_option(
+            &["--builder-id"],
+            StoreOption,
+            "Builder ID (default: none)",
         );
         ap.parse_args_or_exit();
     }
@@ -130,6 +138,7 @@ fn main() {
         repos,
         name: name.clone(),
         exp: Utc::now().timestamp() + duration,
+        builder_id,
     };
 
     if verbose {
