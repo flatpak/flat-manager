@@ -144,6 +144,25 @@ async fn create_build_async(
         "-".to_string()
     };
 
+    let token_type = if let Some(ref claims) = req.get_claims() {
+        claims.token_type.clone()
+    } else {
+        None
+    };
+
+    let token_branches = if let Some(ref claims) = req.get_claims() {
+        Some(
+            claims
+                .branches
+                .iter()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.clone())
+                .collect(),
+        )
+    } else {
+        None
+    };
+
     let build = db
         .new_build(NewBuild {
             repo: args.repo.clone(),
@@ -151,6 +170,8 @@ async fn create_build_async(
             public_download,
             build_log_url: args.build_log_url.clone(),
             token_name: Some(token_name),
+            token_type,
+            token_branches,
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());
@@ -568,6 +589,8 @@ pub fn token_subset(
                         claims.repos
                     }
                 },
+                branches: claims.branches.clone(),
+                token_type: claims.token_type.clone(),
                 exp: new_exp,
             };
             return match jwt::encode(

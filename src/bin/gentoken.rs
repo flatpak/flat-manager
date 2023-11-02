@@ -16,6 +16,8 @@ struct Claims {
     prefixes: Vec<String>,
     repos: Vec<String>,
     exp: i64,
+    token_type: String,
+    branches: Vec<String>,
 }
 
 fn read_secret(filename: String) -> io::Result<String> {
@@ -40,7 +42,8 @@ fn main() {
     let mut scope: Vec<String> = vec![];
     let mut prefixes: Vec<String> = vec![];
     let mut repos: Vec<String> = vec![];
-
+    let mut token_type: String = "app".to_string();
+    let mut branches: Vec<String> = vec![];
     {
         let mut ap = ArgumentParser::new();
         ap.set_description("Generate token for flat-manager.");
@@ -79,6 +82,13 @@ fn main() {
             Store,
             "Duration for key in seconds (default 1 year)",
         );
+        ap.refer(&mut token_type)
+            .add_option(&["--token-type"], Store, "Token type");
+        ap.refer(&mut branches).add_option(
+            &["--branch"],
+            List,
+            "Add branch (default if none: ['stable']",
+        );
         ap.parse_args_or_exit();
     }
 
@@ -100,6 +110,10 @@ fn main() {
 
     if repos.is_empty() {
         repos = vec!["".to_string()];
+    }
+
+    if branches.is_empty() {
+        branches = vec!["stable".to_string()];
     }
 
     if let Some(s) = secret {
@@ -130,6 +144,8 @@ fn main() {
         repos,
         name: name.clone(),
         exp: Utc::now().timestamp() + duration,
+        token_type,
+        branches,
     };
 
     if verbose {

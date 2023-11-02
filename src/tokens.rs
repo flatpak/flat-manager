@@ -57,6 +57,7 @@ impl Display for ClaimsScope {
  * is not verified). */
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Claims {
+    pub name: Option<String>,
     pub sub: String, // "build", "build/N", user id for repo tokens, or "" for certain management tokens
     pub exp: i64,
     pub jti: Option<String>, // an unique ID for the token, for revocation.
@@ -69,7 +70,10 @@ pub struct Claims {
     pub apps: Vec<String>, // like prefixes, but only exact matches
     #[serde(default)]
     pub repos: Vec<String>, // list of repo names or a '' for match all
-    pub name: Option<String>, // for debug/logs only
+    #[serde(default)]
+    pub branches: Vec<String>, // list of allowed branches or a '' for match all
+    #[serde(default)]
+    pub token_type: Option<String>, // "app" to require at least one app ref
 }
 
 pub trait ClaimsValidator {

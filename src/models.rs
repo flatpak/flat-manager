@@ -14,6 +14,8 @@ pub struct NewBuild {
     pub public_download: bool,
     pub build_log_url: Option<String>,
     pub token_name: Option<String>,
+    pub token_type: Option<String>,
+    pub token_branches: Option<Vec<String>>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]
@@ -36,6 +38,8 @@ pub struct Build {
     pub public_download: bool,
     pub build_log_url: Option<String>,
     pub token_name: Option<String>,
+    pub token_type: Option<String>,
+    pub token_branches: Option<Vec<String>>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]
