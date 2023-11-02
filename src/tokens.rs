@@ -219,7 +219,7 @@ fn parse_authorization(prefix: Option<String>, header: &HeaderValue) -> Result<S
         .map_err(|_| ApiError::InvalidToken("Cannot convert header to string".to_string()))?
         .splitn(2, ' ');
     match parts.next() {
-        Some(scheme) if scheme == "Bearer" => (),
+        Some("Bearer") => (),
         _ => {
             return Err(ApiError::InvalidToken(
                 "Token scheme is not Bearer".to_string(),
