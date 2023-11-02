@@ -13,6 +13,7 @@ pub struct NewBuild {
     pub app_id: Option<String>,
     pub public_download: bool,
     pub build_log_url: Option<String>,
+    pub token_name: Option<String>,
 }
 
 #[derive(Identifiable, Serialize, Queryable, Debug, Eq, PartialEq)]
@@ -34,6 +35,7 @@ pub struct Build {
     pub app_id: Option<String>,
     pub public_download: bool,
     pub build_log_url: Option<String>,
+    pub token_name: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Eq, PartialEq)]

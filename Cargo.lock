@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "flat-manager"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "actix 0.8.3",
  "actix-codec",

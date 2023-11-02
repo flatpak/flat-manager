@@ -134,12 +134,23 @@ async fn create_build_async(
         .public_download
         .unwrap_or_else(|| args.app_id.is_none());
 
+    let token_name = if let Some(ref claims) = req.get_claims() {
+        if let Some(ref name) = claims.name {
+            name.clone()
+        } else {
+            "-".to_string()
+        }
+    } else {
+        "-".to_string()
+    };
+
     let build = db
         .new_build(NewBuild {
             repo: args.repo.clone(),
             app_id: args.app_id.clone(),
             public_download,
             build_log_url: args.build_log_url.clone(),
+            token_name: Some(token_name),
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());
