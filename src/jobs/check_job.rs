@@ -197,15 +197,6 @@ pub fn update_build_status_after_check(
             return Ok(());
         }
 
-        // Sanity check--make sure the build is still in Validating state
-        if !matches!(repo_state, RepoState::Validating) {
-            return Err(JobError::new(&format!(
-                "Expected repo to be in {:?} state upon check completion, but it was in {:?}",
-                RepoState::Validating,
-                RepoState::from_db(build.repo_state, &build.repo_state_reason)
-            )));
-        }
-
         let failing = check_statuses
             .iter()
             .filter(|(_name, status)| status.is_failed())
