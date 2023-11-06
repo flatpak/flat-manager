@@ -561,7 +561,7 @@ async def publish_build(session, build_url, wait, token):
                     print("the build has failed")
                     raise ApiError(resp, await resp.text())
                 elif current_state == "validating":
-                    print("the build is still being validated")
+                    print("the build is still being validated or held for review")
                     return {}
             except:
                 pass
