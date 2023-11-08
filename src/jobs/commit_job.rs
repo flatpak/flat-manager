@@ -147,6 +147,23 @@ impl CommitJobInstance {
         job_log_and_info!(self.job_id, conn, "running build-update-repo");
         do_command(cmd)?;
 
+        job_log_and_info!(self.job_id, conn, "extracting appstream");
+        let appstream_dir = build_repo_path.join("appstream");
+        fs::create_dir_all(&appstream_dir)?;
+        let appstream_refs = ostree::list_refs(&build_repo_path, "appstream");
+        for appstream_ref in appstream_refs {
+            let arch = appstream_ref.split('/').nth(1).unwrap();
+            let mut cmd = Command::new("ostree");
+            cmd.arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
+                .arg("checkout")
+                .arg("--user-mode")
+                .arg("--union")
+                .arg("--bareuseronly-dirs")
+                .arg(&appstream_ref)
+                .arg(appstream_dir.join(arch));
+            do_command(cmd)?;
+        }
+
         job_log_and_info!(self.job_id, conn, "Removing upload directory");
         fs::remove_dir_all(&upload_path)?;
 
