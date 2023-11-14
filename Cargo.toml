@@ -54,7 +54,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 tempfile = "3.0"
-time = "0.1"
+time = "0.3"
 tokio = { version = "1.18", features = ["time", "macros", "rt", "rt-multi-thread"] }
 tokio-compat = { version = "0.1", features = ["rt-full"] }
 tokio-process = "0.2"
