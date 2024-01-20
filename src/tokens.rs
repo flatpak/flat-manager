@@ -180,6 +180,9 @@ impl ClaimsValidator for HttpRequest {
      */
     fn has_token_prefix(&self, id: &str) -> Result<(), ApiError> {
         self.validate_claims(|claims| {
+            if claims.prefixes.is_empty() {
+                return Ok(());
+            }
             if !id_matches_one_prefix(id, &claims.prefixes)
                 && !claims.apps.contains(&id.to_string())
             {
