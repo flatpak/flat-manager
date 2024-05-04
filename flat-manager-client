@@ -420,9 +420,9 @@ async def wait_for_job(session, job_url, token):
                         iterations_since_change=iterations_since_change+1
                     if job_status > 1:
                         if job_status == 2:
-                            print("\ Job completed successfully")
+                            print("\\ Job completed successfully")
                         else:
-                            print("\ Job failed")
+                            print("\\ Job failed")
                             raise FailedJobError(job)
                         return job
                 else:
@@ -497,7 +497,7 @@ async def wait_for_checks(session, build_url, token):
         build = await resp.json()
         for check in build["checks"]:
             if check["status"] == 3:
-                print("\ Check {} has failed".format(check["check_name"]))
+                print("\\ Check {} has failed".format(check["check_name"]))
                 raise FailedJobError(check)
 
 @retry(
