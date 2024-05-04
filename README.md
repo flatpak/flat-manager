@@ -148,7 +148,7 @@ The above matches the default secret, so can be used for testing.
 
 Some token privileges are for managing flat-manager and shouldn't be
 given to third parties who are just uploading apps. The token privileges
-are described in the ClaimsScope enum in `app.rs`.
+are described in the [`ClaimsScope` enum in `tokens.rs`](https://github.com/flatpak/flat-manager/blob/d1c3d36da7b5779163ff70007c4d2f145cfce664/src/tokens.rs#L21-L46).
 
 The client takes tokens via either the `--token` argument or in the
 `REPO_TOKEN` environment variable.
