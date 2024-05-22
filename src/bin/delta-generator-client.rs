@@ -9,10 +9,10 @@ use awc::{
     Client,
 };
 use dotenv::dotenv;
+use futures::future::{self, Either, Loop};
 use futures::stream::SplitSink;
 use futures::{Future, Stream};
 use futures_fs::FsPool;
-use futures::future::{self, Either, Loop};
 use log::{error, info, warn};
 use mpart_async::MultipartRequest;
 use serde_json::json;
