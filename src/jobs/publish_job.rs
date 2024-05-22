@@ -6,6 +6,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
+use std::path::Path;
 use std::io::Write;
 use std::process::Command;
 
@@ -138,6 +139,21 @@ impl PublishJobInstance {
         }
 
         let update_job = schedule_update_job(config, repoconfig, conn, self.job_id)?;
+
+        let path = Path::new(&build_repo_path);
+        job_log_and_info!(
+            self.job_id,
+            conn,
+            &format!("Removing build {}", self.build_id.to_string()),
+        );
+
+        fs::remove_dir_all(path).unwrap_or_else(|_| {
+            job_log_and_info!(
+                self.job_id,
+                conn,
+                &format!("Failed to remove build")
+            );
+        });
 
         Ok(json!({
             "refs": commits,
