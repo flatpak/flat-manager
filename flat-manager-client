@@ -593,6 +593,12 @@ async def purge_build(session, build_url, token):
     async with resp:
         if resp.status >= 500:
             raise ServerApiError(resp, await resp.text())
+        elif resp.status == 400:
+            response = await resp.json()
+            if response.get("message") in ["Can't prune build while in use", "Build is currently being published"]:
+                return '{"OK"}'
+            else:
+                raise ApiError(resp, await resp.text())
         elif resp.status != 200:
             raise ApiError(resp, await resp.text())
         return await resp.json()
