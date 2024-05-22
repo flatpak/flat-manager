@@ -557,6 +557,9 @@ async def publish_build(session, build_url, wait, token):
                 if current_state == "published":
                     print("the build has been already published")
                     return {}
+                if current_state == "publishing":
+                    print("the build is currently being published")
+                    return {}
                 elif current_state == "failed":
                     print("the build has failed")
                     raise ApiError(resp, await resp.text())
@@ -595,7 +598,7 @@ async def purge_build(session, build_url, token):
             raise ServerApiError(resp, await resp.text())
         elif resp.status == 400:
             response = await resp.json()
-            if response.get("message") in ["Can't prune build while in use", "Build is currently being published"]:
+            if response.get("message") == "Can't prune build while in use":
                 return '{"OK"}'
             else:
                 raise ApiError(resp, await resp.text())
