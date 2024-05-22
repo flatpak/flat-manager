@@ -12,6 +12,7 @@ use dotenv::dotenv;
 use futures::stream::SplitSink;
 use futures::{Future, Stream};
 use futures_fs::FsPool;
+use futures::future::{self, Either, Loop};
 use log::{error, info, warn};
 use mpart_async::MultipartRequest;
 use serde_json::json;
@@ -232,53 +233,84 @@ fn add_delta_parts(
 }
 
 pub fn upload_delta(
-    fs_pool: &FsPool,
-    base_url: &str,
-    token: &str,
-    repo: &str,
-    repo_path: &Path,
-    delta: &ostree::Delta,
+    fs_pool: FsPool,
+    base_url: String,
+    token: String,
+    repo: String,
+    repo_path: PathBuf,
+    delta: ostree::Delta,
 ) -> impl Future<Item = (), Error = DeltaGenerationError> {
-    let url = format!("{base_url}/api/v1/delta/upload/{repo}");
-    let token = token.to_string();
-
-    let mut mpart = MultipartRequest::default();
-
     info!(
         "Uploading delta {}",
         delta.to_name().unwrap_or_else(|_| "??".to_string())
     );
-    futures::done(add_delta_parts(fs_pool, repo_path, delta, &mut mpart)).and_then(move |_| {
-        Client::new()
-            .post(&url)
-            .header(
-                header::CONTENT_TYPE,
-                format!("multipart/form-data; boundary={}", mpart.get_boundary()),
+
+    future::loop_fn(
+        (0, fs_pool, repo_path, delta, base_url, token, repo),
+        move |(attempt, fs_pool, repo_path, delta, base_url, token, repo)| {
+            let url = format!("{}/api/v1/delta/upload/{}", base_url, repo);
+            let mut mpart = MultipartRequest::default();
+            futures::done(add_delta_parts(&fs_pool, &repo_path, &delta, &mut mpart)).and_then(
+                move |_| {
+                    Client::new()
+                        .post(&url)
+                        .header(
+                            header::CONTENT_TYPE,
+                            format!("multipart/form-data; boundary={}", mpart.get_boundary()),
+                        )
+                        .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                        .timeout(UPLOAD_TIMEOUT)
+                        .method(http::Method::POST)
+                        .send_body(actix_http::body::BodyStream::new(mpart))
+                        .then(move |r| match r {
+                            Ok(response) => {
+                                if response.status().is_success() {
+                                    Either::A(future::ok(Loop::Break(())))
+                                } else {
+                                    error!("Unexpected upload response: {:?}", response);
+                                    let err = DeltaGenerationError::new(&format!(
+                                        "Delta upload failed with error {}",
+                                        response.status()
+                                    ));
+                                    if attempt < 4 {
+                                        Either::A(future::ok(Loop::Continue((
+                                            attempt + 1,
+                                            fs_pool,
+                                            repo_path,
+                                            delta,
+                                            base_url,
+                                            token,
+                                            repo,
+                                        ))))
+                                    } else {
+                                        Either::B(future::err(err))
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Unexpected upload error: {:?}", e);
+                                let err = DeltaGenerationError::new(&format!(
+                                    "Delta upload failed with error {e}"
+                                ));
+                                if attempt < 4 {
+                                    Either::A(future::ok(Loop::Continue((
+                                        attempt + 1,
+                                        fs_pool,
+                                        repo_path,
+                                        delta,
+                                        base_url,
+                                        token,
+                                        repo,
+                                    ))))
+                                } else {
+                                    Either::B(future::err(err))
+                                }
+                            }
+                        })
+                },
             )
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .timeout(UPLOAD_TIMEOUT)
-            .method(http::Method::POST)
-            .send_body(actix_http::body::BodyStream::new(mpart))
-            .then(|r| match r {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        Ok(())
-                    } else {
-                        error!("Unexpected upload response: {:?}", response);
-                        Err(DeltaGenerationError::new(&format!(
-                            "Delta upload failed with error {}",
-                            response.status()
-                        )))
-                    }
-                }
-                Err(e) => {
-                    error!("Unexpected upload error: {:?}", e);
-                    Err(DeltaGenerationError::new(&format!(
-                        "Delta upload failed with error {e}"
-                    )))
-                }
-            })
-    })
+        },
+    )
 }
 
 impl DeltaClient {
@@ -381,7 +413,7 @@ impl DeltaClient {
                 .then(move |guard, client, _ctx| {
                     pull_and_generate_delta_async(&path, &cdn_url, &delta)
                         .and_then(move |_| {
-                            upload_delta(&fs_pool, &base_url, &token, &reponame, &path2, &delta2)
+                            upload_delta(fs_pool, base_url, token, reponame, path2, delta2)
                         })
                         .into_actor(client)
                         .then(move |r, client, _ctx| {
