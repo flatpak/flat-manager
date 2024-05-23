@@ -15,7 +15,7 @@ use std::str;
 use std::time::Duration;
 use std::{collections::HashMap, path::Path};
 use std::{fs, io};
-use tokio::time::sleep;
+use std::thread::sleep;
 use tokio_process::CommandExt;
 use walkdir::WalkDir;
 
