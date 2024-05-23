@@ -12,8 +12,10 @@ use std::path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str;
+use std::time::Duration;
 use std::{collections::HashMap, path::Path};
 use std::{fs, io};
+use tokio::time::sleep;
 use tokio_process::CommandExt;
 use walkdir::WalkDir;
 
@@ -974,6 +976,8 @@ pub fn pull_commit_async(
                             commit_clone,
                             e.to_string()
                         );
+                        let sleep_duration = Duration::from_secs(5);
+                        let _ = sleep(sleep_duration);
                         Ok(future::Loop::Continue(count - 1))
                     } else {
                         Err(e)
