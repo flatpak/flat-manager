@@ -1011,7 +1011,8 @@ pub fn generate_delta_async(
     repo_path: &Path,
     delta: &Delta,
 ) -> Box<dyn Future<Item = (), Error = OstreeError>> {
-    let mut cmd = Command::new("flatpak");
+    let mut cmd = Command::new("timeout");
+    cmd.arg("3600").arg("flatpak");
 
     unsafe {
         cmd.pre_exec(|| {
