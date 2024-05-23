@@ -6,8 +6,8 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::path::Path;
 use std::io::Write;
+use std::path::Path;
 use std::process::Command;
 
 use crate::config::{Config, RepoConfig};
@@ -148,11 +148,7 @@ impl PublishJobInstance {
         );
 
         fs::remove_dir_all(path).unwrap_or_else(|_| {
-            job_log_and_info!(
-                self.job_id,
-                conn,
-                &format!("Failed to remove build")
-            );
+            job_log_and_info!(self.job_id, conn, &format!("Failed to remove build"));
         });
 
         Ok(json!({
