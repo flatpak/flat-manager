@@ -1073,7 +1073,7 @@ dependencies = [
  "awc",
  "base64 0.21.2",
  "byteorder",
- "bytes 0.4.12",
+ "bytes 1.4.0",
  "chrono",
  "diesel",
  "diesel_migrations",
