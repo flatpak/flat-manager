@@ -36,7 +36,7 @@ elementtree = "1.2"
 failure = "0.1.2"
 filetime = "0.2"
 flate2 = "1.0"
-futures = "0.1"
+futures = "0.3"
 futures3 = { package = "futures", version = "0.3", features = ["compat"] }
 futures-fs = "0.0"
 futures-locks = "0.3"

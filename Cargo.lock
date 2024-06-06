@@ -1083,8 +1083,7 @@ dependencies = [
  "failure",
  "filetime",
  "flate2",
- "futures 0.1.31",
- "futures 0.3.28",
+ "futures 0.3.26",
  "futures-fs",
  "futures-locks",
  "hex",
@@ -1179,9 +1178,9 @@ checksum = "3a471a38ef8ed83cd6e40aa59c1ffe17db6855c18e3604d9c4ed8c08ebc28678"
 
 [[package]]
 name = "futures"
-version = "0.3.28"
+version = "0.3.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23342abe12aba583913b2e62f22225ff9c950774065e4bfb61a19cd9770fec40"
+checksum = "13e2792b0ff0340399d58445b88fd9770e3489eff258a4cbc1523418f12abf84"
 dependencies = [
  "futures-channel",
  "futures-core",
