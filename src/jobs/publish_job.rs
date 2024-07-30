@@ -144,11 +144,11 @@ impl PublishJobInstance {
         job_log_and_info!(
             self.job_id,
             conn,
-            &format!("Removing build {}", self.build_id.to_string()),
+            &format!("Removing build {}", self.build_id),
         );
 
         fs::remove_dir_all(path).unwrap_or_else(|_| {
-            job_log_and_info!(self.job_id, conn, &format!("Failed to remove build"));
+            job_log_and_info!(self.job_id, conn, "Failed to remove build");
         });
 
         Ok(json!({

@@ -6,7 +6,6 @@ use actix_web_actors::ws;
 
 use futures::future::Future;
 use serde::Deserialize;
-use std::clone::Clone;
 use std::sync::Arc;
 
 use crate::config::Config;
@@ -28,7 +27,7 @@ pub fn delta_upload(
     config: Data<Config>,
 ) -> impl Future<Item = HttpResponse, Error = ApiError> {
     futures::done(req.has_token_claims("delta", ClaimsScope::Generate))
-        .and_then(move |_| futures::done(config.get_repoconfig(&params.repo).map(|rc| rc.clone())))
+        .and_then(move |_| futures::done(config.get_repoconfig(&params.repo).cloned()))
         .and_then(move |repoconfig| {
             let uploadstate = Arc::new(UploadState {
                 only_deltas: true,

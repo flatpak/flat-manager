@@ -12,10 +12,10 @@ use std::path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::str;
+use std::thread::sleep;
 use std::time::Duration;
 use std::{collections::HashMap, path::Path};
 use std::{fs, io};
-use std::thread::sleep;
 use tokio_process::CommandExt;
 use walkdir::WalkDir;
 
@@ -208,11 +208,11 @@ impl<'a> SubVariant<'a> {
         let len = self.data.len() as u64;
         if len == 0 {
             0
-        } else if len <= ::std::u8::MAX as u64 {
+        } else if len <= u8::MAX as u64 {
             1
-        } else if len <= ::std::u16::MAX as u64 {
+        } else if len <= u16::MAX as u64 {
             2
-        } else if len <= ::std::u32::MAX as u64 {
+        } else if len <= u32::MAX as u64 {
             4
         } else {
             8
@@ -232,7 +232,7 @@ impl<'a> SubVariant<'a> {
             4 => LittleEndian::read_u32(data) as usize,
             8 => {
                 let len64 = LittleEndian::read_u64(data);
-                if len64 > ::std::usize::MAX as u64 {
+                if len64 > usize::MAX as u64 {
                     return Err(OstreeError::InternalError(
                         "Framing error: To large framing size fror usize".to_string(),
                     ));
@@ -977,7 +977,7 @@ pub fn pull_commit_async(
                             e.to_string()
                         );
                         let sleep_duration = Duration::from_secs(5);
-                        let _ = sleep(sleep_duration);
+                        sleep(sleep_duration);
                         Ok(future::Loop::Continue(count - 1))
                     } else {
                         Err(e)

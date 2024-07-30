@@ -126,7 +126,7 @@ async fn create_build_async(
         req.has_token_prefix(app_id)?;
     }
 
-    let repoconfig = config.get_repoconfig(&args.repo).map(|rc| rc.clone())?; // Ensure the repo exists
+    let repoconfig = config.get_repoconfig(&args.repo).cloned()?; // Ensure the repo exists
 
     // If public_download is not specified, it defaults to true if there is no app ID (old style builds) and false
     // if there is one.
@@ -150,18 +150,14 @@ async fn create_build_async(
         None
     };
 
-    let token_branches = if let Some(ref claims) = req.get_claims() {
-        Some(
-            claims
-                .branches
-                .iter()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.clone())
-                .collect(),
-        )
-    } else {
-        None
-    };
+    let token_branches = req.get_claims().map(|claims| {
+        claims
+            .branches
+            .iter()
+            .filter(|s| !s.is_empty())
+            .cloned()
+            .collect()
+    });
 
     let build = db
         .new_build(NewBuild {

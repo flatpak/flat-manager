@@ -50,7 +50,7 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     config_data.build_gpg_key_content =
         load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     for (reponame, repoconfig) in &mut config_data.repos {
-        repoconfig.name = reponame.clone();
+        reponame.clone_into(&mut repoconfig.name);
         repoconfig.gpg_key_content =
             load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     }
