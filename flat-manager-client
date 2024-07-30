@@ -90,7 +90,12 @@ class FailedJobError(Exception):
         return "Job failed: %s" % (self.job)
 
 
-TENACITY_RETRY_EXCEPTIONS = (retry_if_exception_type(aiohttp.client_exceptions.ServerDisconnectedError) | retry_if_exception_type(ServerApiError) | retry_if_exception_type(aiohttp.client_exceptions.ServerConnectionError) | retry_if_exception_type(aiohttp.client_exceptions.ClientOSError))
+TENACITY_RETRY_EXCEPTIONS = retry_if_exception_type((
+    aiohttp.client_exceptions.ServerDisconnectedError,
+    ServerApiError,
+    aiohttp.client_exceptions.ServerConnectionError,
+    aiohttp.client_exceptions.ClientOSError,
+))
 TENACITY_STOP_AFTER = stop_after_delay(300)
 TENACITY_WAIT_BETWEEN = wait_random_exponential(multiplier=1, max=60)
 
