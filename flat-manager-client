@@ -255,7 +255,12 @@ async def upload_files(session, build_url, token, files):
         elif resp.status != 200:
             raise ApiError(resp, await resp.text())
 
-
+@retry(
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
+    reraise=True,
+)
 async def upload_deltas(session, repo_path, build_url, token, deltas, refs, ignore_delta):
     if not len(deltas):
         return
@@ -278,7 +283,12 @@ async def upload_deltas(session, repo_path, build_url, token, deltas, refs, igno
     if len(req):
         await upload_files(session, build_url, token, req)
 
-
+@retry(
+    stop=TENACITY_STOP_AFTER,
+    wait=TENACITY_WAIT_BETWEEN,
+    retry=TENACITY_RETRY_EXCEPTIONS,
+    reraise=True,
+)
 async def upload_objects(session, repo_path, build_url, token, objects):
     req = []
     total_size = 0
@@ -684,12 +694,6 @@ def build_url_to_api(build_url):
     path = os.path.dirname(os.path.dirname(parts.path))
     return urlunparse((parts.scheme, parts.netloc, path, None, None, None))
 
-@retry(
-    stop=TENACITY_STOP_AFTER,
-    wait=TENACITY_WAIT_BETWEEN,
-    retry=TENACITY_RETRY_EXCEPTIONS,
-    reraise=True,
-)
 async def push_command(session, args):
     local_repo = OSTree.Repo.new(Gio.File.new_for_path(args.repo_path))
     try:
@@ -766,7 +770,7 @@ async def push_command(session, args):
             update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
             if args.wait_update:
                 print("Waiting for repo update job")
-                update_job = await wait_for_job (session, update_job_url, token);
+                update_job = await wait_for_job(session, update_job_url, token);
             else:
                 update_job = await get_job(session, update_job_url, token)
             reparse_job_results(update_job)
