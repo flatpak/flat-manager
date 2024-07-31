@@ -143,9 +143,7 @@ impl ClaimsValidator for HttpRequest {
         if let Some(claims) = self.extensions().get::<Claims>() {
             func(claims)
         } else {
-            Err(ApiError::NotEnoughPermissions(
-                "No token specified".to_string(),
-            ))
+            Err(ApiError::TokenRequired)
         }
     }
 
