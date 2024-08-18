@@ -24,7 +24,7 @@
     "database-url": "postgres://postgres:postgres@db/test_db",
     "build-repo-base": "build-repo",
     "build-gpg-key": null,
-    "gpg-homedir": null,
+    "gpg-homedir": "/root/.gnupg",
     "secret": "c2VjcmV0",
     "repo-secret": "c2VjcmV0"
 }
