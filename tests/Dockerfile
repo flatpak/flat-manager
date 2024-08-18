@@ -17,6 +17,8 @@ RUN mkdir build-repo
 
 # Copy the files
 COPY ./ ./
+RUN rm ./root/.gnupg/public-keys.d/pubring.db.lock
+RUN rm -rf ./var/lib/flatpak/repo/tmp/cache/summaries
 
 # Make sure our test config.json is used, not one that was in the source directory
 RUN cp --force ./test-config.json ./config.json
