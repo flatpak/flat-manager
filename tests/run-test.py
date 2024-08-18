@@ -32,17 +32,12 @@ build_repo = exec(["./flat-manager-client", "create", "http://127.0.0.1:8080", "
 exec(["./flat-manager-client", "push", build_repo, REPO_DIR])
 
 # Commit to the build repo
-exec(["./flat-manager-client", "commit", build_repo])
-
-# Wait for that job to finish
-sleep(10)
+exec(["./flat-manager-client", "commit", "--wait", build_repo])
 
 # Publish to the main repo
-exec(["./flat-manager-client", "publish", build_repo])
-
-# Wait for the repository to be updated
-sleep(15)
+exec(["./flat-manager-client", "publish", "--wait", build_repo])
 
 # Make sure the app installs successfully
 exec(["flatpak", "remote-add", "flat-manager", "http://127.0.0.1:8080/repo/stable", "--gpg-import=key.gpg"])
+exec(["flatpak", "update", "-y"])
 exec(["flatpak", "install", "-y", "flat-manager", "org.flatpak.FlatManagerCI"])
