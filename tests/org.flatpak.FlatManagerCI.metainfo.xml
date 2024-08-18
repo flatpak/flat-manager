@@ -1,19 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<component type="desktop-application">
+<component type="console-application">
   <id>org.flatpak.FlatManagerCI</id>
   <name>flat-manager CI</name>
+  <developer_name>Flatpak contributors</developer_name>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>CC-BY-4.0</project_license>
   <url type="homepage">https://flatpak.org</url>
   <summary>Test app for flat-manager's CI</summary>
   <description><p>Test app for flat-manager's CI</p></description>
+  <provides>
+    <binary>hello.sh</binary>
+  </provides>
   <screenshots>
     <screenshot type="default">
-      <image type="source" width="800" height="600">https://placekitten.com/800/600</image>
+      <image>https://flatpak.org/img/container-440b950a.webp</image>
     </screenshot>
   </screenshots>
   <releases>
-    <release timestamp="2022-03-01" version="0.0.1"/>
+    <release date="2022-03-01" version="0.0.1"/>
   </releases>
-  <content_rating></content_rating>
+  <content_rating type="oars-1.1" />
 </component>
