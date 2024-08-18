@@ -1,5 +1,3 @@
-version: "3"
-
 services:
   flat-manager:
     privileged: true # needed for flatpak-builder to work
