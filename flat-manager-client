@@ -32,11 +32,11 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
 import aiohttp.client_exceptions
+import gi
+from gi.repository import Gio, GLib, OSTree
 from tenacity import retry, retry_if_exception_type, stop_after_delay, wait_random_exponential
 
-import gi
 gi.require_version('OSTree', '1.0')
-from gi.repository import Gio, GLib, OSTree
 
 UPLOAD_CHUNK_LIMIT = 4 * 1024 * 1024
 DEFAULT_LIMIT = 2 ** 16
