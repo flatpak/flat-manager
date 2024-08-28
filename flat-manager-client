@@ -947,10 +947,6 @@ if __name__ == '__main__':
             "result": result,
         }
         res = 0
-    except SystemExit:
-        # Something called sys.exit(), lets just exit
-        res = 1
-        raise # Pass on regular exit callse
     except (ApiError, FailedJobError) as e:
         eprint(str(e))
         output = {
