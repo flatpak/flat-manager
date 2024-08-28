@@ -423,7 +423,7 @@ async def wait_for_job(session, job_url, token):
                             if start_after and start_after > now:
                                 print("Waiting %d seconds before starting job" % (int(start_after - now)))
                     if job_status > 0 and old_job_status == 0:
-                        print("/ Job was started");
+                        print("/ Job was started")
                     old_job_status = job_status
                     log = job['log']
                     if len(log) > 0:
@@ -537,7 +537,7 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
             raise ApiError(resp, await resp.text())
 
         job = await resp.json()
-        job_url = resp.headers['location'];
+        job_url = resp.headers['location']
 
         if wait:
             pass
@@ -588,11 +588,11 @@ async def publish_build(session, build_url, wait, token):
             raise ApiError(resp, await resp.text())
 
         job = await resp.json()
-        job_url = resp.headers['location'];
+        job_url = resp.headers['location']
 
         if wait:
             print("Waiting for publish job")
-            job = await wait_for_job(session, job_url, token);
+            job = await wait_for_job(session, job_url, token)
 
         reparse_job_results(job)
         job["location"] = job_url
@@ -770,7 +770,7 @@ async def push_command(session, args):
             update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
             if args.wait_update:
                 print("Waiting for repo update job")
-                update_job = await wait_for_job(session, update_job_url, token);
+                update_job = await wait_for_job(session, update_job_url, token)
             else:
                 update_job = await get_job(session, update_job_url, token)
             reparse_job_results(update_job)
@@ -797,7 +797,7 @@ async def publish_command(session, args):
         update_job_url = build_url_to_api(args.build_url) + "/job/" + str(update_job_id)
         if args.wait_update:
             print("Waiting for repo update job")
-            update_job = await wait_for_job(session, update_job_url, args.token);
+            update_job = await wait_for_job(session, update_job_url, args.token)
         else:
             update_job = await get_job(session, update_job_url, args.token)
         reparse_job_results(update_job)
