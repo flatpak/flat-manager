@@ -66,6 +66,13 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
+  ruff-lint:
+    name: ruff-lint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: chartboost/ruff-action@v1
+
   docker:
     name: Build Docker image
     runs-on: ubuntu-latest
