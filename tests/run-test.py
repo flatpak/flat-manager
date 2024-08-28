@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
-import os, subprocess, sys, time
+import os
+import subprocess
+import sys
+import time
 from subprocess import PIPE
+
 
 def sleep(seconds):
     print(f"Waiting {seconds} seconds")
