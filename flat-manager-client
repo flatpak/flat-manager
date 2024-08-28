@@ -527,7 +527,7 @@ async def commit_build(session, build_url, eol, eol_rebase, token_type, wait, to
         "endoflife": eol,
         "endoflife_rebase": eol_rebase
     }
-    if token_type != None:
+    if token_type is not None:
         json['token_type'] = token_type
     resp = await session.post(build_url + "/commit", headers={'Authorization': 'Bearer ' + token}, json=json)
     async with resp:
