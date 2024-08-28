@@ -28,7 +28,7 @@ import time
 import traceback
 from argparse import ArgumentParser
 from functools import reduce
-from urllib.parse import urljoin, urlparse, urlsplit, urlunparse, urlunsplit
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import aiohttp
 import aiohttp.client_exceptions
