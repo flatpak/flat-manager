@@ -58,7 +58,11 @@ class ApiError(Exception):
         try:
             self.body = json.loads(body)
         except (json.JSONDecodeError, TypeError):
-            self.body = {"status": self.status, "error-type": "no-error", "message": "No json error details from server"}
+            self.body = {
+                "status": self.status,
+                "error-type": "no-error",
+                "message": f"Non-json error from server: {body}",
+            }
 
     def repr(self):
         return {
