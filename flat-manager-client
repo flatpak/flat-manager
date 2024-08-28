@@ -967,7 +967,7 @@ if __name__ == '__main__':
                 }
             }
         }
-    except:
+    except Exception:
         ei = sys.exc_info()
         eprint("Unexpected %s exception in %s: %s" % (ei[0].__name__, args.subparser_name, ei[1]))
         eprint(traceback.format_exc())
