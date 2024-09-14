@@ -29,11 +29,6 @@ import traceback
 from argparse import ArgumentParser
 from functools import reduce
 from urllib.parse import urljoin, urlparse, urlunparse
-
-import aiohttp
-import aiohttp.client_exceptions
-import gi
-from gi.repository import Gio, GLib, OSTree
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -41,7 +36,12 @@ from tenacity import (
     wait_random_exponential,
 )
 
+import aiohttp
+import aiohttp.client_exceptions
+import gi
+
 gi.require_version("OSTree", "1.0")
+from gi.repository import Gio, GLib, OSTree  # noqa: E402
 
 UPLOAD_CHUNK_LIMIT = 4 * 1024 * 1024
 DEFAULT_LIMIT = 2**16
