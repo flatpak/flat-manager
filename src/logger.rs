@@ -109,11 +109,7 @@ where
         };
 
         let user_agent = if let Some(val) = req.headers().get("User-Agent") {
-            if let Ok(s) = val.to_str() {
-                s
-            } else {
-                "-"
-            }
+            val.to_str().unwrap_or("-")
         } else {
             "-"
         }

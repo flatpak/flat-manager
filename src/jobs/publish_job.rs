@@ -127,7 +127,7 @@ impl PublishJobInstance {
                     &format!("extracting {}", build_ref.ref_name),
                 );
                 let mut cmd = Command::new("ostree");
-                cmd.arg(&format!("--repo={}", &build_repo_path.to_str().unwrap()))
+                cmd.arg(format!("--repo={}", &build_repo_path.to_str().unwrap()))
                     .arg("checkout")
                     .arg("--user-mode")
                     .arg("--bareuseronly-dirs")

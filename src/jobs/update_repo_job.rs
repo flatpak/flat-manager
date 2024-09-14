@@ -240,7 +240,7 @@ impl UpdateRepoJobInstance {
         for appstream_ref in appstream_refs {
             let arch = appstream_ref.split('/').nth(1).unwrap();
             let mut cmd = Command::new("ostree");
-            cmd.arg(&format!("--repo={}", &repoconfig.path.to_str().unwrap()))
+            cmd.arg(format!("--repo={}", &repoconfig.path.to_str().unwrap()))
                 .arg("checkout")
                 .arg("--user-mode")
                 .arg("--union")

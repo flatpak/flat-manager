@@ -113,14 +113,14 @@ impl JobInstance for RepublishJobInstance {
                 .arg("--no-update-summary")
                 .arg("--disable-fsync"); // No need for fsync in intermediate steps
 
-            cmd.arg(&format!(
+            cmd.arg(format!(
                 "--src-repo={}",
                 repoconfig
                     .get_abs_repo_path()
                     .to_str()
                     .expect("repo paths should be valid unicode")
             ))
-            .arg(&format!("--src-ref={ref_name}"))
+            .arg(format!("--src-ref={ref_name}"))
             .arg(tmp_repo_dir.path())
             .arg(&ref_name);
 

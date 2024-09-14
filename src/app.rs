@@ -27,7 +27,7 @@ fn load_gpg_key(
         Some(gpg_key) => {
             let mut cmd = Command::new("gpg2");
             if let Some(gpg_homedir) = maybe_gpg_homedir {
-                cmd.arg(&format!("--homedir={gpg_homedir}"));
+                cmd.arg(format!("--homedir={gpg_homedir}"));
             }
             cmd.arg("--export").arg(gpg_key);
 

@@ -956,9 +956,9 @@ pub fn pull_commit_async(
             });
         }
 
-        cmd.arg(&format!("--repo={}", &repo_path.to_str().unwrap()))
+        cmd.arg(format!("--repo={}", &repo_path.to_str().unwrap()))
             .arg("pull")
-            .arg(&format!("--url={url}"))
+            .arg(format!("--url={url}"))
             .arg("upstream")
             .arg(&commit);
 
@@ -1060,7 +1060,7 @@ pub fn prune_async(repo_path: &Path) -> Box<dyn Future<Item = (), Error = Ostree
     }
 
     cmd.arg("prune")
-        .arg(&format!("--repo={}", repo_path.to_string_lossy()))
+        .arg(format!("--repo={}", repo_path.to_string_lossy()))
         .arg("--keep-younger-than=3 days ago");
 
     Box::new(
