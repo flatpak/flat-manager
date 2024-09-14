@@ -88,7 +88,7 @@ jobs:
     concurrency:
       group: ${{ github.ref }}
       cancel-in-progress: true
-    if: success()
+    if: success() && github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
