@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 as builder
+FROM ubuntu:22.04 AS builder
 
 RUN apt-get update && apt-get install -y git libpq-dev curl build-essential libgpgme-dev pkg-config libssl-dev libglib2.0-dev libostree-dev
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && \
