@@ -133,6 +133,9 @@ class AsyncNamedFilePart(aiohttp.payload.Payload):
 
         self._size = os.stat(value).st_size
 
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        raise NotImplementedError
+
     async def write(self, writer):
         if self._file is None or self._file.closed:
             self._file = open(self._value, "rb")
