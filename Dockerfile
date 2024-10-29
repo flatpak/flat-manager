@@ -7,8 +7,8 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs > rustup.sh && \
 ADD . /src
 RUN cd /src && /root/.cargo/bin/cargo build --release
 
-RUN git clone https://github.com/jameswestman/flathub-hooks.git
-RUN cd flathub-hooks && /root/.cargo/bin/cargo build --release
+RUN git clone https://github.com/flathub-infra/flat-manager-hooks.git
+RUN cd flat-manager-hooks && /root/.cargo/bin/cargo build --release
 
 FROM ubuntu:22.04
 
