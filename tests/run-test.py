@@ -3,13 +3,7 @@
 import os
 import subprocess
 import sys
-import time
 from subprocess import PIPE
-
-
-def sleep(seconds):
-    print(f"Waiting {seconds} seconds")
-    time.sleep(seconds)
 
 
 def exec(cmd):
