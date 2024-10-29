@@ -3,7 +3,7 @@ FROM quay.io/fedora/fedora:latest
 # Install Rust, Cargo, and run-tests.py's dependencies
 RUN dnf install -y rust cargo flatpak flatpak-builder python3-pip python3-gobject ostree-devel libpq-devel
 RUN flatpak remote-add flathub https://flathub.org/repo/flathub.flatpakrepo
-RUN flatpak install --noninteractive flathub org.freedesktop.Platform//21.08 org.freedesktop.Sdk//21.08
+RUN flatpak install --noninteractive flathub org.freedesktop.Platform//24.08 org.freedesktop.Sdk//24.08
 RUN pip install asyncio aiohttp tenacity
 
 # Use the test config.json and configure it with a GPG key
