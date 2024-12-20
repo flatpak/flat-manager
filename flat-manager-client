@@ -17,6 +17,7 @@
 import asyncio
 import base64
 import binascii
+import datetime
 import errno
 import fnmatch
 import gzip
@@ -992,6 +993,17 @@ async def run_with_session(args):
     return result
 
 
+def check_token(token):
+    """
+    Fails if token is expired
+    """
+    base64_data = token.split(".")[1]
+    payload = json.loads(base64.urlsafe_b64decode(base64_data).decode("utf-8"))
+    expiration = datetime.datetime.fromtimestamp(payload["exp"], datetime.timezone.utc)
+    if datetime.datetime.now(datetime.timezone.utc) > expiration:
+        raise SystemExit(f"Token {payload} has expired")
+
+
 if __name__ == "__main__":
     progname = os.path.basename(sys.argv[0])
 
@@ -1144,6 +1156,7 @@ if __name__ == "__main__":
         else:
             print("No token available, pass with --token, --token-file or $REPO_TOKEN")
             exit(1)
+    check_token(args.token)
 
     res = 1
     output = None
