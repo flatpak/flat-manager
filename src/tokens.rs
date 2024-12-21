@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
 use crate::db::Db;
@@ -246,7 +247,9 @@ fn parse_authorization(prefix: Option<String>, header: &HeaderValue) -> Result<S
 }
 
 fn validate_claims(secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
-    let validation = Validation::default();
+    let mut validation = Validation::default();
+
+    validation.validate_exp = false;
 
     let token_data = match decode::<Claims>(
         &token,
@@ -257,7 +260,18 @@ fn validate_claims(secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
         Err(_err) => return Err(ApiError::InvalidToken("Invalid token claims".to_string())),
     };
 
-    Ok(token_data.claims)
+    let claims = token_data.claims;
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    if claims.exp < now {
+        return Err(ApiError::InvalidToken("Token is expired".to_string()));
+    }
+
+    Ok(claims)
 }
 
 pub struct TokenParser(Rc<Inner>);
