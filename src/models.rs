@@ -194,6 +194,7 @@ pub enum JobKind {
     UpdateRepo,
     Republish,
     Check,
+    Prune,
 }
 
 impl JobKind {
@@ -204,6 +205,7 @@ impl JobKind {
             JobKind::UpdateRepo => 2,
             JobKind::Republish => 3,
             JobKind::Check => 4,
+            JobKind::Prune => 5,
         }
     }
 
@@ -214,6 +216,7 @@ impl JobKind {
             2 => Some(JobKind::UpdateRepo),
             3 => Some(JobKind::Republish),
             4 => Some(JobKind::Check),
+            5 => Some(JobKind::Prune),
             _ => None,
         }
     }

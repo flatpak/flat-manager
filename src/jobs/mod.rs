@@ -6,6 +6,7 @@ mod commit_job;
 mod job_executor;
 mod job_instance;
 mod job_queue;
+mod prune_job;
 mod publish_job;
 mod republish_job;
 mod update_repo_job;

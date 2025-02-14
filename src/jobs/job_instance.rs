@@ -5,6 +5,7 @@ use diesel::pg::PgConnection;
 use super::check_job::CheckJobInstance;
 use super::commit_job::CommitJobInstance;
 use super::job_executor::JobExecutor;
+use super::prune_job::PruneJobInstance;
 use super::publish_job::PublishJobInstance;
 use super::republish_job::RepublishJobInstance;
 use super::update_repo_job::UpdateRepoJobInstance;
@@ -18,6 +19,7 @@ pub fn new_job_instance(executor: &JobExecutor, job: Job) -> Box<dyn JobInstance
         }
         Some(JobKind::Republish) => RepublishJobInstance::new(job),
         Some(JobKind::Check) => CheckJobInstance::new(job),
+        Some(JobKind::Prune) => PruneJobInstance::new(job),
         _ => InvalidJobInstance::new(job, JobError::new("Unknown job type")),
     }
 }
