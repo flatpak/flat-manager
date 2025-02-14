@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from subprocess import PIPE
+import time
 
 
 def exec(cmd):
@@ -62,3 +63,10 @@ exec(
 )
 exec(["flatpak", "update", "-y"])
 exec(["flatpak", "install", "-y", "flat-manager", "org.flatpak.FlatManagerCI"])
+
+# Test prune functionality
+print("Testing prune functionality")
+exec(["./flat-manager-client", "prune", "http://127.0.0.1:8080", "stable"])
+
+# Wait a bit to ensure the prune job completes
+time.sleep(5)
