@@ -3,8 +3,8 @@ use futures3::TryFutureExt;
 use serde::Deserialize;
 
 use crate::db::Db;
-use crate::tokens::{ClaimsScope, ClaimsValidator};
 use crate::errors::ApiError;
+use crate::tokens::{ClaimsScope, ClaimsValidator};
 
 #[derive(Deserialize)]
 pub struct PruneArgs {

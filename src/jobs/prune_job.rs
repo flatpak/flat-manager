@@ -1,11 +1,11 @@
-use crate::errors::{JobResult, JobError};
+use crate::errors::{JobError, JobResult};
 use crate::jobs::job_executor::JobExecutor;
 use crate::jobs::job_instance::JobInstance;
 use crate::models::Job;
 use diesel::pg::PgConnection;
+use log::info;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use log::info;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PruneJob {}
@@ -20,7 +20,7 @@ impl PruneJobInstance {
             Ok(_) => Box::new(PruneJobInstance { job }),
             Err(e) => super::job_instance::InvalidJobInstance::new(
                 job,
-                JobError::new(&format!("Invalid prune job contents: {}", e))
+                JobError::new(&format!("Invalid prune job contents: {}", e)),
             ),
         }
     }
@@ -40,7 +40,11 @@ impl JobInstance for PruneJobInstance {
 
         // Get repo config
         let config = &executor.config;
-        let repo = self.job.repo.as_ref().ok_or_else(|| JobError::new("No repo specified"))?;
+        let repo = self
+            .job
+            .repo
+            .as_ref()
+            .ok_or_else(|| JobError::new("No repo specified"))?;
         let repoconfig = config
             .get_repoconfig(repo)
             .map_err(|_e| JobError::new(&format!("Can't find repo {}", repo)))?;
