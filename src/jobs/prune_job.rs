@@ -15,6 +15,7 @@ pub struct PruneJobInstance {
 }
 
 impl PruneJobInstance {
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(job: Job) -> Box<dyn JobInstance> {
         match serde_json::from_str::<PruneJob>(&job.contents) {
             Ok(_) => Box::new(PruneJobInstance { job }),
