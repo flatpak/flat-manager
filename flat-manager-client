@@ -965,6 +965,20 @@ async def purge_command(session, args):
     return job
 
 
+async def prune_command(session, args):
+    resp = await session.post(
+        urljoin(args.manager_url, "api/v1/prune"),
+        headers={"Authorization": "Bearer " + args.token},
+        json={"repo": args.repo},
+    )
+    async with resp:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
+            raise ApiError(resp, await resp.text())
+        return await resp.json()
+
+
 async def create_token_command(session, args):
     data = await create_token(
         session,
@@ -1204,17 +1218,3 @@ if __name__ == "__main__":
             f.write("\n")
             f.close()
     exit(res)
-
-
-async def prune_command(args, session):
-    resp = await session.post(
-        urljoin(args.manager_url, "api/v1/prune"),
-        headers={"Authorization": "Bearer " + args.token},
-        json={"repo": args.repo},
-    )
-    async with resp:
-        if resp.status >= 500:
-            raise ServerApiError(resp, await resp.text())
-        elif resp.status != 200:
-            raise ApiError(resp, await resp.text())
-        return await resp.json()
