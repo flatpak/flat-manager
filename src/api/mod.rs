@@ -1,5 +1,6 @@
 pub mod build;
 pub mod delta;
+pub mod prune;
 pub mod repo;
 pub mod status;
 pub mod tokens;

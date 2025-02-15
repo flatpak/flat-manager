@@ -272,6 +272,21 @@ impl Db {
         .await
     }
 
+    pub async fn start_prune_job(&self, repo: String) -> Result<Job, ApiError> {
+        self.run_in_transaction(move |conn| {
+            diesel::insert_into(schema::jobs::table)
+                .values(NewJob {
+                    kind: JobKind::Prune.to_db(),
+                    contents: json!({}).to_string(),
+                    start_after: None,
+                    repo: Some(repo),
+                })
+                .get_result(conn)
+                .map_err(ApiError::from)
+        })
+        .await
+    }
+
     /* Checks */
 
     pub async fn get_check_by_job_id(&self, job: i32) -> Result<Check, ApiError> {

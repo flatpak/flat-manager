@@ -965,6 +965,20 @@ async def purge_command(session, args):
     return job
 
 
+async def prune_command(session, args):
+    resp = await session.post(
+        urljoin(args.manager_url, "api/v1/prune"),
+        headers={"Authorization": "Bearer " + args.token},
+        json={"repo": args.repo},
+    )
+    async with resp:
+        if resp.status >= 500:
+            raise ServerApiError(resp, await resp.text())
+        elif resp.status != 200:
+            raise ApiError(resp, await resp.text())
+        return await resp.json()
+
+
 async def create_token_command(session, args):
     data = await create_token(
         session,
@@ -1095,6 +1109,11 @@ if __name__ == "__main__":
     purge_parser = subparsers.add_parser("purge", help="Purge build")
     purge_parser.add_argument("build_url", help="remote build url")
     purge_parser.set_defaults(func=purge_command)
+
+    prune_parser = subparsers.add_parser("prune", help="Prune repository")
+    prune_parser.add_argument("manager_url", help="remote repo manager url")
+    prune_parser.add_argument("repo", help="repo name")
+    prune_parser.set_defaults(func=prune_command)
 
     create_token_parser = subparsers.add_parser(
         "create-token", help="Create subset token"

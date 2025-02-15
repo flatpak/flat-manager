@@ -62,3 +62,16 @@ exec(
 )
 exec(["flatpak", "update", "-y"])
 exec(["flatpak", "install", "-y", "flat-manager", "org.flatpak.FlatManagerCI"])
+
+os.environ["REPO_TOKEN"] = exec(
+    [
+        "cargo",
+        "run",
+        "--bin=gentoken",
+        "--",
+        "--secret=secret",
+        "--repo=stable",
+        "--scope=tokenmanagement",
+    ]
+)
+exec(["./flat-manager-client", "prune", "http://127.0.0.1:8080", "stable"])
