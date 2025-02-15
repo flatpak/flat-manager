@@ -2,8 +2,6 @@ use actix::prelude::*;
 use actix_web::*;
 use chrono::Utc;
 use diesel::prelude::*;
-use diesel::sql_types::Nullable;
-use diesel::sql_types::Timestamp;
 use futures3::compat::Compat01As03;
 use serde_json::json;
 
@@ -550,7 +548,8 @@ impl Db {
         self.run(move |conn| {
             use schema::tokens::dsl::*;
 
-            sql_function! { fn coalesce(x: Nullable<Timestamp>, y: Timestamp) -> Timestamp; }
+            use diesel::sql_types::*;
+            define_sql_function! { fn coalesce(x: Nullable<Timestamp>, y: Timestamp) -> Timestamp; }
 
             diesel::insert_into(tokens)
                 .values(
