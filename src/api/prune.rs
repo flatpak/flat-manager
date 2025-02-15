@@ -24,8 +24,12 @@ async fn handle_prune_async(
     db: web::Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    // Verify token has TokenManagement scope
-    req.has_token_claims("", ClaimsScope::TokenManagement)?;
+    req.validate_claims(|claims| {
+        if !claims.scope.contains(&ClaimsScope::TokenManagement) {
+            return Err(ApiError::token_insufficient("Missing TokenManagement scope"));
+        }
+        Ok(())
+    })?;
 
     // Create a new prune job
     let job = db.get_ref().start_prune_job(args.repo.clone()).await?;
