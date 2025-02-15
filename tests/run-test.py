@@ -72,6 +72,7 @@ os.environ["REPO_TOKEN"] = exec(
         "--secret=secret",
         "--repo=stable",
         "--scope=tokenmanagement",
+        "--sub=prune-test"
     ]
 )
 exec(["./flat-manager-client", "prune", "http://127.0.0.1:8080", "stable"])
