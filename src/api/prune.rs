@@ -26,7 +26,7 @@ async fn handle_prune_async(
 ) -> Result<HttpResponse, ApiError> {
     req.validate_claims(|claims| {
         if !claims.scope.contains(&ClaimsScope::TokenManagement) {
-            return Err(ApiError::token_insufficient("Missing TokenManagement scope"));
+            return Err(ApiError::NotEnoughPermissions("Missing TokenManagement scope".to_string()));
         }
         Ok(())
     })?;
