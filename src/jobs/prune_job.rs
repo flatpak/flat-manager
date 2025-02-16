@@ -5,8 +5,8 @@ use crate::models::Job;
 use diesel::pg::PgConnection;
 use log::info;
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use serde_json::json;
+use std::process::Command;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PruneJob {}
@@ -59,8 +59,22 @@ impl JobInstance for PruneJobInstance {
             .arg(&repo_path);
 
         let output = super::utils::do_command_with_output(&mut cmd)?;
-        job_log_and_info!(self.job.id, conn, &format!("Dry-run stdout:\n{}", String::from_utf8_lossy(&output.stdout)));
-        job_log_and_info!(self.job.id, conn, &format!("Dry-run stderr:\n{}", String::from_utf8_lossy(&output.stderr)));
+        job_log_and_info!(
+            self.job.id,
+            conn,
+            &format!(
+                "Dry-run stdout:\n{}",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        );
+        job_log_and_info!(
+            self.job.id,
+            conn,
+            &format!(
+                "Dry-run stderr:\n{}",
+                String::from_utf8_lossy(&output.stderr)
+            )
+        );
 
         if !output.status.success() {
             return Err(JobError::new(&format!(
@@ -81,8 +95,16 @@ impl JobInstance for PruneJobInstance {
             .arg(&repo_path);
 
         let output = super::utils::do_command_with_output(&mut cmd)?;
-        job_log_and_info!(self.job.id, conn, &format!("Prune stdout:\n{}", String::from_utf8_lossy(&output.stdout)));
-        job_log_and_info!(self.job.id, conn, &format!("Prune stderr:\n{}", String::from_utf8_lossy(&output.stderr)));
+        job_log_and_info!(
+            self.job.id,
+            conn,
+            &format!("Prune stdout:\n{}", String::from_utf8_lossy(&output.stdout))
+        );
+        job_log_and_info!(
+            self.job.id,
+            conn,
+            &format!("Prune stderr:\n{}", String::from_utf8_lossy(&output.stderr))
+        );
 
         if !output.status.success() {
             return Err(JobError::new(&format!(
