@@ -6,24 +6,19 @@ use diesel::pg::PgConnection;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
+use serde_json::json;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PruneJob {}
 
 pub struct PruneJobInstance {
-    job: Job,
+    pub job: Job,
 }
 
 impl PruneJobInstance {
     #[allow(clippy::new_ret_no_self)]
     pub fn new(job: Job) -> Box<dyn JobInstance> {
-        match serde_json::from_str::<PruneJob>(&job.contents) {
-            Ok(_) => Box::new(PruneJobInstance { job }),
-            Err(e) => super::job_instance::InvalidJobInstance::new(
-                job,
-                JobError::new(&format!("Invalid prune job contents: {}", e)),
-            ),
-        }
+        Box::new(PruneJobInstance { job })
     }
 }
 
@@ -63,7 +58,16 @@ impl JobInstance for PruneJobInstance {
             .arg("--prune-depth=3")
             .arg(&repo_path);
 
-        super::utils::do_command(cmd)?;
+        let output = super::utils::do_command_with_output(&mut cmd)?;
+        job_log_and_info!(self.job.id, conn, &format!("Dry-run stdout:\n{}", String::from_utf8_lossy(&output.stdout)));
+        job_log_and_info!(self.job.id, conn, &format!("Dry-run stderr:\n{}", String::from_utf8_lossy(&output.stderr)));
+
+        if !output.status.success() {
+            return Err(JobError::new(&format!(
+                "Prune dry-run failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
 
         // Then do the actual prune
         job_log_and_info!(self.job.id, conn, "Running actual prune");
@@ -76,9 +80,18 @@ impl JobInstance for PruneJobInstance {
             .arg("--prune-depth=3")
             .arg(&repo_path);
 
-        super::utils::do_command(cmd)?;
+        let output = super::utils::do_command_with_output(&mut cmd)?;
+        job_log_and_info!(self.job.id, conn, &format!("Prune stdout:\n{}", String::from_utf8_lossy(&output.stdout)));
+        job_log_and_info!(self.job.id, conn, &format!("Prune stderr:\n{}", String::from_utf8_lossy(&output.stderr)));
 
-        Ok(serde_json::json!({}))
+        if !output.status.success() {
+            return Err(JobError::new(&format!(
+                "Prune failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+
+        Ok(json!({}))
     }
 
     // Higher order than Publish/UpdateRepo to prevent them from running while prune is in queue
