@@ -455,16 +455,6 @@ impl Db {
 
     /* Build refs */
 
-    pub async fn new_build_ref(&self, a_build_ref: NewBuildRef) -> Result<BuildRef, ApiError> {
-        self.run(move |conn| {
-            use self::schema::build_refs::dsl::*;
-            Ok(diesel::insert_into(build_refs)
-                .values(&a_build_ref)
-                .get_result::<BuildRef>(conn)?)
-        })
-        .await
-    }
-
     pub async fn lookup_build_ref(
         &self,
         the_build_id: i32,
@@ -486,6 +476,39 @@ impl Db {
             Ok(build_refs
                 .filter(build_id.eq(the_build_id))
                 .get_results::<BuildRef>(conn)?)
+        })
+        .await
+    }
+
+    pub async fn lookup_build_ref_by_name(
+        &self,
+        the_build_id: i32,
+        the_ref_name: String,
+    ) -> Result<Option<BuildRef>, ApiError> {
+        self.run(move |conn| {
+            use schema::build_refs::dsl::*;
+            Ok(build_refs
+                .filter(build_id.eq(the_build_id))
+                .filter(ref_name.eq(the_ref_name))
+                .first::<BuildRef>(conn)
+                .optional()?)
+        })
+        .await
+    }
+
+    pub async fn upsert_build_ref(&self, a_build_ref: NewBuildRef) -> Result<BuildRef, ApiError> {
+        self.run(move |conn| {
+            use self::schema::build_refs::dsl::*;
+            use diesel::pg::upsert::excluded;
+            Ok(diesel::insert_into(build_refs)
+                .values(&a_build_ref)
+                .on_conflict((build_id, ref_name))
+                .do_update()
+                .set((
+                    commit.eq(excluded(commit)),
+                    build_log_url.eq(excluded(build_log_url)),
+                ))
+                .get_result::<BuildRef>(conn)?)
         })
         .await
     }

@@ -439,14 +439,22 @@ async fn create_build_ref_async(
 
     has_token_for_build(&req, &build)?;
 
-    let buildref = db
-        .new_build_ref(NewBuildRef {
-            build_id,
-            ref_name: args.ref_name.clone(),
-            commit: args.commit.clone(),
-            build_log_url: args.build_log_url.clone(),
-        })
+    let existing_ref = db
+        .lookup_build_ref_by_name(build_id, args.ref_name.clone())
         .await?;
+
+    let buildref = match existing_ref {
+        Some(existing) if existing.commit == args.commit => existing,
+        _ => {
+            db.upsert_build_ref(NewBuildRef {
+                build_id,
+                ref_name: args.ref_name.clone(),
+                commit: args.commit.clone(),
+                build_log_url: args.build_log_url.clone(),
+            })
+            .await?
+        }
+    };
 
     respond_with_url(
         &buildref,
