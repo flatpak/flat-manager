@@ -244,7 +244,7 @@ pub fn upload_delta(
     future::loop_fn(
         (0, fs_pool, repo_path, delta, base_url, token, repo),
         move |(attempt, fs_pool, repo_path, delta, base_url, token, repo)| {
-            let url = format!("{}/api/v1/delta/upload/{}", base_url, repo);
+            let url = format!("{base_url}/api/v1/delta/upload/{repo}");
             let mut mpart = MultipartRequest::default();
             futures::done(add_delta_parts(&fs_pool, &repo_path, &delta, &mut mpart)).and_then(
                 move |_| {
@@ -254,7 +254,7 @@ pub fn upload_delta(
                             header::CONTENT_TYPE,
                             format!("multipart/form-data; boundary={}", mpart.get_boundary()),
                         )
-                        .header(header::AUTHORIZATION, format!("Bearer {}", token))
+                        .header(header::AUTHORIZATION, format!("Bearer {token}"))
                         .timeout(UPLOAD_TIMEOUT)
                         .method(http::Method::POST)
                         .send_body(actix_http::body::BodyStream::new(mpart))

@@ -35,7 +35,7 @@ fn load_gpg_key(
             if output.status.success() {
                 Ok(Some(general_purpose::STANDARD.encode(&output.stdout)))
             } else {
-                Err(io::Error::new(io::ErrorKind::Other, "gpg2 --export failed"))
+                Err(io::Error::other("gpg2 --export failed"))
             }
         }
         None => Ok(None),
@@ -44,8 +44,8 @@ fn load_gpg_key(
 
 pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     let config_contents = std::fs::read_to_string(path)?;
-    let mut config_data: Config = serde_json::from_str(&config_contents)
-        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+    let mut config_data: Config =
+        serde_json::from_str(&config_contents).map_err(io::Error::other)?;
 
     config_data.build_gpg_key_content =
         load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
