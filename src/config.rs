@@ -108,6 +108,10 @@ fn default_numcpu() -> u32 {
     num_cpus::get() as u32
 }
 
+fn default_workers() -> usize {
+    num_cpus::get()
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
@@ -136,6 +140,8 @@ pub struct Config {
     pub delay_update_secs: u64,
     #[serde(default = "default_numcpu")]
     pub local_delta_threads: u32,
+    #[serde(default = "default_workers")]
+    pub workers: usize,
     pub storefront_info_endpoint: Option<String>,
 }
 

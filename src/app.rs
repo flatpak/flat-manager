@@ -59,6 +59,12 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
         config_data.base_url = format!("http://{}:{}", config_data.host, config_data.port)
     }
 
+    if let Ok(workers_str) = std::env::var("ACTIX_WORKERS") {
+        if let Ok(workers) = workers_str.parse::<usize>() {
+            config_data.workers = workers;
+        }
+    }
+
     Ok(config_data)
 }
 
@@ -219,6 +225,7 @@ pub fn create_app(
 
     let bind_to = format!("{}:{}", config.host, config.port);
     let server = http_server
+        .workers(config.workers)
         .bind(&bind_to)
         .unwrap()
         .disable_signals()
