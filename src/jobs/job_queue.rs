@@ -4,21 +4,23 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel::result::Error as DieselError;
-use log::{error, info};
+use log::{error, info, warn};
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::str;
-use std::time;
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::models::{
     Job, JobDependency, JobKind, JobStatus, NewJob, PublishedState, RepoState, UpdateRepoJob,
 };
 use crate::schema;
 use crate::schema::*;
-use crate::Pool;
+use crate::{Config, Pool};
 
-use super::job_executor::{JobExecutor, ProcessOneJob, StopJobs};
+use super::job_executor::{start_executor, JobExecutor, ProcessOneJob, StopJobs};
+use crate::deltas::DeltaGenerator;
 
 // We have an async JobQueue object that wraps the sync JobExecutor, because
 // that way we can respond to incomming requests immediately and decide in
@@ -29,14 +31,83 @@ pub struct ExecutorInfo {
     pub addr: Addr<JobExecutor>,
     pub processing_job: bool,
     pub job_queued: bool,
+    pub restart_count: u32,
+    pub last_restart: Option<Instant>,
 }
 
 pub struct JobQueue {
     pub executors: HashMap<Option<String>, RefCell<ExecutorInfo>>,
     pub running: bool,
+    pub config: Arc<Config>,
+    pub delta_generator: Addr<DeltaGenerator>,
+    pub pool: Pool,
 }
 
+const MAX_RESTART_COUNT: u32 = 3;
+const RESTART_WINDOW: Duration = Duration::from_secs(3600); // 1 hour
+
 impl JobQueue {
+    fn can_restart_executor(&self, info: &ExecutorInfo) -> bool {
+        let now = Instant::now();
+
+        if let Some(last_restart) = info.last_restart {
+            if now.duration_since(last_restart) > RESTART_WINDOW {
+                return true;
+            }
+        }
+
+        info.restart_count < MAX_RESTART_COUNT
+    }
+
+    fn restart_executor(&mut self, repo: &Option<String>) -> bool {
+        let now = Instant::now();
+
+        let should_restart = {
+            let info = match self.executors.get(repo) {
+                Some(executor_info) => executor_info.borrow(),
+                None => return false,
+            };
+
+            self.can_restart_executor(&info)
+        };
+
+        if !should_restart {
+            error!("Cannot restart executor for repo {repo:?}: restart limit exceeded");
+            return false;
+        }
+
+        let new_executor_info =
+            start_executor(repo, &self.config, &self.delta_generator, &self.pool);
+
+        {
+            let mut new_info = new_executor_info.borrow_mut();
+            if let Some(old_executor_info) = self.executors.get(repo) {
+                let old_info = old_executor_info.borrow();
+                if let Some(last_restart) = old_info.last_restart {
+                    if now.duration_since(last_restart) <= RESTART_WINDOW {
+                        new_info.restart_count = old_info.restart_count + 1;
+                    } else {
+                        new_info.restart_count = 1;
+                    }
+                } else {
+                    new_info.restart_count = 1;
+                }
+            } else {
+                new_info.restart_count = 1;
+            }
+            new_info.last_restart = Some(now);
+        }
+
+        self.executors.insert(repo.clone(), new_executor_info);
+
+        warn!(
+            "Restarted dead executor for repo {repo:?} (restart #{}/{MAX_RESTART_COUNT} in window)",
+            self.executors[repo].borrow().restart_count
+        );
+
+        true
+    }
+
     fn kick(&mut self, repo: &Option<String>, ctx: &mut Context<Self>) {
         let mut info = match self.executors.get(repo) {
             None => {
@@ -59,31 +130,44 @@ impl JobQueue {
             ctx.spawn(info.addr.send(ProcessOneJob()).into_actor(self).then(
                 |result, queue, ctx| {
                     let job_queued = {
-                        let mut info = queue.executors.get(&repo).unwrap().borrow_mut();
-                        info.processing_job = false;
-                        info.job_queued
+                        match queue.executors.get(&repo) {
+                            Some(executor_info) => {
+                                let mut info = executor_info.borrow_mut();
+                                info.processing_job = false;
+                                info.job_queued
+                            }
+                            None => {
+                                error!("Executor for repo {repo:?} not found during callback");
+                                false
+                            }
+                        }
                     };
 
                     if queue.running {
                         let processed_job = match result {
                             Ok(Ok(true)) => true,
                             Ok(Ok(false)) => false,
+                            Err(_) => {
+                                error!("Executor for repo {repo:?} mailbox closed - attempting restart");
+
+                                if queue.restart_executor(&repo) {
+                                    info!("Successfully restarted executor for repo {repo:?}");
+                                    queue.kick(&repo, ctx);
+                                } else {
+                                    error!("Failed to restart executor for repo {repo:?} - giving up");
+                                }
+                                false
+                            }
                             res => {
-                                error!("Unexpected ProcessOneJob result {:?}", res);
+                                error!("Unexpected ProcessOneJob result {res:?}");
                                 false
                             }
                         };
 
-                        // If we ran a job, or a job was queued, kick again
                         if job_queued || processed_job {
                             queue.kick(&repo, ctx);
                         } else {
-                            // We send a ProcessJobs message each time we added something to the
-                            // db, but case something external modifes the db we have a 10 sec
-                            // polling loop here.  Ideally this should be using NOTIFY/LISTEN
-                            // postgre, but diesel/pq-sys does not currently support it.
-
-                            ctx.run_later(time::Duration::new(10, 0), move |queue, ctx| {
+                            ctx.run_later(Duration::from_secs(10), move |queue, ctx| {
                                 queue.kick(&repo, ctx);
                             });
                         }
@@ -99,7 +183,6 @@ impl Actor for JobQueue {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
-        // Run any jobs in db
         let repos = self.executors.keys().cloned().collect::<Vec<_>>();
         for repo in repos {
             self.kick(&repo, ctx);
@@ -153,7 +236,13 @@ impl Handler<StopJobQueue> for JobQueue {
 }
 
 pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
-    let mut conn = pool.get().unwrap();
+    let mut conn = pool.get().map_err(|e| {
+        error!("Failed to get database connection during cleanup: {e}");
+        diesel::result::Error::DatabaseError(
+            diesel::result::DatabaseErrorKind::UnableToSendCommand,
+            Box::new(format!("Connection pool error: {e}")),
+        )
+    })?;
     {
         use schema::builds::dsl::*;
         let (verifying, _) = RepoState::Committing.to_db();
@@ -222,13 +311,7 @@ pub fn queue_update_job(
     repo: &str,
     starting_job_id: Option<i32>,
 ) -> Result<(bool, Job), DieselError> {
-    /* We wrap everything in a serializable transaction, because if something else
-     * starts the job while we're adding dependencies to it the dependencies will be
-     * ignored.
-     */
-
-    let transaction_result =
-        conn
+    let transaction_result = conn
         .build_transaction()
         .serializable()
         .deferrable()
@@ -236,52 +319,45 @@ pub fn queue_update_job(
             let mut old_update_started_job = None;
             let mut old_update_new_job = None;
 
-            /* First look for an existing active (i.e. unstarted or running) update job matching the repo */
-            let existing_update_jobs =
-                jobs::table
+            let existing_update_jobs = jobs::table
                 .order(jobs::id.desc())
                 .filter(jobs::kind.eq(JobKind::UpdateRepo.to_db()))
                 .filter(jobs::status.le(JobStatus::Started as i16))
                 .get_results::<Job>(conn)?;
 
             for existing_update_job in existing_update_jobs {
-                if let Ok(data) = serde_json::from_str::<UpdateRepoJob>(&existing_update_job.contents) {
+                if let Ok(data) =
+                    serde_json::from_str::<UpdateRepoJob>(&existing_update_job.contents)
+                {
                     if data.repo == repo {
                         if existing_update_job.status == JobStatus::New as i16 {
                             old_update_new_job = Some(existing_update_job);
                         } else {
                             old_update_started_job = Some(existing_update_job);
                         }
-                        break
+                        break;
                     }
                 }
             }
 
-            /* We found the last queued active update job for this repo.
-             * If it was not started we piggy-back on it, if it was started
-             * we make the new job depend on it to ensure we only run one
-             * update job per repo in parallel */
-
             let (is_new, update_job) = match old_update_new_job {
                 Some(job) => (false, job),
                 None => {
-                    /* Create a new job */
-                    let new_job =
-                        diesel::insert_into(schema::jobs::table)
+                    let new_job = diesel::insert_into(schema::jobs::table)
                         .values(NewJob {
                             kind: JobKind::UpdateRepo.to_db(),
                             repo: Some(repo.to_string()),
-                            start_after: Some(time::SystemTime::now() + time::Duration::new(delay_secs, 0)),
+                            start_after: Some(SystemTime::now() + Duration::from_secs(delay_secs)),
                             contents: json!(UpdateRepoJob {
                                 repo: repo.to_string()
-                            }).to_string(),
+                            })
+                            .to_string(),
                         })
                         .get_result::<Job>(conn)?;
                     (true, new_job)
-                },
+                }
             };
 
-            /* Make new job depend previous started update for this repo (if any) */
             if let Some(previous_started_job) = old_update_started_job {
                 diesel::insert_into(schema::job_dependencies::table)
                     .values(JobDependency {
@@ -303,7 +379,6 @@ pub fn queue_update_job(
             Ok((is_new, update_job))
         });
 
-    /* Retry on serialization failure */
     match transaction_result {
         Err(DieselError::DatabaseError(SerializationFailure, _)) => {
             queue_update_job(delay_secs, conn, repo, starting_job_id)

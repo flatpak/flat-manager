@@ -170,7 +170,7 @@ impl Handler<ProcessOneJob> for JobExecutor {
     }
 }
 
-fn start_executor(
+pub fn start_executor(
     repo: &Option<String>,
     config: &Arc<Config>,
     delta_generator: &Addr<DeltaGenerator>,
@@ -189,6 +189,8 @@ fn start_executor(
         }),
         processing_job: false,
         job_queued: false,
+        restart_count: 0,
+        last_restart: None,
     })
 }
 
@@ -212,6 +214,9 @@ pub fn start_job_executor(
     JobQueue {
         executors,
         running: true,
+        config: config.clone(),
+        delta_generator: delta_generator.clone(),
+        pool: pool.clone(),
     }
     .start()
 }
