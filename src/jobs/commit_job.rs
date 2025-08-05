@@ -159,7 +159,22 @@ impl CommitJobInstance {
         fs::create_dir_all(&appstream_dir)?;
         let appstream_refs = ostree::list_refs(&build_repo_path, "appstream");
         for appstream_ref in appstream_refs {
-            let arch = appstream_ref.split('/').nth(1).unwrap();
+            job_log_and_info!(
+                self.job_id,
+                conn,
+                &format!("Processing appstream ref: {}", appstream_ref)
+            );
+            let arch = match appstream_ref.split('/').nth(1) {
+                Some(a) => a,
+                None => {
+                    job_log_and_info!(
+                        self.job_id,
+                        conn,
+                        &format!("Skipping malformed appstream ref: {}", appstream_ref)
+                    );
+                    continue;
+                }
+            };
             ostree::checkout_ref(&build_repo_path, &appstream_ref, &appstream_dir.join(arch))?;
         }
 

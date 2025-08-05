@@ -238,7 +238,22 @@ impl UpdateRepoJobInstance {
         let appstream_dir = repo_path.join("appstream");
         let appstream_refs = ostree::list_refs(&repo_path, "appstream");
         for appstream_ref in appstream_refs {
-            let arch = appstream_ref.split('/').nth(1).unwrap();
+            job_log_and_info!(
+                self.job_id,
+                conn,
+                &format!("Processing appstream ref: {}", appstream_ref)
+            );
+            let arch = match appstream_ref.split('/').nth(1) {
+                Some(a) => a,
+                None => {
+                    job_log_and_info!(
+                        self.job_id,
+                        conn,
+                        &format!("Skipping malformed appstream ref: {}", appstream_ref)
+                    );
+                    continue;
+                }
+            };
             ostree::checkout_ref(&repo_path, &appstream_ref, &appstream_dir.join(arch))?;
         }
         Ok(())
