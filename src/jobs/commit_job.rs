@@ -122,8 +122,15 @@ impl CommitJobInstance {
             let unwanted_exts = [".Debug", ".Locale", ".Sources", ".Docs"];
             let ref_id_parts: Vec<&str> = build_ref.ref_name.split('/').collect();
 
+            job_log_and_info!(
+                self.job_id,
+                conn,
+                &format!("Processing ref parts: {:?}", ref_id_parts),
+            );
+
             if build_ref.ref_name.starts_with("app/")
                 || (build_ref.ref_name.starts_with("runtime/")
+                    && ref_id_parts.len() > 1
                     && !unwanted_exts
                         .iter()
                         .any(|&ext| ref_id_parts[1].ends_with(ext)))
