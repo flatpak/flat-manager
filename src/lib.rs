@@ -24,6 +24,7 @@ use futures3::compat::Compat;
 use futures3::FutureExt;
 use jobs::{JobQueue, StopJobQueue};
 use log::info;
+use std::env; // Added this import
 use std::path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,11 +35,35 @@ pub use errors::DeltaGenerationError;
 
 type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
 
+// --- MODIFIED FUNCTION ---
 pub fn load_config(path: &path::Path) -> Arc<Config> {
-    let config_data =
-        app::load_config(path).unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
+    // Check if REPO_CONFIG env variable is set
+    let env_path_str = env::var("REPO_CONFIG").unwrap_or_default();
+    
+    // If env var exists, use it. Otherwise use the passed path argument.
+    let final_path = if !env_path_str.is_empty() {
+        path::Path::new(&env_path_str)
+    } else {
+        path
+    };
+
+    // Print debugging info to stdout
+    println!(">>> DEBUG: Attempting to load config from: {:?}", final_path);
+    if let Ok(abs_path) = std::fs::canonicalize(final_path) {
+         println!(">>> DEBUG: Resolved absolute path: {:?}", abs_path);
+    } else {
+         println!(">>> DEBUG: Warning - Could not resolve absolute path (File might not exist)");
+    }
+
+    let config_data = app::load_config(final_path).unwrap_or_else(|e| {
+        // Detailed panic message including the error code
+        panic!("Failed to read config file {:?}. Error details: {:?}", final_path, e)
+    });
+    
     Arc::new(config_data)
 }
+// -------------------------
+
 pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 
 fn connect_to_db(config: &Arc<Config>) -> r2d2::Pool<ConnectionManager<PgConnection>> {
