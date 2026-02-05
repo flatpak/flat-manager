@@ -1228,7 +1228,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
- "time 0.1.45",
+ "time 0.3.41",
  "tokio 1.46.1",
  "tokio-compat",
  "tokio-process",
