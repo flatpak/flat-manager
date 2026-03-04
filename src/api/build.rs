@@ -121,15 +121,6 @@ pub async fn create_build(
         None
     };
 
-    let token_branches = req.get_claims().map(|claims| {
-        claims
-            .branches
-            .iter()
-            .filter(|s| !s.is_empty())
-            .cloned()
-            .collect()
-    });
-
     let build = db
         .new_build(NewBuild {
             repo: args.repo.clone(),
@@ -138,7 +129,6 @@ pub async fn create_build(
             build_log_url: args.build_log_url.clone(),
             token_name: Some(token_name),
             token_type,
-            token_branches,
         })
         .await?;
     let build_repo_path = config.build_repo_base.join(build.id.to_string());

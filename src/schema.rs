@@ -27,7 +27,6 @@ diesel::table! {
         build_log_url -> Nullable<Text>,
         token_name -> Nullable<Text>,
         token_type -> Nullable<Text>,
-        token_branches -> Nullable<Array<Text>>,
     }
 }
 

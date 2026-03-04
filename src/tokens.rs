@@ -423,3 +423,38 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jwt::{encode, EncodingKey, Header};
+    use serde_json::json;
+
+    fn unix_now() -> i64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64
+    }
+
+    #[test]
+    fn validate_claims_accepts_tokens_with_branches_claim() {
+        let secret = b"compat-secret".to_vec();
+        let token = encode(
+            &Header::default(),
+            &json!({
+                "sub": "build",
+                "exp": unix_now() + 60,
+                "scope": ["build"],
+                "branches": ["stable"],
+            }),
+            &EncodingKey::from_secret(secret.as_ref()),
+        )
+        .unwrap();
+
+        let claims = validate_claims(secret, token).unwrap();
+
+        assert_eq!(claims.sub, "build");
+        assert!(claims.scope.contains(&ClaimsScope::Build));
+    }
+}
