@@ -86,14 +86,14 @@ impl Db {
                 RepoState::Uploading => (),
                 RepoState::Committing => {
                     return Err(ApiError::WrongRepoState(
-                        "Build is currently being commited".to_string(),
+                        "Build is currently being committed".to_string(),
                         "uploading".to_string(),
                         "committing".to_string(),
                     ))
                 }
                 RepoState::Ready | RepoState::Validating => {
                     return Err(ApiError::WrongRepoState(
-                        "Build is already commited".to_string(),
+                        "Build is already committed".to_string(),
                         "uploading".to_string(),
                         "ready".to_string(),
                     ))
@@ -181,14 +181,14 @@ impl Db {
             match current_repo_state {
                 RepoState::Uploading => {
                     return Err(ApiError::WrongRepoState(
-                        "Build is not commited".to_string(),
+                        "Build is not committed".to_string(),
                         "ready".to_string(),
                         "uploading".to_string(),
                     ))
                 }
                 RepoState::Committing => {
                     return Err(ApiError::WrongRepoState(
-                        "Build is not commited".to_string(),
+                        "Build is not committed".to_string(),
                         "ready".to_string(),
                         "committing".to_string(),
                     ))

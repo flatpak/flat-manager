@@ -154,7 +154,7 @@ pub fn do_command(mut cmd: Command) -> JobResult<()> {
 
     if !output.status.success() {
         return Err(JobError::new(&format!(
-            "Command {:?} exited unsuccesfully: {}",
+            "Command {:?} exited unsuccessfully: {}",
             &cmd,
             String::from_utf8_lossy(&output.stderr)
         )));

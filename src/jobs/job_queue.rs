@@ -256,12 +256,12 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
     })?;
     {
         use schema::builds::dsl::*;
-        let (verifying, _) = RepoState::Committing.to_db();
+        let (committing, _) = RepoState::Committing.to_db();
         let (purging, _) = RepoState::Purging.to_db();
         let (failed, failed_reason) =
             RepoState::Failed("Server was restarted during job".to_string()).to_db();
         let n_updated = diesel::update(builds)
-            .filter(repo_state.eq(verifying).or(repo_state.eq(purging)))
+            .filter(repo_state.eq(committing).or(repo_state.eq(purging)))
             .set((repo_state.eq(failed), repo_state_reason.eq(failed_reason)))
             .execute(&mut conn)?;
         if n_updated != 0 {

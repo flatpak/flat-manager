@@ -212,7 +212,7 @@ impl JobInstance for CommitJobInstance {
                 RepoState::from_db(current_build.repo_state, &current_build.repo_state_reason);
 
             if !current_repo_state.same_state_as(&RepoState::Committing) {
-                // Something weird was happening, we expected this build to be in the verifying state
+                // Something weird was happening, we expected this build to be in the committing state
                 return Err(JobError::new(&format!(
                     "Expected repo to be in {:?} state upon commit job completion, but it was in {:?}",
                     RepoState::Committing,
