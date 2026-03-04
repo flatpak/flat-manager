@@ -1,11 +1,9 @@
-use actix::prelude::*;
 use actix_files::NamedFile;
 use actix_web::error::{ErrorBadRequest, ErrorNotFound};
 use actix_web::http::header::{HeaderValue, CACHE_CONTROL};
 use actix_web::web::Data;
 use actix_web::Responder;
-use actix_web::{self, HttpRequest, HttpResponse};
-use futures3::TryFutureExt;
+use actix_web::{self, HttpMessage, HttpRequest, HttpResponse};
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::path::Path;
@@ -54,16 +52,7 @@ pub struct BuildRepoParams {
     tail: String,
 }
 
-pub fn handle_build_repo(
-    config: Data<Config>,
-    params: actix_web::web::Path<BuildRepoParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = actix_web::Error> {
-    Box::pin(handle_build_repo_async(config, params, db, req)).compat()
-}
-
-async fn handle_build_repo_async(
+pub async fn handle_build_repo(
     config: Data<Config>,
     params: actix_web::web::Path<BuildRepoParams>,
     db: Data<Db>,
@@ -93,7 +82,7 @@ async fn handle_build_repo_async(
         return Err(ErrorNotFound("Ignoring directory"));
     }
 
-    NamedFile::open(path)
+    Ok(NamedFile::open(path)
         .or_else(|_e| {
             let fallback_path = Path::new(&config.build_repo_base)
                 .join(params.id.to_string())
@@ -105,7 +94,7 @@ async fn handle_build_repo_async(
                 NamedFile::open(fallback_path).map_err(|e| e.into())
             }
         })?
-        .respond_to(&req)
+        .respond_to(&req))
 }
 
 fn get_commit_for_file(path: &Path) -> Option<ostree::OstreeCommit> {
@@ -186,7 +175,7 @@ pub fn handle_repo(
         verify_repo_token(&req, commit, repoconfig, &path)?;
     }
 
-    NamedFile::open(path)
+    Ok(NamedFile::open(path)
         .or_else(|e| {
             // Was this a delta, if so check the deltas queued for deletion
             if relpath.starts_with("deltas") {
@@ -200,7 +189,7 @@ pub fn handle_repo(
                 Err(e).map_err(|e| e.into())
             }
         })?
-        .respond_to(&req)
+        .respond_to(&req))
 }
 
 struct RepoHeadersData {

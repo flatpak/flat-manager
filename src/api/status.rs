@@ -1,8 +1,6 @@
 use actix_web::web::{Data, Path};
 use actix_web::{HttpResponse, Result};
 
-use futures::future::Future;
-use futures3::TryFutureExt;
 use std::env;
 
 use crate::db::*;
@@ -36,14 +34,7 @@ fn job_status_data(job: Job) -> JobStatusData {
     }
 }
 
-pub fn job_status(
-    params: Path<JobPathParams>,
-    db: Data<Db>,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(job_status_async(params, db)).compat()
-}
-
-async fn job_status_async(
+pub async fn job_status(
     params: Path<JobPathParams>,
     db: Data<Db>,
 ) -> Result<HttpResponse, ApiError> {
@@ -59,11 +50,7 @@ struct Status {
     version: String,
 }
 
-pub fn status(db: Data<Db>) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(status_async(db)).compat()
-}
-
-async fn status_async(db: Data<Db>) -> Result<HttpResponse, ApiError> {
+pub async fn status(db: Data<Db>) -> Result<HttpResponse, ApiError> {
     let jobs = db.list_active_jobs().await?;
 
     let s = Status {

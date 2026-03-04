@@ -15,19 +15,17 @@ mod schema;
 mod tokens;
 
 use actix::prelude::*;
-use actix_web::dev::Server;
+use actix_web::dev::{Server, ServerHandle};
 use config::Config;
 use deltas::{DeltaGenerator, StopDeltaGenerator};
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, ManageConnection};
-use futures3::compat::Compat;
-use futures3::FutureExt;
 use jobs::{JobQueue, StopJobQueue};
 use log::info;
 use std::path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio_signal::unix::Signal;
+use tokio::signal::unix::{signal, SignalKind};
 
 pub use errors::DeltaGenerationError;
 
@@ -67,70 +65,44 @@ fn start_job_queue(
     jobs::start_job_executor(config.clone(), delta_generator.clone(), pool.clone())
 }
 
-fn handle_signal(
-    sig: i32,
-    server: &Server,
-    job_queue: Addr<JobQueue>,
-    delta_generator: Addr<DeltaGenerator>,
-) -> impl Future<Item = (), Error = std::io::Error> {
-    let graceful = match sig {
-        tokio_signal::unix::SIGINT => {
-            info!("SIGINT received, exiting");
-            false
-        }
-        tokio_signal::unix::SIGTERM => {
-            info!("SIGTERM received, exiting");
-            true
-        }
-        tokio_signal::unix::SIGQUIT => {
-            info!("SIGQUIT received, exiting");
-            false
-        }
-        _ => false,
-    };
-
-    info!("Stopping http server");
-    server
-        .stop(graceful)
-        .then(move |_result| {
-            info!("Stopping delta generator");
-            delta_generator.send(StopDeltaGenerator())
-        })
-        .then(move |_result| {
-            info!("Stopping job processing");
-            job_queue.send(StopJobQueue())
-        })
-        .then(|_| {
-            info!("Exiting...");
-            let future = tokio::time::sleep(Duration::from_millis(300)).map(|_| {
-                let result: Result<(), ()> = Ok(());
-                result
-            });
-            Compat::new(Box::pin(future))
-        })
-        .then(|_| {
-            System::current().stop();
-            Ok(())
-        })
-}
-
 fn handle_signals(
-    server: Server,
+    server: ServerHandle,
     job_queue: Addr<JobQueue>,
     delta_generator: Addr<DeltaGenerator>,
 ) {
-    let sigint = Signal::new(tokio_signal::unix::SIGINT).flatten_stream();
-    let sigterm = Signal::new(tokio_signal::unix::SIGTERM).flatten_stream();
-    let sigquit = Signal::new(tokio_signal::unix::SIGQUIT).flatten_stream();
-    let handle_signals = sigint
-        .select(sigterm)
-        .select(sigquit)
-        .for_each(move |sig| {
-            handle_signal(sig, &server, job_queue.clone(), delta_generator.clone())
-        })
-        .map_err(|_| ());
+    actix::spawn(async move {
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigquit = signal(SignalKind::quit()).unwrap();
 
-    actix::spawn(handle_signals);
+        let graceful = tokio::select! {
+            _ = sigint.recv() => {
+                info!("SIGINT received, exiting");
+                false
+            }
+            _ = sigterm.recv() => {
+                info!("SIGTERM received, exiting");
+                true
+            }
+            _ = sigquit.recv() => {
+                info!("SIGQUIT received, exiting");
+                false
+            }
+        };
+
+        info!("Stopping http server");
+        server.stop(graceful).await;
+
+        info!("Stopping delta generator");
+        let _ = delta_generator.send(StopDeltaGenerator()).await;
+
+        info!("Stopping job processing");
+        let _ = job_queue.send(StopJobQueue()).await;
+
+        info!("Exiting...");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        System::current().stop();
+    });
 }
 
 pub fn start(config: &Arc<Config>) -> Server {
@@ -142,7 +114,7 @@ pub fn start(config: &Arc<Config>) -> Server {
 
     let app = app::create_app(pool, config, job_queue.clone(), delta_generator.clone());
 
-    handle_signals(app.clone(), job_queue, delta_generator);
+    handle_signals(app.handle(), job_queue, delta_generator);
 
     app
 }

@@ -4,6 +4,8 @@ use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::DatabaseErrorKind::SerializationFailure;
 use diesel::result::Error as DieselError;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
 use log::{error, info, warn};
 use serde_json::json;
 use std::cell::RefCell;
@@ -172,7 +174,7 @@ impl JobQueue {
                             });
                         }
                     }
-                    actix::fut::ok(())
+                    actix::fut::ready(())
                 },
             ));
         }
@@ -212,7 +214,7 @@ impl Message for StopJobQueue {
 }
 
 impl Handler<StopJobQueue> for JobQueue {
-    type Result = ActorResponse<JobQueue, (), ()>;
+    type Result = ResponseActFuture<Self, Result<(), ()>>;
 
     fn handle(&mut self, _msg: StopJobQueue, _ctx: &mut Self::Context) -> Self::Result {
         // Stop assigning jobs to executors
@@ -224,13 +226,22 @@ impl Handler<StopJobQueue> for JobQueue {
         let stop_jobs = self
             .executors
             .values()
-            .map(|info| info.borrow().addr.send(StopJobs()).map_err(|_| ()));
+            .map(|info| info.borrow().addr.send(StopJobs()))
+            .collect::<FuturesUnordered<_>>();
 
         // Wait for all the above futures to resolve
-        ActorResponse::r#async(
-            futures::stream::futures_unordered(stop_jobs)
-                .into_actor(self)
-                .finish(),
+        Box::pin(
+            async move {
+                stop_jobs
+                    .for_each(|result| async move {
+                        if result.is_err() {
+                            error!("Failed to stop one job executor");
+                        }
+                    })
+                    .await;
+                Ok(())
+            }
+            .into_actor(self),
         )
     }
 }

@@ -1,5 +1,4 @@
 use crate::ostree::OstreeError;
-use actix_web::error::BlockingError;
 use actix_web::http::StatusCode;
 use actix_web::{error::ResponseError, HttpResponse};
 use diesel::result::Error as DieselError;
@@ -66,14 +65,9 @@ impl From<OstreeError> for ApiError {
     }
 }
 
-impl From<BlockingError<ApiError>> for ApiError {
-    fn from(e: BlockingError<ApiError>) -> Self {
-        match e {
-            BlockingError::Error(e) => e,
-            BlockingError::Canceled => {
-                ApiError::InternalServerError("Blocking operation cancelled".to_string())
-            }
-        }
+impl From<actix_web::error::BlockingError> for ApiError {
+    fn from(e: actix_web::error::BlockingError) -> Self {
+        ApiError::InternalServerError(e.to_string())
     }
 }
 
@@ -212,9 +206,5 @@ impl ResponseError for ApiError {
             );
         }
         HttpResponse::build(self.status_code()).json(self.to_json())
-    }
-
-    fn render_response(&self) -> HttpResponse {
-        self.error_response()
     }
 }

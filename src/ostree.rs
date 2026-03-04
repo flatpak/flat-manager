@@ -1,22 +1,17 @@
 use base64::{engine::general_purpose, Engine as _};
 use byteorder::{ByteOrder, LittleEndian, NativeEndian};
-use futures::future;
-use futures::future::Either;
-use futures::Future;
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::num::NonZeroUsize;
-use std::os::unix::process::CommandExt as UnixCommandExt;
 use std::path;
 use std::path::PathBuf;
-use std::process::Command;
 use std::str;
-use std::thread::sleep;
 use std::time::Duration;
 use std::{collections::HashMap, path::Path};
 use std::{fs, io};
 use thiserror::Error;
-use tokio_process::CommandExt;
+use tokio::process::Command;
+use tokio::time::sleep;
 use walkdir::WalkDir;
 
 #[derive(Error, Debug, Clone, Eq, PartialEq)]
@@ -897,13 +892,14 @@ fn result_from_output(output: std::process::Output, command: &str) -> Result<(),
     }
 }
 
-pub fn pull_commit_async(
+pub async fn pull_commit_async(
     n_retries: i32,
     repo_path: PathBuf,
     url: String,
     commit: String,
-) -> Box<dyn Future<Item = (), Error = OstreeError>> {
-    Box::new(future::loop_fn(n_retries, move |count| {
+) -> Result<(), OstreeError> {
+    let mut retries_left = n_retries;
+    loop {
         let mut cmd = Command::new("ostree");
         unsafe {
             cmd.pre_exec(|| {
@@ -921,58 +917,49 @@ pub fn pull_commit_async(
             .arg(&commit);
 
         log::info!("Pulling commit {}", commit);
-        let commit_clone = commit.clone();
-        cmd.output_async()
-            .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))
-            .and_then(|output| result_from_output(output, "ostree pull"))
-            .then(move |r| match r {
-                Ok(res) => Ok(future::Loop::Break(res)),
-                Err(e) => {
-                    if count > 1 {
-                        log::warn!(
-                            "Pull error, retrying commit {}: {}",
-                            commit_clone,
-                            e
-                        );
-                        let sleep_duration = Duration::from_secs(5);
-                        sleep(sleep_duration);
-                        Ok(future::Loop::Continue(count - 1))
-                    } else {
-                        Err(e)
-                    }
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))?;
+
+        match result_from_output(output, "ostree pull") {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if retries_left > 1 {
+                    log::warn!("Pull error, retrying commit {}: {}", commit, e);
+                    retries_left -= 1;
+                    sleep(Duration::from_secs(5)).await;
+                } else {
+                    return Err(e);
                 }
-            })
-    }))
+            }
+        }
+    }
 }
 
-pub fn pull_delta_async(
+pub async fn pull_delta_async(
     n_retries: i32,
     repo_path: &Path,
     url: &str,
     delta: &Delta,
-) -> Box<dyn Future<Item = (), Error = OstreeError>> {
+) -> Result<(), OstreeError> {
     let url_clone = url.to_string();
     let repo_path_clone = repo_path.to_path_buf();
-    let to = delta.to.clone();
-    Box::new(
-        if let Some(ref from) = delta.from {
-            Either::A(pull_commit_async(
-                n_retries,
-                repo_path.to_path_buf(),
-                url_clone.clone(),
-                from.clone(),
-            ))
-        } else {
-            Either::B(future::result(Ok(())))
-        }
-        .and_then(move |_| pull_commit_async(n_retries, repo_path_clone, url_clone, to)),
-    )
+
+    if let Some(ref from) = delta.from {
+        pull_commit_async(
+            n_retries,
+            repo_path.to_path_buf(),
+            url_clone.clone(),
+            from.clone(),
+        )
+        .await?;
+    }
+
+    pull_commit_async(n_retries, repo_path_clone, url_clone, delta.to.clone()).await
 }
 
-pub fn generate_delta_async(
-    repo_path: &Path,
-    delta: &Delta,
-) -> Box<dyn Future<Item = (), Error = OstreeError>> {
+pub async fn generate_delta_async(repo_path: &Path, delta: &Delta) -> Result<(), OstreeError> {
     let mut cmd = Command::new("timeout");
     cmd.arg("3600").arg("flatpak");
 
@@ -996,16 +983,13 @@ pub fn generate_delta_async(
     cmd.arg(repo_path);
 
     log::info!("Generating delta {}", delta);
-    Box::new(
-        cmd.output_async()
-            .map_err(|e| {
-                OstreeError::ExecFailed("flatpak build-update-repo".to_string(), e.to_string())
-            })
-            .and_then(|output| result_from_output(output, "flatpak build-update-repo")),
-    )
+    let output = cmd.output().await.map_err(|e| {
+        OstreeError::ExecFailed("flatpak build-update-repo".to_string(), e.to_string())
+    })?;
+    result_from_output(output, "flatpak build-update-repo")
 }
 
-pub fn prune_async(repo_path: &Path) -> Box<dyn Future<Item = (), Error = OstreeError>> {
+pub async fn prune_async(repo_path: &Path) -> Result<(), OstreeError> {
     let mut cmd = Command::new("ostree");
 
     unsafe {
@@ -1021,11 +1005,11 @@ pub fn prune_async(repo_path: &Path) -> Box<dyn Future<Item = (), Error = Ostree
         .arg(format!("--repo={}", repo_path.to_string_lossy()))
         .arg("--keep-younger-than=3 days ago");
 
-    Box::new(
-        cmd.output_async()
-            .map_err(|e| OstreeError::ExecFailed("ostree prune".to_string(), e.to_string()))
-            .and_then(|output| result_from_output(output, "ostree prune")),
-    )
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| OstreeError::ExecFailed("ostree prune".to_string(), e.to_string()))?;
+    result_from_output(output, "ostree prune")
 }
 
 pub fn init_ostree_repo(

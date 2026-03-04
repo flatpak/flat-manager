@@ -5,8 +5,6 @@ use crate::ostree;
 use actix::dev::ToEnvelope;
 use actix::prelude::*;
 use actix::Actor;
-use futures::future;
-use futures::Future;
 use log::{error, info, warn};
 use std::cell::Cell;
 use std::collections::VecDeque;
@@ -105,9 +103,7 @@ impl DeltaGenerator {
     {
         info!(
             "Assigned delta {} to worker {} #{}",
-            queued_request.request,
-            worker.name,
-            worker.id
+            queued_request.request, worker.name, worker.id
         );
         worker.claim();
         ctx.spawn(
@@ -132,7 +128,7 @@ impl DeltaGenerator {
 
                     worker.unclaim();
                     generator.run_queue(ctx);
-                    actix::fut::ok(())
+                    actix::fut::ready(())
                 })
         );
     }
@@ -170,32 +166,31 @@ impl DeltaGenerator {
 }
 
 impl Handler<DeltaRequest> for DeltaGenerator {
-    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
+    type Result = ResponseActFuture<Self, Result<(), DeltaGenerationError>>;
 
     fn handle(&mut self, msg: DeltaRequest, ctx: &mut Self::Context) -> Self::Result {
-        Box::new(self.handle_request(msg, ctx).into_actor(self))
+        Box::pin(self.handle_request(msg, ctx).into_actor(self))
     }
 }
 
 impl Handler<DeltaRequestSync> for DeltaGenerator {
-    type Result = ResponseActFuture<Self, (), ()>;
+    type Result = ResponseActFuture<Self, Result<(), ()>>;
 
     fn handle(&mut self, msg: DeltaRequestSync, ctx: &mut Self::Context) -> Self::Result {
         let request = msg.delta_request.clone();
         let delta = request.delta.clone();
         let tx = msg.tx;
         let r = self.handle_request(request, ctx);
-        ctx.spawn(Box::new(
-            r.then(move |r| {
-                if let Err(_e) = tx.send((delta, r.clone())) {
+        ctx.spawn(Box::pin(
+            async move {
+                let result = r.await;
+                if tx.send((delta, result)).is_err() {
                     error!("Failed to reply to sync delta request");
                 }
-                r
-            })
-            .map_err(|_e| ())
+            }
             .into_actor(self),
         ));
-        Box::new(actix::fut::ok(()))
+        Box::pin(actix::fut::ready(Ok(())))
     }
 }
 
@@ -224,16 +219,16 @@ impl Actor for LocalWorker {
 }
 
 impl Handler<DeltaRequest> for LocalWorker {
-    type Result = ResponseActFuture<Self, (), DeltaGenerationError>;
+    type Result = ResponseActFuture<Self, Result<(), DeltaGenerationError>>;
 
     fn handle(&mut self, msg: DeltaRequest, _ctx: &mut Self::Context) -> Self::Result {
         let repoconfig = match self.config.get_repoconfig(&msg.repo) {
             Err(_e) => {
-                return Box::new(
-                    future::err(DeltaGenerationError::new(&format!(
+                return Box::pin(
+                    actix::fut::ready(Err(DeltaGenerationError::new(&format!(
                         "No repo named: {}",
                         &msg.repo
-                    )))
+                    ))))
                     .into_actor(self),
                 )
             }
@@ -243,10 +238,13 @@ impl Handler<DeltaRequest> for LocalWorker {
         let repo_path = repoconfig.get_abs_repo_path();
         let delta = msg.delta;
 
-        Box::new(
-            ostree::generate_delta_async(&repo_path, &delta)
-                .from_err()
-                .into_actor(self),
+        Box::pin(
+            async move {
+                ostree::generate_delta_async(&repo_path, &delta)
+                    .await
+                    .map_err(DeltaGenerationError::from)
+            }
+            .into_actor(self),
         )
     }
 }

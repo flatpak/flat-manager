@@ -1,7 +1,5 @@
-use actix::prelude::*;
 use actix_web::web::{Data, Json};
 use actix_web::{HttpRequest, HttpResponse, Result};
-use futures3::TryFutureExt;
 use serde::Deserialize;
 
 use crate::db::Db;
@@ -13,15 +11,7 @@ pub struct TokenArgs {
     token_ids: Vec<String>,
 }
 
-pub fn get_tokens(
-    args: Json<TokenArgs>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_tokens_async(args, db, req)).compat()
-}
-
-async fn get_tokens_async(
+pub async fn get_tokens(
     args: Json<TokenArgs>,
     db: Data<Db>,
     req: HttpRequest,
@@ -33,15 +23,7 @@ async fn get_tokens_async(
     Ok(HttpResponse::Ok().json(tokens))
 }
 
-pub fn revoke_tokens(
-    args: Json<TokenArgs>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(revoke_tokens_async(args, db, req)).compat()
-}
-
-async fn revoke_tokens_async(
+pub async fn revoke_tokens(
     args: Json<TokenArgs>,
     db: Data<Db>,
     req: HttpRequest,
