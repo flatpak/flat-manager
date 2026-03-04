@@ -6,19 +6,7 @@ use std::io::prelude::*;
 use std::process;
 
 use argparse::{ArgumentParser, List, Store, StoreOption, StoreTrue};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    scope: Vec<String>,
-    name: String,
-    prefixes: Vec<String>,
-    repos: Vec<String>,
-    exp: i64,
-    token_type: String,
-    branches: Vec<String>,
-}
+use flatmanager::tokens::{Claims, ClaimsScope};
 
 fn read_secret(filename: String) -> io::Result<String> {
     let mut contents = String::new();
@@ -39,7 +27,7 @@ fn main() {
     let mut secret: Option<String> = None;
     let mut secret_file: Option<String> = None;
     let mut duration: i64 = Duration::days(365).num_seconds();
-    let mut scope: Vec<String> = vec![];
+    let mut scope_values: Vec<String> = vec![];
     let mut prefixes: Vec<String> = vec![];
     let mut repos: Vec<String> = vec![];
     let mut token_type: String = "app".to_string();
@@ -53,7 +41,7 @@ fn main() {
             .add_option(&["--name"], Store, "Name for the token");
         ap.refer(&mut sub)
             .add_option(&["--sub"], Store, "Subject (default: build)");
-        ap.refer(&mut scope).add_option(
+        ap.refer(&mut scope_values).add_option(
             &["--scope"],
             List,
             "Add scope (default if none: [build, upload, download, publish, jobs]",
@@ -94,15 +82,25 @@ fn main() {
 
     let secret_contents;
 
-    if scope.is_empty() {
-        scope = vec![
-            "build".to_string(),
-            "upload".to_string(),
-            "download".to_string(),
-            "publish".to_string(),
-            "jobs".to_string(),
-        ];
-    }
+    let scope: Vec<ClaimsScope> = if scope_values.is_empty() {
+        vec![
+            ClaimsScope::Build,
+            ClaimsScope::Upload,
+            ClaimsScope::Download,
+            ClaimsScope::Publish,
+            ClaimsScope::Jobs,
+        ]
+    } else {
+        scope_values
+            .into_iter()
+            .map(|scope_value| {
+                scope_value.parse::<ClaimsScope>().unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    process::exit(1);
+                })
+            })
+            .collect()
+    };
 
     if prefixes.is_empty() {
         prefixes = vec!["".to_string()];
@@ -138,14 +136,16 @@ fn main() {
     };
 
     let claims = Claims {
+        name: Some(name),
         sub,
+        exp: Utc::now().timestamp() + duration,
+        jti: None,
         scope,
         prefixes,
+        apps: vec![],
         repos,
-        name: name.clone(),
-        exp: Utc::now().timestamp() + duration,
-        token_type,
         branches,
+        token_type: Some(token_type),
     };
 
     if verbose {

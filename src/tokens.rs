@@ -10,6 +10,7 @@ use std::fmt::Display;
 use std::future::{ready, Future, Ready};
 use std::pin::Pin;
 use std::rc::Rc;
+use std::str::FromStr;
 use std::task::{Context, Poll};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -49,6 +50,21 @@ pub enum ClaimsScope {
 impl Display for ClaimsScope {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", format!("{self:?}").to_ascii_lowercase())
+    }
+}
+
+impl FromStr for ClaimsScope {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let scope: ClaimsScope =
+            serde_json::from_value(serde_json::Value::String(value.to_string()))
+                .map_err(|_| format!("Unknown scope '{value}'"))?;
+        if scope == ClaimsScope::Unknown {
+            Err(format!("Unknown scope '{value}'"))
+        } else {
+            Ok(scope)
+        }
     }
 }
 

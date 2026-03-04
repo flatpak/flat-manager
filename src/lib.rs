@@ -12,7 +12,7 @@ mod logger;
 mod models;
 pub mod ostree;
 mod schema;
-mod tokens;
+pub mod tokens;
 
 use actix::prelude::*;
 use actix_web::dev::{Server, ServerHandle};
