@@ -231,11 +231,11 @@ pub fn load_build_and_config<'a>(
     let build = builds::table
         .filter(builds::id.eq(build_id))
         .get_result::<models::Build>(conn)
-        .map_err(|_e| JobError::new("Can't load build"))?;
+        .map_err(|e| JobError::new(&format!("Can't load build: {e}")))?;
 
     let repoconfig = config
         .get_repoconfig(&build.repo)
-        .map_err(|_e| JobError::new(&format!("Can't find repo {}", &build.repo)))?;
+        .map_err(|e| JobError::new(&format!("Can't find repo {}: {e}", &build.repo)))?;
 
     Ok(LoadedBuild { build, repoconfig })
 }
@@ -245,7 +245,7 @@ pub fn load_build_refs(build_id: i32, conn: &mut PgConnection) -> JobResult<Vec<
     let refs = build_refs::table
         .filter(build_refs::build_id.eq(build_id))
         .get_results::<models::BuildRef>(conn)
-        .map_err(|_e| JobError::new("Can't load build refs"))?;
+        .map_err(|e| JobError::new(&format!("Can't load build refs: {e}")))?;
 
     if refs.is_empty() {
         return Err(JobError::new("No refs in build"));

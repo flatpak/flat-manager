@@ -74,7 +74,7 @@ impl JobInstance for RepublishJobInstance {
         let config = &executor.config;
         let repoconfig = config
             .get_repoconfig(&self.repo)
-            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &self.repo)))?;
+            .map_err(|e| JobError::new(&format!("Can't find repo {}: {e}", &self.repo)))?;
 
         let repo = open_repo(&repoconfig.get_abs_repo_path())
             .map_err(|e| JobError::new(&format!("Failed to open repo {}: {}", &self.repo, e)))?;

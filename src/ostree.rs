@@ -144,8 +144,10 @@ fn as_metadata(metadata_variant: &glib::Variant) -> OstreeResult<HashMap<String,
 }
 
 fn as_byte_array<'a>(variant: &'a glib::Variant, field_name: &str) -> OstreeResult<&'a [u8]> {
-    variant.fixed_array::<u8>().map_err(|_| {
-        OstreeError::InternalError(format!("Commit field '{field_name}' has unexpected type"))
+    variant.fixed_array::<u8>().map_err(|e| {
+        OstreeError::InternalError(format!(
+            "Commit field '{field_name}' has unexpected type: {e}"
+        ))
     })
 }
 
@@ -183,7 +185,7 @@ pub fn get_commit(repo_path: &path::Path, commit: &str) -> OstreeResult<OstreeCo
     let repo = open_repo(repo_path)?;
     let (commit_variant, _state) = repo
         .load_commit(commit)
-        .map_err(|_e| OstreeError::NoSuchCommit(commit.to_string()))?;
+        .map_err(|e| OstreeError::NoSuchCommit(format!("{commit}: {e}")))?;
     ostree_commit_from_variant(&commit_variant)
 }
 
@@ -192,8 +194,8 @@ fn variant_type(type_string: &'static str) -> &'static glib::VariantTy {
 }
 
 pub fn load_delta_superblock_file(path: &path::Path) -> OstreeResult<OstreeDeltaSuperblock> {
-    let contents =
-        fs::read(path).map_err(|_e| OstreeError::NoSuchObject(get_dir_and_basename(path)))?;
+    let contents = fs::read(path)
+        .map_err(|e| OstreeError::NoSuchObject(format!("{}: {e}", get_dir_and_basename(path))))?;
 
     let superblock_variant = glib::Variant::from_data_with_type(
         contents,
@@ -221,7 +223,7 @@ pub fn get_delta_superblock(
 pub fn parse_ref(repo_path: &path::Path, ref_name: &str) -> OstreeResult<String> {
     let repo = open_repo(repo_path)?;
     repo.resolve_rev(ref_name, false)
-        .map_err(|_e| OstreeError::NoSuchRef(ref_name.to_string()))?
+        .map_err(|e| OstreeError::NoSuchRef(format!("{ref_name}: {e}")))?
         .map(|commit| commit.to_string())
         .ok_or_else(|| OstreeError::NoSuchRef(ref_name.to_string()))
 }
@@ -402,7 +404,7 @@ pub fn checkout_ref(repo_path: &Path, ref_name: &str, dest_dir: &Path) -> Ostree
 
     let commit = repo
         .resolve_rev(ref_name, false)
-        .map_err(|_e| OstreeError::NoSuchRef(ref_name.to_string()))?
+        .map_err(|e| OstreeError::NoSuchRef(format!("{ref_name}: {e}")))?
         .ok_or_else(|| OstreeError::NoSuchRef(ref_name.to_string()))?;
 
     let checkout_options = libostree::RepoCheckoutAtOptions {

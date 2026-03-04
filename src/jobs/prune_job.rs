@@ -39,7 +39,7 @@ impl JobInstance for PruneJobInstance {
             .ok_or_else(|| JobError::new("No repo specified"))?;
         let repoconfig = config
             .get_repoconfig(repo)
-            .map_err(|_e| JobError::new(&format!("Can't find repo {repo}")))?;
+            .map_err(|e| JobError::new(&format!("Can't find repo {repo}: {e}")))?;
 
         let repo_path = repoconfig.get_abs_repo_path();
 

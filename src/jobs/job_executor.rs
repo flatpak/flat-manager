@@ -165,7 +165,9 @@ impl Handler<ProcessOneJob> for JobExecutor {
     type Result = Result<bool, ()>;
 
     fn handle(&mut self, _msg: ProcessOneJob, _ctx: &mut Self::Context) -> Self::Result {
-        let mut conn = self.pool.get().map_err(|_e| ())?;
+        let mut conn = self.pool.get().map_err(|e| {
+            error!("Failed to get DB connection: {e}");
+        })?;
         Ok(process_one_job(self, &mut conn))
     }
 }
