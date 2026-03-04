@@ -962,6 +962,7 @@ dependencies = [
  "libc",
  "log",
  "ostree",
+ "pin-project-lite",
  "r2d2",
  "serde",
  "serde_derive",

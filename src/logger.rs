@@ -5,6 +5,7 @@ use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::error::Error;
 use actix_web::http::StatusCode;
 use bytes::Bytes;
+use pin_project_lite::pin_project;
 use std::future::{ready, Future, Ready};
 use std::pin::Pin;
 use std::rc::Rc;
@@ -166,16 +167,19 @@ where
     }
 }
 
-pub struct StreamLog<B> {
-    body: Pin<Box<B>>,
-    inner: Rc<Inner>,
-    request_data: RequestData,
-    response_data: ResponseData,
-}
+pin_project! {
+    pub struct StreamLog<B> {
+        body: Pin<Box<B>>,
+        inner: Rc<Inner>,
+        request_data: RequestData,
+        response_data: ResponseData,
+    }
 
-impl<B> Drop for StreamLog<B> {
-    fn drop(&mut self) {
-        self.inner.log(&self.request_data, &self.response_data);
+    impl<B> PinnedDrop for StreamLog<B> {
+        fn drop(this: Pin<&mut Self>) {
+            let this = this.project();
+            this.inner.log(this.request_data, this.response_data);
+        }
     }
 }
 
@@ -190,8 +194,7 @@ impl<B: MessageBody> MessageBody for StreamLog<B> {
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Bytes, Self::Error>>> {
-        // SAFETY: The pinned `body` field is never moved out; we only poll it and update counters.
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.project();
 
         match this.body.as_mut().poll_next(cx) {
             Poll::Ready(Some(Ok(chunk))) => {
