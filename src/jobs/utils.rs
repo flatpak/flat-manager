@@ -106,7 +106,7 @@ pub fn job_log(job_id: i32, conn: &mut PgConnection, output: &str) {
         .set((jobs::log.eq(jobs::log.concat(&output)),))
         .execute(conn)
     {
-        error!("Error appending to job {} log: {}", job_id, e.to_string());
+        error!("Error appending to job {} log: {}", job_id, e);
     }
 }
 

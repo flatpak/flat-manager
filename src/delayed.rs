@@ -18,13 +18,6 @@ impl<T, E> InnerDelayedResult<T, E> {
             waiters: RefCell::new(HashMap::new()),
         })
     }
-    fn err(e: E) -> Rc<Self> {
-        Rc::new(InnerDelayedResult {
-            next_clone_id: Cell::new(0),
-            result: RefCell::new(Some(Err(e))),
-            waiters: RefCell::new(HashMap::new()),
-        })
-    }
 }
 
 #[derive(Debug)]
@@ -89,14 +82,6 @@ where
             inner,
         }
     }
-    pub fn err(e: E) -> Self {
-        let inner = InnerDelayedResult::err(e);
-        DelayedResult {
-            waiter: inner.next_clone_id.get(),
-            inner,
-        }
-    }
-
     pub fn set(&mut self, res: Result<T, E>) {
         self.inner.result.replace(Some(res));
 

@@ -29,7 +29,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_signal::unix::Signal;
 
-pub use deltas::{RemoteClientMessage, RemoteServerMessage};
 pub use errors::DeltaGenerationError;
 
 type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
