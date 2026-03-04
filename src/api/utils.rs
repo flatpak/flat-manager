@@ -1,3 +1,4 @@
+use actix_web::http::header::{self, ContentDisposition};
 use actix_web::{error, http};
 use actix_web::{HttpRequest, HttpResponse, Result};
 
@@ -101,9 +102,24 @@ fn get_upload_subpath(
     field: &actix_multipart::Field,
     state: &Arc<UploadState>,
 ) -> error::Result<path::PathBuf, ApiError> {
-    let cd = field.content_disposition().ok_or_else(|| {
-        ApiError::BadRequest("No content disposition for multipart item".to_string())
-    })?;
+    // actix-multipart filters content_disposition() to only return FormData dispositions,
+    // but the client sends "attachment". Fall back to parsing the raw header.
+    let cd_owned;
+    let cd = match field.content_disposition() {
+        Some(cd) => cd,
+        None => {
+            let raw = field
+                .headers()
+                .get(&header::CONTENT_DISPOSITION)
+                .ok_or_else(|| {
+                    ApiError::BadRequest("No content disposition for multipart item".to_string())
+                })?;
+            cd_owned = ContentDisposition::from_raw(raw).map_err(|_| {
+                ApiError::BadRequest("Invalid content disposition for multipart item".to_string())
+            })?;
+            &cd_owned
+        }
+    };
     let filename = cd
         .get_filename()
         .ok_or_else(|| ApiError::BadRequest("No filename for multipart item".to_string()))?;
