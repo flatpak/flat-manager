@@ -4,12 +4,8 @@ use crate::jobs::job_instance::JobInstance;
 use crate::models::Job;
 use diesel::pg::PgConnection;
 use log::info;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::process::Command;
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PruneJob {}
 
 pub struct PruneJobInstance {
     pub job: Job,
