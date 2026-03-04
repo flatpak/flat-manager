@@ -33,7 +33,6 @@ hex = "0.4"
 jwt = {package = "jsonwebtoken", version = "9.3"}
 libc = "0.2"
 log = "0.4"
-num_cpus = "1.0"
 libostree = { package = "ostree", version = "0.19", features = ["v2021_5"] }
 r2d2 = "0.8"
 serde = "1.0"

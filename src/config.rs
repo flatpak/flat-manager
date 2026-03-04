@@ -105,11 +105,15 @@ fn default_port() -> i32 {
 }
 
 fn default_numcpu() -> u32 {
-    num_cpus::get() as u32
+    std::thread::available_parallelism()
+        .map(|n| n.get() as u32)
+        .unwrap_or(1)
 }
 
 fn default_workers() -> usize {
-    num_cpus::get()
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
 }
 
 #[derive(Deserialize, Debug, Clone)]
