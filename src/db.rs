@@ -1,8 +1,6 @@
-use actix::prelude::*;
 use actix_web::*;
 use chrono::Utc;
 use diesel::prelude::*;
-use futures3::compat::Compat01As03;
 use serde_json::json;
 
 use crate::errors::ApiError;
@@ -23,14 +21,12 @@ impl Db {
         T: Send + 'static,
     {
         let p = self.0.clone();
-        Compat01As03::new(
-            web::block(move || {
-                let mut conn = p.get()?;
-                func(&mut conn)
-            })
-            .map_err(ApiError::from),
-        )
+        web::block(move || {
+            let mut conn = p.get()?;
+            func(&mut conn)
+        })
         .await
+        .map_err(|e| ApiError::InternalServerError(e.to_string()))?
     }
 
     async fn run_in_transaction<Func, T>(&self, func: Func) -> Result<T, ApiError>

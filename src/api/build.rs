@@ -1,14 +1,10 @@
 use actix::prelude::*;
 use actix_multipart::Multipart;
-use actix_web::middleware::BodyEncoding;
-use actix_web::web::{Data, Json, Path, Query};
-use actix_web::{http, web};
+use actix_web::web::{self, Data, Json, Path, Query};
 use actix_web::{HttpRequest, HttpResponse, ResponseError, Result};
 
 use chrono::Utc;
-use futures::future::Future;
-use futures3::compat::Future01CompatExt;
-use futures3::TryFutureExt;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::fs;
@@ -17,7 +13,7 @@ use std::sync::Arc;
 
 use crate::config::Config;
 use crate::db::*;
-use crate::errors::ApiError;
+use crate::errors::{ApiError, JobError};
 use crate::jobs::{update_build_status_after_check, JobQueue, ProcessJobs};
 use crate::models::{Build, BuildRef, Check, CheckStatus, NewBuild, NewBuildRef};
 use crate::ostree::init_ostree_repo;
@@ -36,16 +32,7 @@ pub struct JobArgs {
     log_offset: Option<usize>,
 }
 
-pub fn get_job(
-    args: Json<JobArgs>,
-    params: Path<JobPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_job_async(args, params, db, req)).compat()
-}
-
-async fn get_job_async(
+pub async fn get_job(
     args: Json<JobArgs>,
     params: Path<JobPathParams>,
     db: Data<Db>,
@@ -63,16 +50,7 @@ pub struct ReviewArgs {
     new_results: Option<String>,
 }
 
-pub fn review_check(
-    args: Json<ReviewArgs>,
-    params: Path<JobPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(review_check_async(args, params, db, req)).compat()
-}
-
-async fn review_check_async(
+pub async fn review_check(
     args: Json<ReviewArgs>,
     params: Path<JobPathParams>,
     db: Data<Db>,
@@ -85,12 +63,14 @@ async fn review_check_async(
 
     let check = db.get_check_by_job_id(params.id).await?;
     web::block(move || {
-        let mut conn = db.0.get()?;
+        let mut conn =
+            db.0.get()
+                .map_err(|err| JobError::InternalError(err.to_string()))?;
         update_build_status_after_check(check.build_id, &mut conn)
-            .map_err(|err| ApiError::InternalServerError(err.to_string()))
     })
-    .compat()
-    .await?;
+    .await
+    .map_err(|err| ApiError::InternalServerError(err.to_string()))?
+    .map_err(|err| ApiError::InternalServerError(err.to_string()))?;
 
     Ok(HttpResponse::NoContent().finish())
 }
@@ -104,16 +84,7 @@ pub struct CreateBuildArgs {
     build_log_url: Option<String>,
 }
 
-pub fn create_build(
-    args: Json<CreateBuildArgs>,
-    db: Data<Db>,
-    config: Data<Config>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(create_build_async(args, db, config, req)).compat()
-}
-
-async fn create_build_async(
+pub async fn create_build(
     args: Json<CreateBuildArgs>,
     db: Data<Db>,
     config: Data<Config>,
@@ -189,15 +160,7 @@ pub struct ListBuildsArgs {
     app_id: Option<String>,
 }
 
-pub fn builds(
-    query: Query<ListBuildsArgs>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(builds_async(query, db, req)).compat()
-}
-
-async fn builds_async(
+pub async fn builds(
     query: Query<ListBuildsArgs>,
     db: Data<Db>,
     req: HttpRequest,
@@ -237,15 +200,7 @@ pub struct BuildPathParams {
     id: i32,
 }
 
-pub fn get_build(
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_build_async(params, db, req)).compat()
-}
-
-async fn get_build_async(
+pub async fn get_build(
     params: Path<BuildPathParams>,
     db: Data<Db>,
     req: HttpRequest,
@@ -260,14 +215,6 @@ async fn get_build_async(
     Ok(HttpResponse::Ok().json(build))
 }
 
-pub fn get_build_extended(
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_build_extended_async(params, db, req)).compat()
-}
-
 #[derive(Debug, Serialize)]
 pub struct BuildExtended {
     build: Build,
@@ -275,7 +222,7 @@ pub struct BuildExtended {
     checks: Vec<Check>,
 }
 
-async fn get_build_extended_async(
+pub async fn get_build_extended(
     params: Path<BuildPathParams>,
     db: Data<Db>,
     req: HttpRequest,
@@ -302,15 +249,7 @@ pub struct RefPathParams {
     ref_id: i32,
 }
 
-pub fn get_build_ref(
-    params: Path<RefPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_build_ref_async(params, db, req)).compat()
-}
-
-async fn get_build_ref_async(
+pub async fn get_build_ref(
     params: Path<RefPathParams>,
     db: Data<Db>,
     req: HttpRequest,
@@ -353,17 +292,7 @@ fn has_object(build_id: i32, object: &str, config: &Data<Config>) -> bool {
     }
 }
 
-pub fn missing_objects(
-    args: Json<MissingObjectsArgs>,
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    config: Data<Config>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(missing_objects_async(args, params, db, config, req)).compat()
-}
-
-async fn missing_objects_async(
+pub async fn missing_objects(
     args: Json<MissingObjectsArgs>,
     params: Path<BuildPathParams>,
     db: Data<Db>,
@@ -382,9 +311,7 @@ async fn missing_objects_async(
         .map(|s| s.to_string())
         .collect::<Vec<String>>();
 
-    Ok(HttpResponse::Ok()
-        .encoding(http::header::ContentEncoding::Gzip)
-        .json(MissingObjectsResponse { missing }))
+    Ok(HttpResponse::Ok().json(MissingObjectsResponse { missing }))
 }
 
 fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
@@ -416,16 +343,7 @@ pub struct CreateBuildRefArgs {
     build_log_url: Option<String>,
 }
 
-pub fn create_build_ref(
-    args: Json<CreateBuildRefArgs>,
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(create_build_ref_async(args, params, db, req)).compat()
-}
-
-async fn create_build_ref_async(
+pub async fn create_build_ref(
     args: Json<CreateBuildRefArgs>,
     params: Path<BuildPathParams>,
     db: Data<Db>,
@@ -480,16 +398,7 @@ fn validate_id(id: &str) -> Result<(), ApiError> {
     }
 }
 
-pub fn add_extra_ids(
-    args: Json<AddExtraIdsArgs>,
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(add_extra_ids_async(args, params, db, req)).compat()
-}
-
-async fn add_extra_ids_async(
+pub async fn add_extra_ids(
     args: Json<AddExtraIdsArgs>,
     params: Path<BuildPathParams>,
     db: Data<Db>,
@@ -610,17 +519,7 @@ pub fn token_subset(
     ApiError::NotEnoughPermissions("No token presented".to_string()).error_response()
 }
 
-pub fn upload(
-    multipart: Multipart,
-    req: HttpRequest,
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    config: Data<Config>,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(upload_async(multipart, req, params, db, config)).compat()
-}
-
-async fn upload_async(
+pub async fn upload(
     multipart: Multipart,
     req: HttpRequest,
     params: Path<BuildPathParams>,
@@ -640,27 +539,17 @@ async fn upload_async(
     let build = db.lookup_build(params.id).await?;
     has_token_for_build(&req, &build)?;
 
-    multipart
-        .map_err(|e| ApiError::InternalServerError(e.to_string()))
-        .map(move |field| save_file(field, &uploadstate).into_stream())
-        .flatten()
-        .collect()
-        .map(|sizes| HttpResponse::Ok().json(sizes))
-        .from_err()
-        .compat()
-        .await
+    let mut multipart = multipart;
+    let mut sizes = Vec::new();
+    while let Some(field) = multipart.next().await {
+        let field = field.map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+        sizes.push(save_file(field, &uploadstate).await?);
+    }
+
+    Ok(HttpResponse::Ok().json(sizes))
 }
 
-pub fn get_commit_job(
-    args: Json<JobArgs>,
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_commit_job_async(args, params, db, req)).compat()
-}
-
-async fn get_commit_job_async(
+pub async fn get_commit_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
     db: Data<Db>,
@@ -684,17 +573,7 @@ pub struct CommitArgs {
     token_type: Option<i32>,
 }
 
-pub fn commit(
-    args: Json<CommitArgs>,
-    params: Path<BuildPathParams>,
-    job_queue: Data<Addr<JobQueue>>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(commit_async(args, params, job_queue, db, req)).compat()
-}
-
-async fn commit_async(
+pub async fn commit(
     args: Json<CommitArgs>,
     params: Path<BuildPathParams>,
     job_queue: Data<Addr<JobQueue>>,
@@ -719,16 +598,7 @@ async fn commit_async(
     respond_with_url(&job, &req, "show_commit_job", &[params.id.to_string()])
 }
 
-pub fn get_publish_job(
-    args: Json<JobArgs>,
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_publish_job_async(args, params, db, req)).compat()
-}
-
-async fn get_publish_job_async(
+pub async fn get_publish_job(
     args: Json<JobArgs>,
     params: Path<BuildPathParams>,
     db: Data<Db>,
@@ -748,17 +618,7 @@ async fn get_publish_job_async(
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PublishArgs {}
 
-pub fn publish(
-    _args: Json<PublishArgs>,
-    params: Path<BuildPathParams>,
-    job_queue: Data<Addr<JobQueue>>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(publish_async(_args, params, job_queue, db, req)).compat()
-}
-
-async fn publish_async(
+pub async fn publish(
     _args: Json<PublishArgs>,
     params: Path<BuildPathParams>,
     job_queue: Data<Addr<JobQueue>>,
@@ -782,16 +642,7 @@ pub struct BuildCheckPathParams {
     check_name: String,
 }
 
-pub fn get_check_job(
-    args: Json<JobArgs>,
-    params: Path<BuildCheckPathParams>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(get_check_job_async(args, params, db, req)).compat()
-}
-
-async fn get_check_job_async(
+pub async fn get_check_job(
     args: Json<JobArgs>,
     params: Path<BuildCheckPathParams>,
     db: Data<Db>,
@@ -815,16 +666,7 @@ async fn get_check_job_async(
     }
 }
 
-pub fn purge(
-    params: Path<BuildPathParams>,
-    db: Data<Db>,
-    config: Data<Config>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(purge_async(params, db, config, req)).compat()
-}
-
-async fn purge_async(
+pub async fn purge(
     params: Path<BuildPathParams>,
     db: Data<Db>,
     config: Data<Config>,
@@ -865,17 +707,7 @@ pub struct RepublishArgs {
     endoflife_rebase: Option<String>,
 }
 
-pub fn republish(
-    args: Json<RepublishArgs>,
-    params: Path<RepublishPathParams>,
-    job_queue: Data<Addr<JobQueue>>,
-    db: Data<Db>,
-    req: HttpRequest,
-) -> impl Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(republish_async(args, params, job_queue, db, req)).compat()
-}
-
-async fn republish_async(
+pub async fn republish(
     args: Json<RepublishArgs>,
     params: Path<RepublishPathParams>,
     job_queue: Data<Addr<JobQueue>>,

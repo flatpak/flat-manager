@@ -2,13 +2,12 @@ use dotenv::dotenv;
 use std::env;
 use std::path::PathBuf;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     if env::var("RUST_LOG").is_err() {
         env::set_var("RUST_LOG", "info");
     }
     env_logger::init();
-    let sys = actix::System::new("repo-manage");
+    let sys = actix::System::new();
 
     dotenv().ok();
 

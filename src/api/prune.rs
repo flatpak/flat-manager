@@ -1,5 +1,4 @@
 use actix_web::{web, HttpRequest, HttpResponse};
-use futures3::TryFutureExt;
 use serde::Deserialize;
 
 use crate::db::Db;
@@ -11,15 +10,7 @@ pub struct PruneArgs {
     repo: String,
 }
 
-pub fn handle_prune(
-    args: web::Json<PruneArgs>,
-    db: web::Data<Db>,
-    req: HttpRequest,
-) -> impl futures::Future<Item = HttpResponse, Error = ApiError> {
-    Box::pin(handle_prune_async(args, db, req)).compat()
-}
-
-async fn handle_prune_async(
+pub async fn handle_prune(
     args: web::Json<PruneArgs>,
     db: web::Data<Db>,
     req: HttpRequest,

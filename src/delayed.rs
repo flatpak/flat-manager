@@ -1,13 +1,15 @@
-use futures::{task, Async, Future, Poll};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll, Waker};
 
 #[derive(Debug)]
 struct InnerDelayedResult<T, E> {
     next_clone_id: Cell<usize>,
     result: RefCell<Option<Result<T, E>>>,
-    waiters: RefCell<HashMap<usize, task::Task>>,
+    waiters: RefCell<HashMap<usize, Waker>>,
 }
 
 impl<T, E> InnerDelayedResult<T, E> {
@@ -50,22 +52,19 @@ where
     T: std::fmt::Debug + std::clone::Clone,
     E: std::fmt::Debug + std::clone::Clone,
 {
-    type Item = T;
-    type Error = E;
+    type Output = Result<T, E>;
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let res_ref = self.inner.result.borrow().clone();
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let res_ref = this.inner.result.borrow().clone();
         if let Some(res) = res_ref {
-            match res {
-                Err(e) => Err(e),
-                Ok(r) => Ok(Async::Ready(r)),
-            }
+            Poll::Ready(res)
         } else {
-            self.inner
+            this.inner
                 .waiters
                 .borrow_mut()
-                .insert(self.waiter, task::current());
-            Ok(Async::NotReady)
+                .insert(this.waiter, cx.waker().clone());
+            Poll::Pending
         }
     }
 }
@@ -88,7 +87,7 @@ where
         let waiters = self.inner.waiters.replace(HashMap::new());
 
         for (_, waiter) in waiters {
-            waiter.notify();
+            waiter.wake();
         }
     }
 }

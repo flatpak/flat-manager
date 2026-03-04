@@ -1,18 +1,13 @@
-use actix::prelude::*;
 use actix_web::{error, http};
 use actix_web::{HttpRequest, HttpResponse, Result};
 
-use futures::future;
-use futures::future::Future;
+use futures::StreamExt;
 use log::warn;
 use serde::Serialize;
-use std::cell::RefCell;
-use std::clone::Clone;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path;
-use std::rc::Rc;
 use std::sync::Arc;
 use tempfile::NamedTempFile;
 
@@ -29,7 +24,7 @@ where
 {
     match req.url_for(name, elements) {
         Ok(url) => Ok(HttpResponse::Ok()
-            .header(http::header::LOCATION, url.to_string())
+            .insert_header((http::header::LOCATION, url.to_string()))
             .json(data)),
         Err(e) => Err(ApiError::InternalServerError(format!(
             "Can't get url for {name} {elements:?}: {e}"
@@ -152,57 +147,38 @@ pub fn start_save(
     Ok((named_file, absolute_path))
 }
 
-pub fn save_file(
-    field: actix_multipart::Field,
+pub async fn save_file(
+    mut field: actix_multipart::Field,
     state: &Arc<UploadState>,
-) -> Box<dyn Future<Item = i64, Error = ApiError>> {
-    let repo_subpath = match get_upload_subpath(&field, state) {
-        Ok(subpath) => subpath,
-        Err(e) => return Box::new(future::err(e)),
+) -> Result<i64, ApiError> {
+    let repo_subpath = get_upload_subpath(&field, state)?;
+
+    let (mut named_file, object_file) = start_save(&repo_subpath, state)
+        .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+
+    let mut size = 0i64;
+    while let Some(chunk) = field.next().await {
+        let chunk = chunk.map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+        named_file
+            .write_all(chunk.as_ref())
+            .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+        size += chunk.len() as i64;
+    }
+
+    let persisted_file = named_file
+        .persist(&object_file)
+        .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+    if let Ok(metadata) = persisted_file.metadata() {
+        let mut perms = metadata.permissions();
+        perms.set_mode(0o644);
+        if let Err(_e) = fs::set_permissions(&object_file, perms) {
+            warn!("Can't change permissions on uploaded file");
+        }
+    } else {
+        warn!("Can't get permissions on uploaded file");
     };
 
-    let (named_file, object_file) = match start_save(&repo_subpath, state) {
-        Ok((named_file, object_file)) => (named_file, object_file),
-        Err(e) => return Box::new(future::err(ApiError::InternalServerError(e.to_string()))),
-    };
-
-    // We need file in two continuations below, so put it in a Rc+RefCell
-    let shared_file = Rc::new(RefCell::new(named_file));
-    let shared_file2 = shared_file.clone();
-    Box::new(
-        field
-            .fold(0i64, move |acc, bytes| {
-                let rt = shared_file
-                    .borrow_mut()
-                    .write_all(bytes.as_ref())
-                    .map(|_| acc + bytes.len() as i64)
-                    .map_err(|e| {
-                        actix_multipart::MultipartError::Payload(error::PayloadError::Io(e))
-                    });
-                future::result(rt)
-            })
-            .map_err(|e| ApiError::InternalServerError(e.to_string()))
-            .and_then(move |res| {
-                // persist consumes the named file, so we need to
-                // completely move it out of the shared Rc+RefCell
-                let named_file = Rc::try_unwrap(shared_file2).unwrap().into_inner();
-                match named_file.persist(&object_file) {
-                    Ok(persisted_file) => {
-                        if let Ok(metadata) = persisted_file.metadata() {
-                            let mut perms = metadata.permissions();
-                            perms.set_mode(0o644);
-                            if let Err(_e) = fs::set_permissions(&object_file, perms) {
-                                warn!("Can't change permissions on uploaded file");
-                            }
-                        } else {
-                            warn!("Can't get permissions on uploaded file");
-                        };
-                        future::result(Ok(res))
-                    }
-                    Err(e) => future::err(ApiError::InternalServerError(e.to_string())),
-                }
-            }),
-    )
+    Ok(size)
 }
 
 #[cfg(test)]

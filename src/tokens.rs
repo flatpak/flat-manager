@@ -1,16 +1,16 @@
 use actix_service::{Service, Transform};
+use actix_web::body::{EitherBody, MessageBody};
 use actix_web::dev::{ServiceRequest, ServiceResponse};
 use actix_web::error::Error;
 use actix_web::http::header::{HeaderValue, AUTHORIZATION};
 use actix_web::{HttpMessage, HttpRequest, Result};
-use futures::future::{ok, Either, FutureResult};
-use futures::{Future, IntoFuture, Poll};
-use futures3::TryFutureExt;
 use jwt::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::fmt::Display;
+use std::future::{ready, Future, Ready};
+use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Poll};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config::Config;
@@ -295,30 +295,29 @@ impl TokenParser {
     }
 }
 
-impl<S: 'static, B> Transform<S> for TokenParser
+impl<S: 'static, B> Transform<S, ServiceRequest> for TokenParser
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
     S::Future: 'static,
-    B: 'static,
+    B: MessageBody + 'static,
 {
-    type Request = ServiceRequest;
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = Error;
     type InitError = ();
     type Transform = TokenParserMiddleware<S>;
-    type Future = FutureResult<Self::Transform, Self::InitError>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(TokenParserMiddleware {
-            service: Rc::new(RefCell::new(service)),
+        ready(Ok(TokenParserMiddleware {
+            service: Rc::new(service),
             inner: self.0.clone(),
-        })
+        }))
     }
 }
 
 /// TokenParser middleware
 pub struct TokenParserMiddleware<S> {
-    service: Rc<RefCell<S>>,
+    service: Rc<S>,
     inner: Rc<Inner>,
 }
 
@@ -356,44 +355,40 @@ async fn check_token_async(db: Db, secret: Vec<u8>, token: String) -> Result<Cla
     Ok(claims)
 }
 
-fn check_token(
-    db: Db,
-    secret: Vec<u8>,
-    token: String,
-) -> impl futures::Future<Item = Claims, Error = ApiError> {
-    Box::pin(check_token_async(db, secret, token)).compat()
-}
-
-impl<S, B> Service for TokenParserMiddleware<S>
+impl<S, B> Service<ServiceRequest> for TokenParserMiddleware<S>
 where
-    S: Service<Request = ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     S::Future: 'static,
-    B: 'static,
+    B: MessageBody + 'static,
 {
-    type Request = ServiceRequest;
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<B>>;
     type Error = Error;
     #[allow(clippy::type_complexity)]
-    type Future = Box<dyn Future<Item = Self::Response, Error = Self::Error>>;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
-    fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-        self.service.borrow_mut().poll_ready()
+    fn poll_ready(&self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(cx)
     }
 
-    fn call(&mut self, req: ServiceRequest) -> Self::Future {
+    fn call(&self, req: ServiceRequest) -> Self::Future {
         let srv = self.service.clone();
         let secret = self.inner.secret.clone();
         let prefix = self.inner.prefix.clone();
         let db = self.inner.db.clone();
+        let optional = self.inner.optional;
 
-        let token = get_token(self.inner.optional, prefix, &req)
-            .into_future()
-            .and_then(|token| token.map(|t| check_token(db, secret, t)));
+        Box::pin(async move {
+            let token = match get_token(optional, prefix, &req) {
+                Ok(token) => token,
+                Err(e) => return Ok(req.error_response(e).map_into_right_body()),
+            };
 
-        let fut = token.then(move |maybe_claims| {
-            let maybe_claims = match maybe_claims {
-                Err(e) => return Either::B(ok(req.error_response(e))),
-                Ok(c) => c,
+            let maybe_claims = match token {
+                Some(token) => match check_token_async(db, secret, token).await {
+                    Ok(claims) => Some(claims),
+                    Err(e) => return Ok(req.error_response(e).map_into_right_body()),
+                },
+                None => None,
             };
 
             let c = maybe_claims.clone();
@@ -402,16 +397,13 @@ where
                 req.extensions_mut().insert(claims);
             }
 
-            Either::A(Box::new(srv.borrow_mut().call(req).and_then(move |resp| {
-                if resp.status() == 401 || resp.status() == 403 {
-                    if let Some(ref claims) = c {
-                        log::info!("Presented claims: {:?}", claims);
-                    }
+            let resp = srv.call(req).await?.map_into_left_body();
+            if resp.status() == 401 || resp.status() == 403 {
+                if let Some(ref claims) = c {
+                    log::info!("Presented claims: {:?}", claims);
                 }
-                Ok(resp)
-            })))
-        });
-
-        Box::new(fut)
+            }
+            Ok(resp)
+        })
     }
 }
