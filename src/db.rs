@@ -520,7 +520,9 @@ impl Db {
                 .get_result::<Token>(conn)
                 .optional()?;
 
-            let expires_at_datetime = chrono::NaiveDateTime::from_timestamp_opt(expires_at, 0).unwrap();
+            let expires_at_datetime = chrono::DateTime::from_timestamp(expires_at, 0)
+                .unwrap()
+                .naive_utc();
 
             if let Some(token) = token {
                 if Some(expires_at_datetime) != token.expires {
