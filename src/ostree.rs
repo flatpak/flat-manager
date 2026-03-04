@@ -324,7 +324,7 @@ impl std::fmt::Display for Delta {
         writeln!(
             f,
             "{}-{}",
-            self.from.as_ref().unwrap_or(&"nothing".to_string()),
+            self.from.as_deref().unwrap_or("nothing"),
             self.to
         )
     }

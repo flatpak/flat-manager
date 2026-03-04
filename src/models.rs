@@ -69,12 +69,7 @@ impl PublishedState {
             0 => PublishedState::Unpublished,
             1 => PublishedState::Publishing,
             2 => PublishedState::Published,
-            3 => PublishedState::Failed(
-                reason
-                    .as_ref()
-                    .unwrap_or(&"Unknown reason".to_string())
-                    .to_string(),
-            ),
+            3 => PublishedState::Failed(reason.as_deref().unwrap_or("Unknown reason").to_string()),
             _ => PublishedState::Failed("Unknown state".to_string()),
         }
     }
@@ -120,12 +115,7 @@ impl RepoState {
             0 => RepoState::Uploading,
             1 => RepoState::Committing,
             2 => RepoState::Ready,
-            3 => RepoState::Failed(
-                reason
-                    .as_ref()
-                    .unwrap_or(&"Unknown reason".to_string())
-                    .to_string(),
-            ),
+            3 => RepoState::Failed(reason.as_deref().unwrap_or("Unknown reason").to_string()),
             4 => RepoState::Purging,
             5 => RepoState::Purged,
             6 => RepoState::Validating,

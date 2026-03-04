@@ -174,7 +174,7 @@ impl JobInstance for CommitJobInstance {
         conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         info!("#{}: Handling Job Commit: build: {}, end-of-life: {}, eol-rebase: {}, token-type: {:?}",
-              &self.job_id, &self.build_id, self.endoflife.as_ref().unwrap_or(&"".to_string()), self.endoflife_rebase.as_ref().unwrap_or(&"".to_string()), self.token_type);
+              &self.job_id, &self.build_id, self.endoflife.as_deref().unwrap_or(""), self.endoflife_rebase.as_deref().unwrap_or(""), self.token_type);
 
         let config = &executor.config;
 
