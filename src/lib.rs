@@ -70,7 +70,7 @@ fn handle_signals(
     job_queue: Addr<JobQueue>,
     delta_generator: Addr<DeltaGenerator>,
 ) {
-    actix::spawn(async move {
+    tokio::spawn(async move {
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
         let mut sigquit = signal(SignalKind::quit()).unwrap();
