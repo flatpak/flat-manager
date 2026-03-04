@@ -21,7 +21,6 @@ ADD https://github.com/openSUSE/catatonit/releases/download/v0.1.7/catatonit.x86
 RUN chmod +x /usr/local/bin/catatonit
 
 COPY --from=builder /src/target/release/flat-manager /usr/local/bin/flat-manager
-COPY --from=builder /src/target/release/delta-generator-client /usr/local/bin/delta-generator-client
 COPY --from=builder /flat-manager-hooks/target/release/flathub-hooks /usr/local/bin/flathub-hooks
 COPY --from=builder /src/target/release/gentoken /usr/local/bin/gentoken
 

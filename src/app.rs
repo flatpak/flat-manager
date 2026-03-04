@@ -182,13 +182,6 @@ pub fn create_app(
                             .route(web::post().to_async(api::build::republish)),
                     )
                     .service(
-                        web::resource("/delta/worker").route(web::get().to(api::delta::ws_delta)),
-                    )
-                    .service(
-                        web::resource("/delta/upload/{repo}")
-                            .route(web::post().to_async(api::delta::delta_upload)),
-                    )
-                    .service(
                         web::resource("/prune")
                             .route(web::post().to_async(api::prune::handle_prune)),
                     ),

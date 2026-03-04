@@ -932,7 +932,7 @@ pub fn pull_commit_async(
                         log::warn!(
                             "Pull error, retrying commit {}: {}",
                             commit_clone,
-                            e.to_string()
+                            e
                         );
                         let sleep_duration = Duration::from_secs(5);
                         sleep(sleep_duration);
@@ -995,7 +995,7 @@ pub fn generate_delta_async(
 
     cmd.arg(repo_path);
 
-    log::info!("Generating delta {}", delta.to_string());
+    log::info!("Generating delta {}", delta);
     Box::new(
         cmd.output_async()
             .map_err(|e| {
