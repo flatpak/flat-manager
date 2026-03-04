@@ -19,7 +19,10 @@ use crate::schema::*;
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::{add_gpg_args, do_command, generate_flatpakref, schedule_update_job};
+use super::utils::{
+    add_gpg_args, do_command, generate_flatpakref, load_build_and_config, load_build_refs,
+    schedule_update_job,
+};
 
 #[derive(Debug)]
 pub struct PublishJobInstance {
@@ -172,25 +175,10 @@ impl JobInstance for PublishJobInstance {
 
         let config = &executor.config;
 
-        // Get build details
-        let build_data = builds::table
-            .filter(builds::id.eq(self.build_id))
-            .get_result::<models::Build>(conn)
-            .map_err(|_e| JobError::new("Can't load build"))?;
-
-        // Get repo config
-        let repoconfig = config
-            .get_repoconfig(&build_data.repo)
-            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &build_data.repo)))?;
-
-        // Get the uploaded refs from db
-        let build_refs = build_refs::table
-            .filter(build_refs::build_id.eq(self.build_id))
-            .get_results::<models::BuildRef>(conn)
-            .map_err(|_e| JobError::new("Can't load build refs"))?;
-        if build_refs.is_empty() {
-            return Err(JobError::new("No refs in build"));
-        }
+        let loaded = load_build_and_config(self.build_id, config, conn)?;
+        let build_data = loaded.build;
+        let repoconfig = loaded.repoconfig;
+        let build_refs = load_build_refs(self.build_id, conn)?;
 
         // Do the actual work
         let res = self.do_publish(&build_data, &build_refs, config, repoconfig, conn);

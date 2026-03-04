@@ -4,12 +4,12 @@ use log::info;
 use serde_json::json;
 
 use crate::errors::{JobError, JobResult};
-use crate::models::{self, Build, Check, CheckJob, CheckStatus, Job, RepoState};
+use crate::models::{Build, Check, CheckJob, CheckStatus, Job, RepoState};
 use crate::schema::{builds, checks};
 
 use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
-use super::utils::do_command_with_output;
+use super::utils::{do_command_with_output, load_build_and_config};
 
 #[derive(Debug)]
 pub struct CheckJobInstance {
@@ -54,16 +54,8 @@ impl JobInstance for CheckJobInstance {
 
         let config = &executor.config;
 
-        // Get build details
-        let build_data = builds::table
-            .filter(builds::id.eq(self.build_id))
-            .get_result::<models::Build>(conn)
-            .map_err(|_e| JobError::new("Can't load build"))?;
-
-        // Get repo config
-        let repoconfig = config
-            .get_repoconfig(&build_data.repo)
-            .map_err(|_e| JobError::new(&format!("Can't find repo {}", &build_data.repo)))?;
+        let loaded = load_build_and_config(self.build_id, config, conn)?;
+        let repoconfig = loaded.repoconfig;
 
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
 

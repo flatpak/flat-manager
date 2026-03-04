@@ -9,7 +9,7 @@ use std::str;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
-use crate::models::Job;
+use crate::models::{self, Job};
 use crate::schema::*;
 
 use super::job_queue::queue_update_job;
@@ -194,4 +194,41 @@ pub fn schedule_update_job(
     }
 
     Ok(update_job)
+}
+
+pub struct LoadedBuild<'a> {
+    pub build: models::Build,
+    pub repoconfig: &'a RepoConfig,
+}
+
+/// Loads a build and its associated repo config.
+pub fn load_build_and_config<'a>(
+    build_id: i32,
+    config: &'a Config,
+    conn: &mut PgConnection,
+) -> JobResult<LoadedBuild<'a>> {
+    let build = builds::table
+        .filter(builds::id.eq(build_id))
+        .get_result::<models::Build>(conn)
+        .map_err(|_e| JobError::new("Can't load build"))?;
+
+    let repoconfig = config
+        .get_repoconfig(&build.repo)
+        .map_err(|_e| JobError::new(&format!("Can't find repo {}", &build.repo)))?;
+
+    Ok(LoadedBuild { build, repoconfig })
+}
+
+/// Loads all refs for a build. Returns an error if there are no refs.
+pub fn load_build_refs(build_id: i32, conn: &mut PgConnection) -> JobResult<Vec<models::BuildRef>> {
+    let refs = build_refs::table
+        .filter(build_refs::build_id.eq(build_id))
+        .get_results::<models::BuildRef>(conn)
+        .map_err(|_e| JobError::new("Can't load build refs"))?;
+
+    if refs.is_empty() {
+        return Err(JobError::new("No refs in build"));
+    }
+
+    Ok(refs)
 }
