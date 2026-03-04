@@ -153,15 +153,7 @@ impl CommitJobInstance {
         let appstream_refs = ostree::list_refs(&build_repo_path, "appstream");
         for appstream_ref in appstream_refs {
             let arch = appstream_ref.split('/').nth(1).unwrap();
-            let mut cmd = Command::new("ostree");
-            cmd.arg(format!("--repo={}", &build_repo_path.to_str().unwrap()))
-                .arg("checkout")
-                .arg("--user-mode")
-                .arg("--union")
-                .arg("--bareuseronly-dirs")
-                .arg(&appstream_ref)
-                .arg(appstream_dir.join(arch));
-            do_command(cmd)?;
+            ostree::checkout_ref(&build_repo_path, &appstream_ref, &appstream_dir.join(arch))?;
         }
 
         job_log_and_info!(self.job_id, conn, "Removing upload directory");

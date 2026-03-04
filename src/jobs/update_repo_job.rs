@@ -236,18 +236,10 @@ impl UpdateRepoJobInstance {
         job_log_and_info!(self.job_id, conn, "Extracting appstream branches");
         let repo_path = repoconfig.get_abs_repo_path();
         let appstream_dir = repo_path.join("appstream");
-        let appstream_refs = ostree::list_refs(&repoconfig.path, "appstream");
+        let appstream_refs = ostree::list_refs(&repo_path, "appstream");
         for appstream_ref in appstream_refs {
             let arch = appstream_ref.split('/').nth(1).unwrap();
-            let mut cmd = Command::new("ostree");
-            cmd.arg(format!("--repo={}", &repoconfig.path.to_str().unwrap()))
-                .arg("checkout")
-                .arg("--user-mode")
-                .arg("--union")
-                .arg("--bareuseronly-dirs")
-                .arg(&appstream_ref)
-                .arg(appstream_dir.join(arch));
-            do_command(cmd)?;
+            ostree::checkout_ref(&repo_path, &appstream_ref, &appstream_dir.join(arch))?;
         }
         Ok(())
     }
