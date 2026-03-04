@@ -97,7 +97,7 @@ pub async fn handle_build_repo(
         .respond_to(&req))
 }
 
-fn get_commit_for_file(path: &Path) -> Option<ostree::OstreeCommit> {
+fn get_commit_for_file(repo_path: &Path, path: &Path) -> Option<ostree::OstreeCommit> {
     if path.file_name() == Some(OsStr::new("superblock")) {
         if let Ok(superblock) = ostree::load_delta_superblock_file(path) {
             return Some(superblock.commit);
@@ -105,8 +105,23 @@ fn get_commit_for_file(path: &Path) -> Option<ostree::OstreeCommit> {
     }
 
     if path.extension() == Some(OsStr::new("commit")) {
-        if let Ok(commit) = ostree::load_commit_file(path) {
-            return Some(commit);
+        let in_objects_dir = path
+            .parent()
+            .and_then(Path::parent)
+            .and_then(Path::file_name)
+            == Some(OsStr::new("objects"));
+        if in_objects_dir {
+            let checksum = path
+                .parent()
+                .and_then(Path::file_name)
+                .and_then(|dir| dir.to_str())
+                .zip(path.file_stem().and_then(|stem| stem.to_str()))
+                .map(|(dir, stem)| format!("{dir}{stem}"));
+            if let Some(checksum) = checksum {
+                if let Ok(commit) = ostree::get_commit(repo_path, &checksum) {
+                    return Some(commit);
+                }
+            }
         }
     }
     None
@@ -171,7 +186,7 @@ pub fn handle_repo(
         return Err(ErrorNotFound("Ignoring directory"));
     }
 
-    if let Some(commit) = get_commit_for_file(&path) {
+    if let Some(commit) = get_commit_for_file(&repoconfig.path, &path) {
         verify_repo_token(&req, commit, repoconfig, &path)?;
     }
 
