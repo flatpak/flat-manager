@@ -195,6 +195,49 @@ fn has_token_for_build(req: &HttpRequest, build: &Build) -> Result<(), ApiError>
     }
 }
 
+async fn lookup_authorized_build(
+    req: &HttpRequest,
+    db: &Db,
+    build_id: i32,
+    scope: ClaimsScope,
+) -> Result<Build, ApiError> {
+    req.has_token_claims(&format!("build/{build_id}"), scope)?;
+    let build = db.lookup_build(build_id).await?;
+    has_token_for_build(req, &build)?;
+    Ok(build)
+}
+
+async fn lookup_authorized_build_any(
+    req: &HttpRequest,
+    db: &Db,
+    build_id: i32,
+    scopes: &[ClaimsScope],
+) -> Result<Build, ApiError> {
+    let required_sub = format!("build/{build_id}");
+    let mut allowed = false;
+    let mut last_err = None;
+
+    for scope in scopes {
+        match req.has_token_claims(&required_sub, scope.clone()) {
+            Ok(()) => {
+                allowed = true;
+                break;
+            }
+            Err(err) => last_err = Some(err),
+        }
+    }
+
+    if !allowed {
+        return Err(last_err.unwrap_or_else(|| {
+            ApiError::NotEnoughPermissions("No accepted scope configured".to_string())
+        }));
+    }
+
+    let build = db.lookup_build(build_id).await?;
+    has_token_for_build(req, &build)?;
+    Ok(build)
+}
+
 #[derive(Deserialize)]
 pub struct BuildPathParams {
     id: i32,
@@ -205,12 +248,14 @@ pub async fn get_build(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)
-        /* We allow getting a build for uploaders too, as it is similar info, and useful */
-        .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload))?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    /* We allow getting a build for uploaders too, as it is similar info, and useful */
+    let build = lookup_authorized_build_any(
+        &req,
+        db.get_ref(),
+        params.id,
+        &[ClaimsScope::Build, ClaimsScope::Upload],
+    )
+    .await?;
 
     Ok(HttpResponse::Ok().json(build))
 }
@@ -227,11 +272,13 @@ pub async fn get_build_extended(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)
-        .or_else(|_| req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload))?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    let build = lookup_authorized_build_any(
+        &req,
+        db.get_ref(),
+        params.id,
+        &[ClaimsScope::Build, ClaimsScope::Upload],
+    )
+    .await?;
 
     let build_refs = db.lookup_build_refs(params.id).await?;
     let checks = db.lookup_checks(params.id).await?;
@@ -254,10 +301,7 @@ pub async fn get_build_ref(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Build).await?;
 
     let build_ref = db.lookup_build_ref(params.id, params.ref_id).await?;
     Ok(HttpResponse::Ok().json(build_ref))
@@ -299,10 +343,7 @@ pub async fn missing_objects(
     config: Data<Config>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
 
     let missing = args
         .wanted
@@ -349,13 +390,9 @@ pub async fn create_build_ref(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)
-        .and_then(|_| validate_ref(&args.ref_name, &req))?;
-
     let build_id = params.id;
-    let build = db.lookup_build(params.id).await?;
-
-    has_token_for_build(&req, &build)?;
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
+    validate_ref(&args.ref_name, &req)?;
 
     let existing_ref = db
         .lookup_build_ref_by_name(build_id, args.ref_name.clone())
@@ -404,13 +441,8 @@ pub async fn add_extra_ids(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
-
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
     args.ids.iter().try_for_each(|id| validate_id(id))?;
-
-    let build = db.lookup_build(params.id).await?;
-
-    has_token_for_build(&req, &build)?;
 
     let build = db.add_extra_ids(params.id, args.ids.clone()).await?;
     respond_with_url(&build, &req, "show_build", &[params.id.to_string()])
@@ -526,8 +558,6 @@ pub async fn upload(
     db: Data<Db>,
     config: Data<Config>,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Upload)?;
-
     let uploadstate = Arc::new(UploadState {
         only_deltas: false,
         repo_path: config
@@ -536,8 +566,7 @@ pub async fn upload(
             .join("upload"),
     });
 
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
 
     let mut multipart = multipart;
     let mut sizes = Vec::new();
@@ -555,10 +584,7 @@ pub async fn get_commit_job(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    let build = lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Build).await?;
 
     let job_id = build.commit_job_id.ok_or(ApiError::NotFound)?;
     let job = db.lookup_job(job_id, args.log_offset).await?;
@@ -580,10 +606,7 @@ pub async fn commit(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Build).await?;
 
     let job = db
         .start_commit_job(
@@ -604,10 +627,7 @@ pub async fn get_publish_job(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    let build = lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Build).await?;
 
     let job_id = build.publish_job_id.ok_or(ApiError::NotFound)?;
     let job = db.lookup_job(job_id, args.log_offset).await?;
@@ -625,10 +645,8 @@ pub async fn publish(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Publish)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    let build =
+        lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Publish).await?;
 
     let job = db.start_publish_job(params.id, build.repo.clone()).await?;
     job_queue.do_send(ProcessJobs(Some(build.repo)));
@@ -648,10 +666,7 @@ pub async fn get_check_job(
     db: Data<Db>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    let build = lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Build).await?;
 
     let checks = db.lookup_checks(build.id).await?;
     let check = checks
@@ -672,12 +687,8 @@ pub async fn purge(
     config: Data<Config>,
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
-    req.has_token_claims(&format!("build/{}", params.id), ClaimsScope::Build)?;
-
     let build_repo_path = config.build_repo_base.join(params.id.to_string());
-
-    let build = db.lookup_build(params.id).await?;
-    has_token_for_build(&req, &build)?;
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Build).await?;
 
     db.init_purge(params.id).await?;
 
