@@ -12,6 +12,8 @@ use tokio::process::Command;
 use tokio::time::sleep;
 use walkdir::WalkDir;
 
+use crate::jobs::SetsidCommandExt;
+
 #[derive(Error, Debug, Clone, Eq, PartialEq)]
 pub enum OstreeError {
     #[error("No such ref: {0}")]
@@ -439,14 +441,7 @@ pub async fn pull_commit_async(
     let mut retries_left = n_retries;
     loop {
         let mut cmd = Command::new("ostree");
-        unsafe {
-            cmd.pre_exec(|| {
-                // Setsid in the child to avoid SIGINT on server killing
-                // child and breaking the graceful shutdown
-                libc::setsid();
-                Ok(())
-            });
-        }
+        SetsidCommandExt::setsid(&mut cmd);
 
         cmd.arg(format!("--repo={}", &repo_path.to_str().unwrap()))
             .arg("pull")
@@ -500,15 +495,7 @@ pub async fn pull_delta_async(
 pub async fn generate_delta_async(repo_path: &Path, delta: &Delta) -> Result<(), OstreeError> {
     let mut cmd = Command::new("timeout");
     cmd.arg("3600").arg("flatpak");
-
-    unsafe {
-        cmd.pre_exec(|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            libc::setsid();
-            Ok(())
-        });
-    }
+    SetsidCommandExt::setsid(&mut cmd);
 
     cmd.arg("build-update-repo")
         .arg("--generate-static-delta-to")
@@ -529,15 +516,7 @@ pub async fn generate_delta_async(repo_path: &Path, delta: &Delta) -> Result<(),
 
 pub async fn prune_async(repo_path: &Path) -> Result<(), OstreeError> {
     let mut cmd = Command::new("ostree");
-
-    unsafe {
-        cmd.pre_exec(|| {
-            // Setsid in the child to avoid SIGINT on server killing
-            // child and breaking the graceful shutdown
-            libc::setsid();
-            Ok(())
-        });
-    }
+    SetsidCommandExt::setsid(&mut cmd);
 
     cmd.arg("prune")
         .arg(format!("--repo={}", repo_path.to_string_lossy()))
