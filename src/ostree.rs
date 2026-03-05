@@ -7,7 +7,6 @@ use std::path::{self, Path};
 use std::{fs, io};
 use thiserror::Error;
 use tokio::process::Command;
-use walkdir::WalkDir;
 
 use crate::jobs::SetsidCommandExt;
 
@@ -332,27 +331,18 @@ impl std::fmt::Display for Delta {
 }
 
 pub fn list_deltas(repo_path: &path::Path) -> Vec<Delta> {
-    let deltas_dir = get_deltas_path(repo_path);
+    let repo = match open_repo(repo_path) {
+        Ok(repo) => repo,
+        Err(_e) => return Vec::new(),
+    };
+    let names = match repo.list_static_delta_names(gio::Cancellable::NONE) {
+        Ok(names) => names,
+        Err(_e) => return Vec::new(),
+    };
 
-    WalkDir::new(deltas_dir)
-        .min_depth(2)
-        .max_depth(2)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_dir())
-        .map(|e| {
-            format!(
-                "{}{}",
-                e.path()
-                    .parent()
-                    .unwrap()
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy(),
-                e.file_name().to_string_lossy()
-            )
-        })
-        .filter_map(|name| Delta::from_name(&name).ok())
+    names
+        .iter()
+        .filter_map(|name| Delta::from_name(name.as_str()).ok())
         .collect()
 }
 
