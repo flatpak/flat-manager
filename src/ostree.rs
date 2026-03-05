@@ -2,7 +2,6 @@ use base64::{engine::general_purpose, Engine as _};
 use libostree::{gio, glib};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::path::{self, Path};
 use std::{fs, io};
@@ -460,40 +459,31 @@ pub fn init_ostree_repo(
     opt_collection_id: &Option<(String, i32)>,
 ) -> io::Result<()> {
     let parent_repo_absolute_path = std::env::current_dir()?.join(parent_repo_path);
+    let abs_repo_path = std::env::current_dir()?.join(repo_path);
+    let repo = libostree::Repo::new_for_path(&abs_repo_path);
+    repo.create(libostree::RepoMode::Archive, gio::Cancellable::NONE)
+        .map_err(|e| io::Error::other(format!("Failed to create repo: {e}")))?;
 
-    for &d in [
-        "extensions",
-        "objects",
-        "refs/heads",
-        "refs/mirrors",
-        "refs/remotes",
-        "state",
-        "tmp/cache",
-    ]
-    .iter()
-    {
-        fs::create_dir_all(repo_path.join(d))?;
-    }
-
+    // Keep parent repo link for compatibility with existing tooling.
     std::os::unix::fs::symlink(&parent_repo_absolute_path, repo_path.join("parent"))?;
 
-    let mut file = fs::File::create(repo_path.join("config"))?;
-    file.write_all(
-        format!(
-            r#"[core]
-repo_version=1
-mode=archive-z2
-min-free-space-size=500MB
-{}parent={}"#,
-            match opt_collection_id {
-                Some((collection_id, build_id)) =>
-                    format!("collection-id={collection_id}.Build{build_id}\n"),
-                _ => "".to_string(),
-            },
-            parent_repo_absolute_path.display()
-        )
-        .as_bytes(),
-    )?;
+    let config = repo.copy_config();
+    config.set_string("core", "min-free-space-size", "500MB");
+    config.set_string(
+        "core",
+        "parent",
+        parent_repo_absolute_path.to_string_lossy().as_ref(),
+    );
+    if let Some((collection_id, build_id)) = opt_collection_id {
+        config.set_string(
+            "core",
+            "collection-id",
+            &format!("{collection_id}.Build{build_id}"),
+        );
+    }
+    repo.write_config(&config)
+        .map_err(|e| io::Error::other(format!("Failed to write repo config: {e}")))?;
+
     Ok(())
 }
 
