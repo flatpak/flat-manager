@@ -2,13 +2,10 @@ use crate::config::Config;
 use crate::delayed::DelayedResult;
 use crate::errors::DeltaGenerationError;
 use crate::ostree;
-use actix::dev::ToEnvelope;
 use actix::prelude::*;
 use actix::Actor;
-use log::{error, info, warn};
-use std::cell::Cell;
+use log::{error, info};
 use std::collections::VecDeque;
-use std::rc::Rc;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -54,37 +51,15 @@ impl QueuedRequest {
     }
 }
 
-#[derive(Debug)]
-struct WorkerInfo<A: actix::Actor> {
-    name: String,
-    id: usize,
-    available: Cell<u32>,
-    addr: Addr<A>,
-}
-
-impl<A: Actor> WorkerInfo<A> {
-    pub fn is_available(&self) -> bool {
-        self.available.get() > 0
-    }
-    pub fn claim(&self) {
-        let current = self.available.get();
-        assert!(current > 0);
-        self.available.set(current - 1);
-    }
-
-    pub fn unclaim(&self) {
-        self.available.set(self.available.get() + 1);
-    }
-}
-
-/* The DeltaGenerator is an actor handling the DeltaRequest message, but
- * it then fronts a number of workers that it queues the request onto.
+/* The DeltaGenerator is an actor handling DeltaRequest and dispatching work
+ * directly from its queue.
  */
 
 #[derive(Debug)]
 pub struct DeltaGenerator {
     outstanding: VecDeque<QueuedRequest>,
-    local_worker: Rc<WorkerInfo<LocalWorker>>,
+    config: Arc<Config>,
+    available: u32,
 }
 
 impl Actor for DeltaGenerator {
@@ -92,51 +67,47 @@ impl Actor for DeltaGenerator {
 }
 
 impl DeltaGenerator {
-    fn start_request<A>(
-        &self,
-        worker: Rc<WorkerInfo<A>>,
-        mut queued_request: QueuedRequest,
-        ctx: &mut Context<Self>,
-    ) where
-        A: Handler<DeltaRequest>,
-        A::Context: ToEnvelope<A, DeltaRequest>,
-    {
-        info!(
-            "Assigned delta {} to worker {} #{}",
-            queued_request.request, worker.name, worker.id
-        );
-        worker.claim();
-        ctx.spawn(
-            worker.addr
-                .send(queued_request.request.clone())
-                .into_actor(self)
-                .then(move |msg_send_res, generator, ctx| {
-                    match msg_send_res {
-                        Ok(Ok(_)) => {
-                            queued_request.delayed_result.set(Ok(()));
-                        }
-                        Ok(Err(job_err)) => {
-                            queued_request.delayed_result.set(Err(job_err));
-                        }
-                        Err(send_err) => {
-                            // This typically happens when a worker has disconnected, such errors
-                            // are transient and we retry with a new worker.
-                            warn!("Failed to send delta worker request to worker: {}. Probably disconnected, retrying.", send_err);
-                            generator.outstanding.push_front(queued_request);
-                        },
-                    };
+    fn start_request(&mut self, mut queued_request: QueuedRequest, ctx: &mut Context<Self>) {
+        info!("Generating delta {}", queued_request.request);
+        self.available -= 1;
 
-                    worker.unclaim();
-                    generator.run_queue(ctx);
-                    actix::fut::ready(())
-                })
+        let repoconfig = match self.config.get_repoconfig(&queued_request.request.repo) {
+            Ok(r) => r,
+            Err(_) => {
+                self.available += 1;
+                queued_request
+                    .delayed_result
+                    .set(Err(DeltaGenerationError::new(&format!(
+                        "No repo named: {}",
+                        &queued_request.request.repo
+                    ))));
+                return;
+            }
+        };
+
+        let repo_path = repoconfig.get_abs_repo_path();
+        let delta = queued_request.request.delta.clone();
+
+        ctx.spawn(
+            async move {
+                ostree::generate_delta_async(&repo_path, &delta)
+                    .await
+                    .map_err(DeltaGenerationError::from)
+            }
+            .into_actor(self)
+            .then(move |result, generator, ctx| {
+                queued_request.delayed_result.set(result);
+                generator.available += 1;
+                generator.run_queue(ctx);
+                actix::fut::ready(())
+            }),
         );
     }
 
     fn run_queue(&mut self, ctx: &mut Context<Self>) {
         while let Some(request) = self.outstanding.pop_front() {
-            if self.local_worker.is_available() {
-                self.start_request(self.local_worker.clone(), request, ctx);
+            if self.available > 0 {
+                self.start_request(request, ctx);
             } else {
                 self.outstanding.push_front(request);
                 break;
@@ -158,7 +129,7 @@ impl DeltaGenerator {
                 let r = req.delayed_result.clone();
                 self.outstanding.push_back(req);
 
-                /* Maybe a worker can handle it directly? */
+                /* Maybe a queued task can start immediately? */
                 self.run_queue(ctx);
                 r
             })
@@ -209,61 +180,15 @@ impl Handler<StopDeltaGenerator> for DeltaGenerator {
     }
 }
 
-#[derive(Debug)]
-pub struct LocalWorker {
-    pub config: Arc<Config>,
-}
-
-impl Actor for LocalWorker {
-    type Context = Context<Self>;
-}
-
-impl Handler<DeltaRequest> for LocalWorker {
-    type Result = ResponseActFuture<Self, Result<(), DeltaGenerationError>>;
-
-    fn handle(&mut self, msg: DeltaRequest, _ctx: &mut Self::Context) -> Self::Result {
-        let repoconfig = match self.config.get_repoconfig(&msg.repo) {
-            Err(_e) => {
-                return Box::pin(
-                    actix::fut::ready(Err(DeltaGenerationError::new(&format!(
-                        "No repo named: {}",
-                        &msg.repo
-                    ))))
-                    .into_actor(self),
-                )
-            }
-            Ok(r) => r,
-        };
-
-        let repo_path = repoconfig.get_abs_repo_path();
-        let delta = msg.delta;
-
-        Box::pin(
-            async move {
-                ostree::generate_delta_async(&repo_path, &delta)
-                    .await
-                    .map_err(DeltaGenerationError::from)
-            }
-            .into_actor(self),
-        )
-    }
-}
-
 pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
     let n_threads = config.local_delta_threads;
-    let local_worker = LocalWorker { config }.start();
 
-    let generator = DeltaGenerator {
+    DeltaGenerator {
         outstanding: VecDeque::new(),
-        local_worker: Rc::new(WorkerInfo {
-            name: "local".to_string(),
-            id: 0,
-            available: Cell::new(n_threads),
-            addr: local_worker,
-        }),
-    };
-
-    generator.start()
+        config,
+        available: n_threads,
+    }
+    .start()
 }
 
 #[cfg(test)]
