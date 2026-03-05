@@ -20,7 +20,7 @@ pub struct DeltaRequest {
 
 impl std::fmt::Display for DeltaRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}/{}", self.repo, self.delta)
+        write!(f, "{}/{}", self.repo, self.delta)
     }
 }
 
@@ -264,4 +264,23 @@ pub fn start_delta_generator(config: Arc<Config>) -> Addr<DeltaGenerator> {
     };
 
     generator.start()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_delta_request_display_has_no_trailing_newline() {
+        let request = DeltaRequest {
+            repo: "stable".to_string(),
+            delta: ostree::Delta {
+                from: None,
+                to: "tohash".to_string(),
+            },
+        };
+
+        assert_eq!(request.to_string(), "stable/nothing-tohash");
+        assert!(!request.to_string().ends_with('\n'));
+    }
 }

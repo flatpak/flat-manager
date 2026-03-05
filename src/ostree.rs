@@ -325,7 +325,7 @@ impl Delta {
 
 impl std::fmt::Display for Delta {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(
+        write!(
             f,
             "{}-{}",
             self.from.as_deref().unwrap_or("nothing"),
@@ -598,5 +598,22 @@ mod tests {
         );
         assert_eq!(Delta::from_name("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c-3dpOrJG4MNyKHDDGXHpH_zd9NXugnexr5jpvSFQ77S4"),
                    Ok(Delta { from: Some("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string()), to: "ddda4eac91b830dc8a1c30c65c7a47ff377d357ba09dec6be63a6f48543bed2e".to_string() }));
+    }
+
+    #[test]
+    fn test_delta_display_has_no_trailing_newline() {
+        let no_from = Delta {
+            from: None,
+            to: "tohash".to_string(),
+        };
+        assert_eq!(no_from.to_string(), "nothing-tohash");
+        assert!(!no_from.to_string().ends_with('\n'));
+
+        let with_from = Delta {
+            from: Some("fromhash".to_string()),
+            to: "tohash".to_string(),
+        };
+        assert_eq!(with_from.to_string(), "fromhash-tohash");
+        assert!(!with_from.to_string().ends_with('\n'));
     }
 }
