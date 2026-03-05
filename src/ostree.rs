@@ -4,12 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
 use std::os::fd::AsRawFd;
-use std::path::{self, Path, PathBuf};
-use std::time::Duration;
+use std::path::{self, Path};
 use std::{fs, io};
 use thiserror::Error;
 use tokio::process::Command;
-use tokio::time::sleep;
 use walkdir::WalkDir;
 
 use crate::jobs::SetsidCommandExt;
@@ -434,66 +432,6 @@ fn result_from_output(output: std::process::Output, command: &str) -> Result<(),
     }
 }
 
-pub async fn pull_commit_async(
-    n_retries: i32,
-    repo_path: PathBuf,
-    url: String,
-    commit: String,
-) -> Result<(), OstreeError> {
-    let mut retries_left = n_retries;
-    loop {
-        let mut cmd = Command::new("ostree");
-        SetsidCommandExt::setsid(&mut cmd);
-
-        cmd.arg(format!("--repo={}", &repo_path.to_str().unwrap()))
-            .arg("pull")
-            .arg(format!("--url={url}"))
-            .arg("upstream")
-            .arg(&commit);
-
-        log::info!("Pulling commit {}", commit);
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| OstreeError::ExecFailed("ostree pull".to_string(), e.to_string()))?;
-
-        match result_from_output(output, "ostree pull") {
-            Ok(()) => return Ok(()),
-            Err(e) => {
-                if retries_left > 1 {
-                    log::warn!("Pull error, retrying commit {}: {}", commit, e);
-                    retries_left -= 1;
-                    sleep(Duration::from_secs(5)).await;
-                } else {
-                    return Err(e);
-                }
-            }
-        }
-    }
-}
-
-pub async fn pull_delta_async(
-    n_retries: i32,
-    repo_path: &Path,
-    url: &str,
-    delta: &Delta,
-) -> Result<(), OstreeError> {
-    let url_clone = url.to_string();
-    let repo_path_clone = repo_path.to_path_buf();
-
-    if let Some(ref from) = delta.from {
-        pull_commit_async(
-            n_retries,
-            repo_path.to_path_buf(),
-            url_clone.clone(),
-            from.clone(),
-        )
-        .await?;
-    }
-
-    pull_commit_async(n_retries, repo_path_clone, url_clone, delta.to.clone()).await
-}
-
 pub async fn generate_delta_async(repo_path: &Path, delta: &Delta) -> Result<(), OstreeError> {
     let mut cmd = Command::new("timeout");
     cmd.arg("3600").arg("flatpak");
@@ -514,21 +452,6 @@ pub async fn generate_delta_async(repo_path: &Path, delta: &Delta) -> Result<(),
         OstreeError::ExecFailed("flatpak build-update-repo".to_string(), e.to_string())
     })?;
     result_from_output(output, "flatpak build-update-repo")
-}
-
-pub async fn prune_async(repo_path: &Path) -> Result<(), OstreeError> {
-    let mut cmd = Command::new("ostree");
-    SetsidCommandExt::setsid(&mut cmd);
-
-    cmd.arg("prune")
-        .arg(format!("--repo={}", repo_path.to_string_lossy()))
-        .arg("--keep-younger-than=3 days ago");
-
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| OstreeError::ExecFailed("ostree prune".to_string(), e.to_string()))?;
-    result_from_output(output, "ostree prune")
 }
 
 pub fn init_ostree_repo(
