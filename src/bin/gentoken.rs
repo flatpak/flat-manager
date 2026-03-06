@@ -1,11 +1,11 @@
 use chrono::{Duration, Utc};
+use clap::Parser;
 use jwt::{encode, EncodingKey, Header};
 use std::fs;
 use std::io;
 use std::io::prelude::*;
 use std::process;
 
-use argparse::{ArgumentParser, List, Store, StoreOption, StoreTrue};
 use flatmanager::tokens::{Claims, ClaimsScope};
 
 fn read_secret(filename: String) -> io::Result<String> {
@@ -19,66 +19,98 @@ fn read_secret(filename: String) -> io::Result<String> {
     Ok(contents)
 }
 
+fn default_duration() -> i64 {
+    Duration::days(365).num_seconds()
+}
+
+#[derive(Debug, Parser)]
+#[command(
+    about = "Generate token for flat-manager.",
+    long_about = None,
+    disable_version_flag = true
+)]
+struct Args {
+    #[arg(short, long, help = "Be verbose")]
+    verbose: bool,
+    #[arg(
+        long,
+        default_value = "default",
+        value_name = "NAME",
+        help = "Name for the token"
+    )]
+    name: String,
+    #[arg(
+        long,
+        default_value = "build",
+        value_name = "SUB",
+        help = "Subject (default: build)"
+    )]
+    sub: String,
+    #[arg(
+        long = "scope",
+        value_name = "SCOPE",
+        help = "Add scope (default if none: [build, upload, download, publish, jobs]"
+    )]
+    scope_values: Vec<String>,
+    #[arg(
+        long = "prefix",
+        value_name = "PREFIX",
+        help = "Add ref prefix (default if none: ['']"
+    )]
+    prefixes: Vec<String>,
+    #[arg(
+        long = "repo",
+        value_name = "REPO",
+        help = "Add repo (default if none: ['']"
+    )]
+    repos: Vec<String>,
+    #[arg(long, help = "The secret is base64 encoded")]
+    base64: bool,
+    #[arg(long, value_name = "SECRET", help = "Secret used to encode the token")]
+    secret: Option<String>,
+    #[arg(
+        long = "secret-file",
+        value_name = "SECRET_FILE",
+        help = "Load secret from file (or - for stdin)"
+    )]
+    secret_file: Option<String>,
+    #[arg(
+        long,
+        default_value_t = default_duration(),
+        value_name = "DURATION",
+        help = "Duration for key in seconds (default 1 year)"
+    )]
+    duration: i64,
+    #[arg(
+        long = "token-type",
+        default_value = "app",
+        value_name = "TOKEN_TYPE",
+        help = "Token type"
+    )]
+    token_type: String,
+    #[arg(
+        long = "branch",
+        value_name = "BRANCH",
+        help = "Add branch (default if none: ['stable']"
+    )]
+    branches: Vec<String>,
+}
+
 fn main() {
-    let mut verbose = false;
-    let mut base64 = false;
-    let mut name = "default".to_string();
-    let mut sub = "build".to_string();
-    let mut secret: Option<String> = None;
-    let mut secret_file: Option<String> = None;
-    let mut duration: i64 = Duration::days(365).num_seconds();
-    let mut scope_values: Vec<String> = vec![];
-    let mut prefixes: Vec<String> = vec![];
-    let mut repos: Vec<String> = vec![];
-    let mut token_type: String = "app".to_string();
-    let mut branches: Vec<String> = vec![];
-    {
-        let mut ap = ArgumentParser::new();
-        ap.set_description("Generate token for flat-manager.");
-        ap.refer(&mut verbose)
-            .add_option(&["-v", "--verbose"], StoreTrue, "Be verbose");
-        ap.refer(&mut name)
-            .add_option(&["--name"], Store, "Name for the token");
-        ap.refer(&mut sub)
-            .add_option(&["--sub"], Store, "Subject (default: build)");
-        ap.refer(&mut scope_values).add_option(
-            &["--scope"],
-            List,
-            "Add scope (default if none: [build, upload, download, publish, jobs]",
-        );
-        ap.refer(&mut prefixes).add_option(
-            &["--prefix"],
-            List,
-            "Add ref prefix (default if none: ['']",
-        );
-        ap.refer(&mut repos)
-            .add_option(&["--repo"], List, "Add repo (default if none: ['']");
-        ap.refer(&mut base64)
-            .add_option(&["--base64"], StoreTrue, "The secret is base64 encoded");
-        ap.refer(&mut secret).add_option(
-            &["--secret"],
-            StoreOption,
-            "Secret used to encode the token",
-        );
-        ap.refer(&mut secret_file).add_option(
-            &["--secret-file"],
-            StoreOption,
-            "Load secret from file (or - for stdin)",
-        );
-        ap.refer(&mut duration).add_option(
-            &["--duration"],
-            Store,
-            "Duration for key in seconds (default 1 year)",
-        );
-        ap.refer(&mut token_type)
-            .add_option(&["--token-type"], Store, "Token type");
-        ap.refer(&mut branches).add_option(
-            &["--branch"],
-            List,
-            "Add branch (default if none: ['stable']",
-        );
-        ap.parse_args_or_exit();
-    }
+    let Args {
+        verbose,
+        base64,
+        name,
+        sub,
+        secret,
+        secret_file,
+        duration,
+        scope_values,
+        mut prefixes,
+        mut repos,
+        token_type,
+        mut branches,
+    } = Args::parse();
 
     let secret_contents;
 
