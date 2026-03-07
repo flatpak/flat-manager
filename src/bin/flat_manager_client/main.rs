@@ -1,12 +1,15 @@
 mod client;
 
-use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+use client::{ApiClient, ClientError};
+use log::LevelFilter;
+use serde_json::{json, Value};
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process;
 
-#[allow(dead_code)]
 #[derive(Debug, Parser)]
 #[command(
     name = "flat-manager-client",
@@ -34,7 +37,6 @@ struct Cli {
     command: Option<Command>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Subcommand)]
 enum Command {
     #[command(about = "Create new build")]
@@ -55,7 +57,6 @@ enum Command {
     FollowJob(FollowJobArgs),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct CreateArgs {
     #[arg(value_name = "manager_url", help = "Remote repo manager URL")]
@@ -220,40 +221,139 @@ struct FollowJobArgs {
     job_url: String,
 }
 
-fn main() {
-    let argv: Vec<String> = env::args_os()
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
+fn resolve_token(cli: &Cli) -> Result<String, ClientError> {
+    if let Some(ref token) = cli.token {
+        return Ok(token.clone());
+    }
+    if let Some(ref path) = cli.token_file {
+        let contents = fs::read(path)?;
+        let first_line = contents.split(|&b| b == b'\n').next().unwrap_or(&contents);
+        return Ok(String::from_utf8_lossy(first_line).trim().to_string());
+    }
+    if let Ok(token) = env::var("REPO_TOKEN") {
+        return Ok(token);
+    }
+    Err(ClientError::Usage(
+        "No token available, pass with --token, --token-file or $REPO_TOKEN".into(),
+    ))
+}
 
-    let matches = match Cli::command().try_get_matches_from(&argv) {
-        Ok(matches) => matches,
-        Err(err) => err.exit(),
+fn command_name(command: &Command) -> &'static str {
+    match command {
+        Command::Create(_) => "create",
+        Command::Push(_) => "push",
+        Command::Commit(_) => "commit",
+        Command::Publish(_) => "publish",
+        Command::Purge(_) => "purge",
+        Command::Prune(_) => "prune",
+        Command::CreateToken(_) => "create-token",
+        Command::FollowJob(_) => "follow-job",
+    }
+}
+
+async fn run(
+    command: Command,
+    client: &ApiClient,
+    print_output: bool,
+) -> (&'static str, Result<Value, ClientError>) {
+    match command {
+        Command::Create(args) => {
+            let public_download = match (args.public_download, args.no_public_download) {
+                (true, _) => Some(true),
+                (_, true) => Some(false),
+                _ => None,
+            };
+            let resp = client
+                .create_build(
+                    &args.manager_url,
+                    &args.repo,
+                    args.app_id.as_deref(),
+                    public_download,
+                    args.build_log_url.as_deref(),
+                )
+                .await;
+            if let Ok(ref resp) = resp {
+                if !print_output {
+                    if let Some(ref loc) = resp.location {
+                        println!("{loc}");
+                    }
+                }
+            }
+            (
+                "create",
+                resp.map(|r| {
+                    let mut body = r.body;
+                    if let Some(loc) = r.location {
+                        body["location"] = serde_json::Value::String(loc);
+                    }
+                    body
+                }),
+            )
+        }
+        _ => ("unknown", Err(ClientError::Usage("Not yet implemented".into()))),
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    let log_level = if cli.debug {
+        LevelFilter::Debug
+    } else if cli.verbose {
+        LevelFilter::Info
+    } else {
+        LevelFilter::Warn
     };
 
-    let Cli {
-        verbose,
-        debug,
-        output,
-        print_output,
-        token,
-        token_file,
-        command,
-    } = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.exit());
+    env_logger::Builder::new()
+        .target(env_logger::Target::Stderr)
+        .filter_level(log_level)
+        .format(|buf, record| {
+            writeln!(
+                buf,
+                "{}: {}: {}",
+                record.module_path().unwrap_or(record.target()),
+                record.level(),
+                record.args()
+            )
+        })
+        .init();
 
-    let _ = (verbose, debug, print_output, token, token_file);
-
-    if command.is_none() {
+    if cli.command.is_none() {
         println!("No subcommand specified, see --help for usage");
         process::exit(1);
     }
 
-    let payload = serde_json::to_string_pretty(&argv).expect("argv is serializable");
-    println!("{payload}");
+    let token = resolve_token(&cli);
+    let print_output = cli.print_output;
+    let output_path = cli.output.clone();
+    let command = cli.command.expect("checked above");
+    let default_cmd_name = command_name(&command);
 
-    if let Some(path) = output {
-        if let Err(err) = fs::write(&path, format!("{payload}\n")) {
-            eprintln!("Failed to write {}: {err}", path.display());
-            process::exit(1);
+    let (cmd_name, result) = match token {
+        Ok(token) => {
+            let client = ApiClient::new(token);
+            run(command, &client, print_output).await
         }
+        Err(err) => (default_cmd_name, Err(err)),
+    };
+
+    let (output, exit_code) = match result {
+        Ok(data) => (json!({ "command": cmd_name, "result": data }), 0),
+        Err(ref e) => {
+            eprintln!("{e}");
+            (json!({ "command": cmd_name, "error": e.to_json() }), 1)
+        }
+    };
+
+    if print_output {
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
     }
+    if let Some(ref path) = output_path {
+        let text = serde_json::to_string_pretty(&output).unwrap();
+        fs::write(path, format!("{text}\n")).unwrap_or_else(|e| {
+            eprintln!("Failed to write {}: {e}", path.display());
+        });
+    }
+    process::exit(exit_code);
 }
