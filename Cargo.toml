@@ -10,6 +10,10 @@ edition = "2021"
 name = "flatmanager"
 path = "src/lib.rs"
 
+[[bin]]
+name = "flat-manager-client"
+path = "src/bin/flat_manager_client/main.rs"
+
 [dependencies]
 env_logger = "0.11"
 

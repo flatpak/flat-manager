@@ -1,3 +1,5 @@
+mod client;
+
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::env;
 use std::fs;
