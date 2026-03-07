@@ -81,6 +81,18 @@ pub struct ApiClient {
     token: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct CreateBuildRequest<'a> {
+    repo: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    app_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_download: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build_log_url: Option<&'a str>,
+}
+
 impl ApiClient {
     pub fn new(token: impl Into<String>) -> Self {
         let client = reqwest::Client::builder()
@@ -172,5 +184,23 @@ impl ApiClient {
                 Err(err) => return Err(err),
             }
         }
+    }
+
+    pub async fn create_build(
+        &self,
+        manager_url: &str,
+        repo: &str,
+        app_id: Option<&str>,
+        public_download: Option<bool>,
+        build_log_url: Option<&str>,
+    ) -> Result<ApiResponse, ClientError> {
+        let url = format!("{}/api/v1/build", manager_url.trim_end_matches('/'));
+        let body = CreateBuildRequest {
+            repo,
+            app_id,
+            public_download,
+            build_log_url,
+        };
+        self.post_json(&url, &body).await
     }
 }
