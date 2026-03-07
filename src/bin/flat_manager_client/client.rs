@@ -1,4 +1,8 @@
+use reqwest::header::LOCATION;
+use serde::Serialize;
 use serde_json::{json, Value};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::time::{sleep, Instant};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
@@ -63,6 +67,110 @@ impl ClientError {
                     "message": err.to_string(),
                 },
             }),
+        }
+    }
+}
+
+pub struct ApiResponse {
+    pub body: Value,
+    pub location: Option<String>,
+}
+
+pub struct ApiClient {
+    client: reqwest::Client,
+    token: String,
+}
+
+impl ApiClient {
+    pub fn new(token: impl Into<String>) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(90 * 60))
+            .build()
+            .expect("failed to build reqwest client");
+
+        Self {
+            client,
+            token: token.into(),
+        }
+    }
+
+    pub async fn post_json<T>(&self, url: &str, body: &T) -> Result<ApiResponse, ClientError>
+    where
+        T: Serialize + ?Sized,
+    {
+        let deadline = Instant::now() + Duration::from_secs(300);
+        let mut backoff_cap_secs = 1_u64;
+
+        loop {
+            let result = async {
+                let response = self
+                    .client
+                    .post(url)
+                    .bearer_auth(&self.token)
+                    .json(body)
+                    .send()
+                    .await?;
+                let status = response.status();
+                let location = response
+                    .headers()
+                    .get(LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_owned);
+
+                if status.as_u16() != 200 {
+                    let text = response.text().await?;
+                    let body = serde_json::from_str(&text).unwrap_or_else(|_| {
+                        json!({
+                            "message": format!("Non-json error from server: {text}"),
+                        })
+                    });
+
+                    return Err(ClientError::Http {
+                        url: url.to_owned(),
+                        status: status.as_u16(),
+                        body,
+                    });
+                }
+
+                let body = response.json().await?;
+
+                Ok(ApiResponse { body, location })
+            }
+            .await;
+
+            match result {
+                Ok(response) => return Ok(response),
+                Err(err) if err.is_retryable() => {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        return Err(err);
+                    }
+
+                    let remaining = deadline.saturating_duration_since(now);
+                    let cap = Duration::from_secs(backoff_cap_secs.min(60));
+                    let sleep_for = if cap <= Duration::from_secs(1) {
+                        cap
+                    } else {
+                        let cap_ms = cap.as_millis() as u64;
+                        let min_ms = 1_000_u64;
+                        let span_ms = cap_ms - min_ms;
+                        let seed = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or(Duration::ZERO)
+                            .subsec_nanos() as u64;
+                        Duration::from_millis(min_ms + (seed % (span_ms + 1)))
+                    }
+                    .min(remaining);
+
+                    if sleep_for.is_zero() {
+                        return Err(err);
+                    }
+
+                    sleep(sleep_for).await;
+                    backoff_cap_secs = backoff_cap_secs.saturating_mul(2).min(60);
+                }
+                Err(err) => return Err(err),
+            }
         }
     }
 }
