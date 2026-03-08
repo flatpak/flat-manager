@@ -304,6 +304,25 @@ async fn run(
                 .await
                 .map(|response| response.body),
         ),
+        Command::CreateToken(args) => {
+            let resp = client
+                .create_token(
+                    &args.manager_url,
+                    &args.name,
+                    &args.subject,
+                    &args.scope,
+                    i64::from(args.duration),
+                )
+                .await;
+            if let Ok(ref resp) = resp {
+                if !print_output {
+                    if let Some(token) = resp.body.get("token").and_then(Value::as_str) {
+                        println!("{token}");
+                    }
+                }
+            }
+            ("create-token", resp.map(|response| response.body))
+        }
         _ => (
             "unknown",
             Err(ClientError::Usage("Not yet implemented".into())),

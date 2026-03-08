@@ -100,6 +100,14 @@ struct PruneRequest<'a> {
     repo: &'a str,
 }
 
+#[derive(Serialize)]
+struct CreateTokenRequest<'a> {
+    name: &'a str,
+    sub: &'a str,
+    scope: &'a [String],
+    duration: i64,
+}
+
 fn is_build_in_use_purge_error(body: &Value) -> bool {
     body.get("message").and_then(Value::as_str) == Some(PURGE_IN_USE_MESSAGE)
 }
@@ -241,6 +249,25 @@ impl ApiClient {
 
         self.post_json(&url, &body).await
     }
+
+    pub async fn create_token(
+        &self,
+        manager_url: &str,
+        name: &str,
+        sub: &str,
+        scope: &[String],
+        duration: i64,
+    ) -> Result<ApiResponse, ClientError> {
+        let url = format!("{}/api/v1/token_subset", manager_url.trim_end_matches('/'));
+        let body = CreateTokenRequest {
+            name,
+            sub,
+            scope,
+            duration,
+        };
+
+        self.post_json(&url, &body).await
+    }
 }
 
 #[cfg(test)]
@@ -256,5 +283,26 @@ mod tests {
             "message": "some other error",
         })));
         assert!(!is_build_in_use_purge_error(&json!({})));
+    }
+
+    #[test]
+    fn serializes_create_token_request_with_sub() {
+        let body = serde_json::to_value(CreateTokenRequest {
+            name: "subset",
+            sub: "build/123",
+            scope: &["build".to_string(), "upload".to_string()],
+            duration: 3600,
+        })
+        .unwrap();
+
+        assert_eq!(
+            body,
+            json!({
+                "name": "subset",
+                "sub": "build/123",
+                "scope": ["build", "upload"],
+                "duration": 3600,
+            })
+        );
     }
 }
