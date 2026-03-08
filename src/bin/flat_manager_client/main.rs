@@ -290,7 +290,17 @@ async fn run(
                 }),
             )
         }
-        _ => ("unknown", Err(ClientError::Usage("Not yet implemented".into()))),
+        Command::Purge(args) => (
+            "purge",
+            client
+                .purge_build(&args.build_url)
+                .await
+                .map(|response| response.body),
+        ),
+        _ => (
+            "unknown",
+            Err(ClientError::Usage("Not yet implemented".into())),
+        ),
     }
 }
 

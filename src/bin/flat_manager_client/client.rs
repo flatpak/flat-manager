@@ -81,6 +81,8 @@ pub struct ApiClient {
     token: String,
 }
 
+const PURGE_IN_USE_MESSAGE: &str = "Can't prune build while in use";
+
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct CreateBuildRequest<'a> {
@@ -91,6 +93,10 @@ struct CreateBuildRequest<'a> {
     public_download: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     build_log_url: Option<&'a str>,
+}
+
+fn is_build_in_use_purge_error(body: &Value) -> bool {
+    body.get("message").and_then(Value::as_str) == Some(PURGE_IN_USE_MESSAGE)
 }
 
 impl ApiClient {
@@ -202,5 +208,37 @@ impl ApiClient {
             build_log_url,
         };
         self.post_json(&url, &body).await
+    }
+
+    pub async fn purge_build(&self, build_url: &str) -> Result<ApiResponse, ClientError> {
+        let url = format!("{}/purge", build_url.trim_end_matches('/'));
+        let body = json!({});
+
+        match self.post_json(&url, &body).await {
+            Ok(response) => Ok(response),
+            Err(ClientError::Http {
+                status: 400, body, ..
+            }) if is_build_in_use_purge_error(&body) => Ok(ApiResponse {
+                body: json!({}),
+                location: None,
+            }),
+            Err(err) => Err(err),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_build_in_use_purge_error() {
+        assert!(is_build_in_use_purge_error(&json!({
+            "message": PURGE_IN_USE_MESSAGE,
+        })));
+        assert!(!is_build_in_use_purge_error(&json!({
+            "message": "some other error",
+        })));
+        assert!(!is_build_in_use_purge_error(&json!({})));
     }
 }
