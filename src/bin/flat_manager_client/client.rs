@@ -95,6 +95,11 @@ struct CreateBuildRequest<'a> {
     build_log_url: Option<&'a str>,
 }
 
+#[derive(Serialize)]
+struct PruneRequest<'a> {
+    repo: &'a str,
+}
+
 fn is_build_in_use_purge_error(body: &Value) -> bool {
     body.get("message").and_then(Value::as_str) == Some(PURGE_IN_USE_MESSAGE)
 }
@@ -224,6 +229,17 @@ impl ApiClient {
             }),
             Err(err) => Err(err),
         }
+    }
+
+    pub async fn prune_repo(
+        &self,
+        manager_url: &str,
+        repo: &str,
+    ) -> Result<ApiResponse, ClientError> {
+        let url = format!("{}/api/v1/prune", manager_url.trim_end_matches('/'));
+        let body = PruneRequest { repo };
+
+        self.post_json(&url, &body).await
     }
 }
 

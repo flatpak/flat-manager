@@ -297,6 +297,13 @@ async fn run(
                 .await
                 .map(|response| response.body),
         ),
+        Command::Prune(args) => (
+            "prune",
+            client
+                .prune_repo(&args.manager_url, &args.repo)
+                .await
+                .map(|response| response.body),
+        ),
         _ => (
             "unknown",
             Err(ClientError::Usage("Not yet implemented".into())),
