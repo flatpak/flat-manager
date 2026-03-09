@@ -1,7 +1,7 @@
 mod client;
 
 use clap::{Args, Parser, Subcommand};
-use client::{ApiClient, ClientError};
+use client::{ApiClient, ClientError, JobPoller};
 use log::LevelFilter;
 use serde_json::{json, Value};
 use std::env;
@@ -323,6 +323,12 @@ async fn run(
             }
             ("create-token", resp.map(|response| response.body))
         }
+        Command::FollowJob(args) => (
+            "follow-job",
+            JobPoller::new(client, &args.job_url)
+                .poll_to_completion()
+                .await,
+        ),
         _ => (
             "unknown",
             Err(ClientError::Usage("Not yet implemented".into())),

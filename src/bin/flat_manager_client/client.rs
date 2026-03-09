@@ -1,6 +1,8 @@
-use reqwest::header::LOCATION;
-use serde::Serialize;
+use reqwest::{header::LOCATION, Method};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::error::Error;
+use std::io::ErrorKind;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::time::{sleep, Instant};
 
@@ -21,6 +23,9 @@ pub enum ClientError {
 
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
+
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -57,6 +62,13 @@ impl ClientError {
                 "type": "exception",
                 "details": {
                     "error-type": "reqwest",
+                    "message": err.to_string(),
+                },
+            }),
+            ClientError::Json(err) => json!({
+                "type": "exception",
+                "details": {
+                    "error-type": "json",
                     "message": err.to_string(),
                 },
             }),
@@ -108,8 +120,97 @@ struct CreateTokenRequest<'a> {
     duration: i64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct JobRequest {
+    log_offset: usize,
+}
+
+#[derive(Debug, Deserialize)]
+struct JobResponse {
+    status: JobStatus,
+    #[serde(default)]
+    log: String,
+    start_after: Option<SystemTime>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum JobStatus {
+    Queued = 0,
+    Running = 1,
+    Completed = 2,
+    Failed = 3,
+}
+
+impl<'de> Deserialize<'de> for JobStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        match u8::deserialize(deserializer)? {
+            0 => Ok(JobStatus::Queued),
+            1 => Ok(JobStatus::Running),
+            2 => Ok(JobStatus::Completed),
+            3 => Ok(JobStatus::Failed),
+            value => Err(serde::de::Error::custom(format!(
+                "invalid job status {value}"
+            ))),
+        }
+    }
+}
+
 fn is_build_in_use_purge_error(body: &Value) -> bool {
     body.get("message").and_then(Value::as_str) == Some(PURGE_IN_USE_MESSAGE)
+}
+
+fn is_connection_reset(err: &reqwest::Error) -> bool {
+    let mut source = err.source();
+
+    while let Some(source_err) = source {
+        if let Some(io_err) = source_err.downcast_ref::<std::io::Error>() {
+            if io_err.kind() == ErrorKind::ConnectionReset {
+                return true;
+            }
+        }
+        source = source_err.source();
+    }
+
+    false
+}
+
+fn poll_sleep_duration(iterations_since_change: u32) -> Duration {
+    if iterations_since_change <= 1 {
+        Duration::from_secs(1)
+    } else if iterations_since_change < 5 {
+        Duration::from_secs(3)
+    } else if iterations_since_change < 15 {
+        Duration::from_secs(5)
+    } else if iterations_since_change < 30 {
+        Duration::from_secs(10)
+    } else {
+        Duration::from_secs(60)
+    }
+}
+
+pub fn reparse_job_results(job: &mut Value) -> Result<(), ClientError> {
+    if let Some(results) = job.get_mut("results") {
+        if let Some(results_str) = results.as_str() {
+            *results = serde_json::from_str(results_str)?;
+        }
+    }
+
+    Ok(())
+}
+
+pub struct JobPoller<'a> {
+    client: &'a ApiClient,
+    job_url: String,
+    printed_len: usize,
+    iterations_since_change: u32,
+    error_iterations: u32,
+    old_status: JobStatus,
+    reported_delay: bool,
 }
 
 impl ApiClient {
@@ -125,7 +226,12 @@ impl ApiClient {
         }
     }
 
-    pub async fn post_json<T>(&self, url: &str, body: &T) -> Result<ApiResponse, ClientError>
+    async fn request_with_retry<T>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&T>,
+    ) -> Result<ApiResponse, ClientError>
     where
         T: Serialize + ?Sized,
     {
@@ -134,13 +240,14 @@ impl ApiClient {
 
         loop {
             let result = async {
-                let response = self
+                let mut request = self
                     .client
-                    .post(url)
-                    .bearer_auth(&self.token)
-                    .json(body)
-                    .send()
-                    .await?;
+                    .request(method.clone(), url)
+                    .bearer_auth(&self.token);
+                if let Some(body) = body {
+                    request = request.json(body);
+                }
+                let response = request.send().await?;
                 let status = response.status();
                 let location = response
                     .headers()
@@ -203,6 +310,20 @@ impl ApiClient {
                 Err(err) => return Err(err),
             }
         }
+    }
+
+    pub async fn post_json<T>(&self, url: &str, body: &T) -> Result<ApiResponse, ClientError>
+    where
+        T: Serialize + ?Sized,
+    {
+        self.request_with_retry(Method::POST, url, Some(body)).await
+    }
+
+    pub async fn get_json<T>(&self, url: &str, body: Option<&T>) -> Result<ApiResponse, ClientError>
+    where
+        T: Serialize + ?Sized,
+    {
+        self.request_with_retry(Method::GET, url, body).await
     }
 
     pub async fn create_build(
@@ -270,6 +391,92 @@ impl ApiClient {
     }
 }
 
+impl<'a> JobPoller<'a> {
+    pub fn new(client: &'a ApiClient, job_url: impl Into<String>) -> Self {
+        Self {
+            client,
+            job_url: job_url.into(),
+            printed_len: 0,
+            iterations_since_change: 0,
+            error_iterations: 0,
+            old_status: JobStatus::Queued,
+            reported_delay: false,
+        }
+    }
+
+    pub async fn poll_to_completion(&mut self) -> Result<Value, ClientError> {
+        loop {
+            let body = JobRequest {
+                log_offset: self.printed_len,
+            };
+
+            match self.client.get_json(&self.job_url, Some(&body)).await {
+                Ok(mut response) => {
+                    self.error_iterations = 0;
+
+                    let job: JobResponse = serde_json::from_value(response.body.clone())?;
+
+                    if job.status == JobStatus::Queued && !self.reported_delay {
+                        self.reported_delay = true;
+                        if let Some(start_after) = job.start_after {
+                            if let Ok(delay) = start_after.duration_since(SystemTime::now()) {
+                                if delay.as_secs() > 0 {
+                                    println!(
+                                        "Waiting {} seconds before starting job",
+                                        delay.as_secs()
+                                    );
+                                }
+                            }
+                        }
+                    }
+
+                    if job.status == JobStatus::Running && self.old_status != JobStatus::Running {
+                        println!("/ Job was started");
+                    }
+                    self.old_status = job.status;
+
+                    if !job.log.is_empty() {
+                        self.iterations_since_change = 0;
+                        for line in job.log.split_inclusive('\n') {
+                            print!("| {line}");
+                        }
+                        self.printed_len += job.log.len();
+                    } else {
+                        self.iterations_since_change += 1;
+                    }
+
+                    match job.status {
+                        JobStatus::Queued | JobStatus::Running => {}
+                        JobStatus::Completed => {
+                            println!("\\ Job completed successfully");
+                            reparse_job_results(&mut response.body)?;
+                            return Ok(response.body);
+                        }
+                        JobStatus::Failed => {
+                            println!("\\ Job failed");
+                            reparse_job_results(&mut response.body)?;
+                            return Err(ClientError::FailedJob(response.body));
+                        }
+                    }
+                }
+                Err(err @ ClientError::Http { status, .. }) => {
+                    self.iterations_since_change = 4;
+                    self.error_iterations += 1;
+                    if self.error_iterations <= 5 {
+                        println!("Unexpected response {status} getting job log, ignoring");
+                    } else {
+                        return Err(err);
+                    }
+                }
+                Err(ClientError::Reqwest(err)) if is_connection_reset(&err) => {}
+                Err(err) => return Err(err),
+            }
+
+            sleep(poll_sleep_duration(self.iterations_since_change)).await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -304,5 +511,50 @@ mod tests {
                 "duration": 3600,
             })
         );
+    }
+
+    #[test]
+    fn deserializes_job_status_from_integer() {
+        assert_eq!(
+            serde_json::from_value::<JobStatus>(json!(0)).unwrap(),
+            JobStatus::Queued
+        );
+        assert_eq!(
+            serde_json::from_value::<JobStatus>(json!(1)).unwrap(),
+            JobStatus::Running
+        );
+        assert_eq!(
+            serde_json::from_value::<JobStatus>(json!(2)).unwrap(),
+            JobStatus::Completed
+        );
+        assert_eq!(
+            serde_json::from_value::<JobStatus>(json!(3)).unwrap(),
+            JobStatus::Failed
+        );
+    }
+
+    #[test]
+    fn reparses_job_results_string() {
+        let mut job = json!({
+            "results": "{\"update-repo-job\": 42}",
+        });
+
+        reparse_job_results(&mut job).unwrap();
+
+        assert_eq!(
+            job["results"],
+            json!({
+                "update-repo-job": 42,
+            })
+        );
+    }
+
+    #[test]
+    fn uses_expected_poll_backoff_schedule() {
+        assert_eq!(poll_sleep_duration(0), Duration::from_secs(1));
+        assert_eq!(poll_sleep_duration(2), Duration::from_secs(3));
+        assert_eq!(poll_sleep_duration(5), Duration::from_secs(5));
+        assert_eq!(poll_sleep_duration(15), Duration::from_secs(10));
+        assert_eq!(poll_sleep_duration(30), Duration::from_secs(60));
     }
 }
