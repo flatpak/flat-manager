@@ -121,6 +121,14 @@ struct CreateTokenRequest<'a> {
 }
 
 #[derive(Serialize)]
+struct CommitRequest<'a> {
+    endoflife: Option<&'a str>,
+    endoflife_rebase: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    token_type: Option<i32>,
+}
+
+#[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 struct JobRequest {
     log_offset: usize,
@@ -132,6 +140,28 @@ struct JobResponse {
     #[serde(default)]
     log: String,
     start_after: Option<SystemTime>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildExtendedResponse {
+    build: BuildSummary,
+    #[serde(default)]
+    checks: Vec<BuildCheck>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BuildSummary {
+    repo_state: i16,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct BuildCheck {
+    check_name: String,
+    build_id: i32,
+    job_id: i32,
+    status: i16,
+    status_reason: Option<String>,
+    results: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,6 +231,15 @@ pub fn reparse_job_results(job: &mut Value) -> Result<(), ClientError> {
     }
 
     Ok(())
+}
+
+fn with_location(mut body: Value, location: String) -> Value {
+    body["location"] = Value::String(location);
+    body
+}
+
+fn failed_check(checks: &[BuildCheck]) -> Option<&BuildCheck> {
+    checks.iter().find(|check| check.status == 3)
 }
 
 pub struct JobPoller<'a> {
@@ -389,6 +428,74 @@ impl ApiClient {
 
         self.post_json(&url, &body).await
     }
+
+    pub async fn wait_for_checks(&self, build_url: &str) -> Result<(), ClientError> {
+        let build_url = build_url.trim_end_matches('/');
+        let extended_url = format!("{build_url}/extended");
+
+        println!("Waiting for checks, if any...");
+        let build = loop {
+            match self.get_json::<()>(&extended_url, None).await {
+                Ok(response) => {
+                    let build: BuildExtendedResponse = serde_json::from_value(response.body)?;
+                    if build.build.repo_state == 1 {
+                        sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    break build;
+                }
+                Err(ClientError::Http { status: 404, .. }) => return Ok(()),
+                Err(err) => return Err(err),
+            }
+        };
+
+        for check in &build.checks {
+            println!("Waiting for check: {}", check.check_name);
+            let check_job_url = format!("{build_url}/check/{}/job", check.check_name);
+            JobPoller::new(self, check_job_url)
+                .poll_to_completion()
+                .await?;
+        }
+
+        match self.get_json::<()>(&extended_url, None).await {
+            Ok(response) => {
+                let build: BuildExtendedResponse = serde_json::from_value(response.body)?;
+                if let Some(check) = failed_check(&build.checks) {
+                    println!("\\ Check {} has failed", check.check_name);
+                    return Err(ClientError::FailedJob(serde_json::to_value(check)?));
+                }
+                Ok(())
+            }
+            Err(ClientError::Http { status: 404, .. }) => Ok(()),
+            Err(err) => Err(err),
+        }
+    }
+
+    pub async fn commit_build(
+        &self,
+        build_url: &str,
+        endoflife: Option<&str>,
+        endoflife_rebase: Option<&str>,
+        token_type: Option<i32>,
+    ) -> Result<Value, ClientError> {
+        let build_url = build_url.trim_end_matches('/');
+        let url = format!("{build_url}/commit");
+        let body = CommitRequest {
+            endoflife,
+            endoflife_rebase,
+            token_type,
+        };
+        let response = self.post_json(&url, &body).await?;
+        let job_url = response
+            .location
+            .ok_or_else(|| ClientError::Usage("Missing location header for commit job".into()))?;
+
+        println!("Waiting for commit job");
+        self.wait_for_checks(build_url).await?;
+
+        let job = JobPoller::new(self, &job_url).poll_to_completion().await?;
+        Ok(with_location(job, job_url))
+    }
 }
 
 impl<'a> JobPoller<'a> {
@@ -514,6 +621,24 @@ mod tests {
     }
 
     #[test]
+    fn serializes_commit_request_like_python() {
+        let body = serde_json::to_value(CommitRequest {
+            endoflife: None,
+            endoflife_rebase: Some("org.example.NewApp"),
+            token_type: None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            body,
+            json!({
+                "endoflife": null,
+                "endoflife_rebase": "org.example.NewApp",
+            })
+        );
+    }
+
+    #[test]
     fn deserializes_job_status_from_integer() {
         assert_eq!(
             serde_json::from_value::<JobStatus>(json!(0)).unwrap(),
@@ -546,6 +671,33 @@ mod tests {
             json!({
                 "update-repo-job": 42,
             })
+        );
+    }
+
+    #[test]
+    fn finds_failed_checks() {
+        let checks = vec![
+            BuildCheck {
+                check_name: "lint".into(),
+                build_id: 1,
+                job_id: 2,
+                status: 1,
+                status_reason: None,
+                results: None,
+            },
+            BuildCheck {
+                check_name: "e2e".into(),
+                build_id: 1,
+                job_id: 3,
+                status: 3,
+                status_reason: Some("failed".into()),
+                results: None,
+            },
+        ];
+
+        assert_eq!(
+            failed_check(&checks).map(|check| check.check_name.as_str()),
+            Some("e2e")
         );
     }
 

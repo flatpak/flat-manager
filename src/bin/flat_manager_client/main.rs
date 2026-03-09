@@ -323,6 +323,17 @@ async fn run(
             }
             ("create-token", resp.map(|response| response.body))
         }
+        Command::Commit(args) => (
+            "commit",
+            client
+                .commit_build(
+                    &args.build_url,
+                    args.end_of_life.as_deref(),
+                    args.end_of_life_rebase.as_deref(),
+                    args.token_type,
+                )
+                .await,
+        ),
         Command::FollowJob(args) => (
             "follow-job",
             JobPoller::new(client, &args.job_url)
