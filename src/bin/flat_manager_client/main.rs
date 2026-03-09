@@ -334,6 +334,12 @@ async fn run(
                 )
                 .await,
         ),
+        Command::Publish(args) => (
+            "publish",
+            client
+                .publish_build(&args.build_url, args.wait, args.wait_update)
+                .await,
+        ),
         Command::FollowJob(args) => (
             "follow-job",
             JobPoller::new(client, &args.job_url)

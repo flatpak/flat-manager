@@ -238,6 +238,42 @@ fn with_location(mut body: Value, location: String) -> Value {
     body
 }
 
+fn build_url_to_api(build_url: &str) -> Result<String, ClientError> {
+    let build_url = build_url.trim_end_matches('/');
+    let mut parts = build_url.rsplitn(3, '/');
+    let _build_id = parts.next();
+    let segment = parts.next();
+    let api_base = parts.next();
+
+    match (segment, api_base) {
+        (Some("build"), Some(api_base)) => Ok(api_base.to_string()),
+        _ => Err(ClientError::Usage(format!(
+            "Invalid build URL: {build_url}"
+        ))),
+    }
+}
+
+fn publish_current_state(body: &Value) -> Option<String> {
+    if let Some(state) = body.get("current-state").and_then(Value::as_str) {
+        return Some(state.to_string());
+    }
+
+    body.as_str().and_then(|text| {
+        serde_json::from_str::<Value>(text).ok().and_then(|parsed| {
+            parsed
+                .get("current-state")
+                .and_then(Value::as_str)
+                .map(ToOwned::to_owned)
+        })
+    })
+}
+
+fn update_repo_job_id(job: &Value) -> Option<i64> {
+    job.get("results")
+        .and_then(|results| results.get("update-repo-job"))
+        .and_then(Value::as_i64)
+}
+
 fn failed_check(checks: &[BuildCheck]) -> Option<&BuildCheck> {
     checks.iter().find(|check| check.status == 3)
 }
@@ -496,6 +532,91 @@ impl ApiClient {
         let job = JobPoller::new(self, &job_url).poll_to_completion().await?;
         Ok(with_location(job, job_url))
     }
+
+    pub async fn publish_build(
+        &self,
+        build_url: &str,
+        wait: bool,
+        wait_update: bool,
+    ) -> Result<Value, ClientError> {
+        let build_url = build_url.trim_end_matches('/');
+        let url = format!("{build_url}/publish");
+        let body = json!({});
+
+        let response = match self.post_json(&url, &body).await {
+            Ok(response) => response,
+            Err(ClientError::Http {
+                url,
+                status: 400,
+                body,
+            }) => match publish_current_state(&body).as_deref() {
+                Some("published") => {
+                    println!("the build has been already published");
+                    return Ok(json!({}));
+                }
+                Some("publishing") => {
+                    println!("the build is currently being published");
+                    return Ok(json!({}));
+                }
+                Some("validating") => {
+                    println!("the build is still being validated or held for review");
+                    return Ok(json!({}));
+                }
+                Some("failed") => {
+                    println!("the build has failed");
+                    return Err(ClientError::Http {
+                        url,
+                        status: 400,
+                        body,
+                    });
+                }
+                _ => {
+                    return Err(ClientError::Http {
+                        url,
+                        status: 400,
+                        body,
+                    });
+                }
+            },
+            Err(err) => return Err(err),
+        };
+
+        let job_url = response
+            .location
+            .ok_or_else(|| ClientError::Usage("Missing location header for publish job".into()))?;
+
+        let mut job = if wait || wait_update {
+            println!("Waiting for publish job");
+            JobPoller::new(self, &job_url).poll_to_completion().await?
+        } else {
+            response.body
+        };
+
+        reparse_job_results(&mut job)?;
+        job = with_location(job, job_url);
+
+        if let Some(update_job_id) = update_repo_job_id(&job) {
+            println!("Queued repo update job {update_job_id}");
+            let update_job_url = format!("{}/job/{update_job_id}", build_url_to_api(build_url)?);
+
+            let mut update_job = if wait_update {
+                println!("Waiting for repo update job");
+                JobPoller::new(self, &update_job_url)
+                    .poll_to_completion()
+                    .await?
+            } else {
+                let empty_body = json!({});
+                self.get_json(&update_job_url, Some(&empty_body))
+                    .await?
+                    .body
+            };
+
+            reparse_job_results(&mut update_job)?;
+            job["update_job"] = with_location(update_job, update_job_url);
+        }
+
+        Ok(job)
+    }
 }
 
 impl<'a> JobPoller<'a> {
@@ -639,6 +760,22 @@ mod tests {
     }
 
     #[test]
+    fn extracts_publish_current_state_from_embedded_json_string() {
+        assert_eq!(
+            publish_current_state(&json!("{\"current-state\":\"validating\"}")).as_deref(),
+            Some("validating")
+        );
+    }
+
+    #[test]
+    fn converts_build_url_to_api_base() {
+        assert_eq!(
+            build_url_to_api("http://host/api/v1/build/42").unwrap(),
+            "http://host/api/v1"
+        );
+    }
+
+    #[test]
     fn deserializes_job_status_from_integer() {
         assert_eq!(
             serde_json::from_value::<JobStatus>(json!(0)).unwrap(),
@@ -699,6 +836,17 @@ mod tests {
             failed_check(&checks).map(|check| check.check_name.as_str()),
             Some("e2e")
         );
+    }
+
+    #[test]
+    fn extracts_update_repo_job_id_from_results() {
+        let job = json!({
+            "results": {
+                "update-repo-job": 42,
+            }
+        });
+
+        assert_eq!(update_repo_job_id(&job), Some(42));
     }
 
     #[test]
