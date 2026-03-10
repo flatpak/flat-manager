@@ -386,6 +386,10 @@ impl ApiClient {
         self.request_with_retry(Method::POST, url, Some(body)).await
     }
 
+    pub async fn get(&self, url: &str) -> Result<ApiResponse, ClientError> {
+        self.request_with_retry(Method::GET, url, None::<&()>).await
+    }
+
     pub async fn get_json<T>(&self, url: &str, body: Option<&T>) -> Result<ApiResponse, ClientError>
     where
         T: Serialize + ?Sized,
@@ -463,7 +467,7 @@ impl ApiClient {
 
         println!("Waiting for checks, if any...");
         let build = loop {
-            match self.get_json::<()>(&extended_url, None).await {
+            match self.get(&extended_url).await {
                 Ok(response) => {
                     let build: BuildExtendedResponse = serde_json::from_value(response.body)?;
                     if build.build.repo_state == 1 {
@@ -485,7 +489,7 @@ impl ApiClient {
                 .await?;
         }
 
-        match self.get_json::<()>(&extended_url, None).await {
+        match self.get(&extended_url).await {
             Ok(response) => {
                 let build: BuildExtendedResponse = serde_json::from_value(response.body)?;
                 if let Some(check) = failed_check(&build.checks) {
