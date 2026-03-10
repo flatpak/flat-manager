@@ -779,6 +779,14 @@ mod tests {
     }
 
     #[test]
+    fn converts_build_url_to_api_base_with_trailing_slash() {
+        assert_eq!(
+            build_url_to_api("http://host/api/v1/build/42/").unwrap(),
+            "http://host/api/v1"
+        );
+    }
+
+    #[test]
     fn deserializes_job_status_from_integer() {
         assert_eq!(
             serde_json::from_value::<JobStatus>(json!(0)).unwrap(),
