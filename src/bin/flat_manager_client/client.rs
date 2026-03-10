@@ -135,14 +135,6 @@ struct JobRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct JobResponse {
-    status: JobStatus,
-    #[serde(default)]
-    log: String,
-    start_after: Option<SystemTime>,
-}
-
-#[derive(Debug, Deserialize)]
 struct BuildExtendedResponse {
     build: BuildSummary,
     #[serde(default)]
@@ -642,11 +634,20 @@ impl<'a> JobPoller<'a> {
                 Ok(mut response) => {
                     self.error_iterations = 0;
 
-                    let job: JobResponse = serde_json::from_value(response.body.clone())?;
+                    let status: JobStatus = serde_json::from_value(
+                        response.body.get("status").cloned().unwrap_or_default(),
+                    )?;
+                    let log = response.body.get("log").and_then(Value::as_str).unwrap_or("");
+                    let start_after: Option<SystemTime> = response
+                        .body
+                        .get("start_after")
+                        .cloned()
+                        .map(serde_json::from_value)
+                        .transpose()?;
 
-                    if job.status == JobStatus::Queued && !self.reported_delay {
+                    if status == JobStatus::Queued && !self.reported_delay {
                         self.reported_delay = true;
-                        if let Some(start_after) = job.start_after {
+                        if let Some(start_after) = start_after {
                             if let Ok(delay) = start_after.duration_since(SystemTime::now()) {
                                 if delay.as_secs() > 0 {
                                     println!(
@@ -658,22 +659,22 @@ impl<'a> JobPoller<'a> {
                         }
                     }
 
-                    if job.status != JobStatus::Queued && self.old_status == JobStatus::Queued {
+                    if status != JobStatus::Queued && self.old_status == JobStatus::Queued {
                         println!("/ Job was started");
                     }
-                    self.old_status = job.status;
+                    self.old_status = status;
 
-                    if !job.log.is_empty() {
+                    if !log.is_empty() {
                         self.iterations_since_change = 0;
-                        for line in job.log.split_inclusive('\n') {
+                        for line in log.split_inclusive('\n') {
                             print!("| {line}");
                         }
-                        self.printed_len += job.log.len();
+                        self.printed_len += log.len();
                     } else {
                         self.iterations_since_change += 1;
                     }
 
-                    match job.status {
+                    match status {
                         JobStatus::Queued | JobStatus::Running => {}
                         JobStatus::Completed => {
                             println!("\\ Job completed successfully");
