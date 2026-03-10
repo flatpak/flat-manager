@@ -227,7 +227,7 @@ struct CreateTokenArgs {
         default_value_t = 60 * 60 * 24,
         help = "Duration until expires, in seconds"
     )]
-    duration: i32,
+    duration: i64,
 }
 
 #[derive(Debug, Args)]
@@ -316,7 +316,7 @@ async fn run(
                     &args.name,
                     &args.subject,
                     &args.scope,
-                    i64::from(args.duration),
+                    args.duration,
                 )
                 .await;
             if let Ok(ref resp) = resp {
