@@ -658,7 +658,7 @@ impl<'a> JobPoller<'a> {
                         }
                     }
 
-                    if job.status == JobStatus::Running && self.old_status != JobStatus::Running {
+                    if job.status != JobStatus::Queued && self.old_status == JobStatus::Queued {
                         println!("/ Job was started");
                     }
                     self.old_status = job.status;
