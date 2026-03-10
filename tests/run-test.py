@@ -61,7 +61,15 @@ exec(
 
 # Generate a flat-manager token
 os.environ["REPO_TOKEN"] = exec(
-    ["cargo", "run", "--bin=gentoken", "--", "--secret=secret", "--repo=stable"]
+    [
+        "cargo",
+        "run",
+        "--bin=flat-manager-client",
+        "--",
+        "gentoken",
+        "--secret=secret",
+        "--repo=stable",
+    ]
 )
 
 # Create a new build and save the repo URL
@@ -98,8 +106,9 @@ os.environ["REPO_TOKEN"] = exec(
     [
         "cargo",
         "run",
-        "--bin=gentoken",
+        "--bin=flat-manager-client",
         "--",
+        "gentoken",
         "--secret=secret",
         "--repo=stable",
         "--scope=tokenmanagement",
