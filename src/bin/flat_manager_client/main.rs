@@ -104,7 +104,6 @@ struct CreateArgs {
     build_log_url: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct PushArgs {
     #[arg(value_name = "build_url", help = "Remote build URL")]
@@ -357,10 +356,7 @@ async fn run(
                 "gentoken is handled before API client initialization".into(),
             )),
         ),
-        Command::Push(_) => (
-            "push",
-            Err(ClientError::Usage("Push not yet implemented".into())),
-        ),
+        Command::Push(args) => ("push", client.push_build(&args).await),
     }
 }
 

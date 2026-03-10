@@ -1,9 +1,21 @@
-use reqwest::{header::LOCATION, Method};
+use super::PushArgs;
+use flate2::{write::GzEncoder, Compression};
+use flatmanager::ostree::Delta;
+use libostree::{self, gio, glib};
+use reqwest::{
+    header::{CONTENT_ENCODING, CONTENT_TYPE, LOCATION},
+    multipart, Method,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::error::Error;
-use std::io::ErrorKind;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    future::Future,
+    io::{ErrorKind, Write},
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tokio::time::{sleep, Instant};
 
 #[derive(Debug, thiserror::Error)]
@@ -20,6 +32,9 @@ pub enum ClientError {
 
     #[error("{0}")]
     Usage(String),
+
+    #[error("OSTree error: {0}")]
+    Ostree(String),
 
     #[error(transparent)]
     Reqwest(#[from] reqwest::Error),
@@ -58,11 +73,15 @@ impl ClientError {
                     "message": message,
                 },
             }),
-            ClientError::Reqwest(_) | ClientError::Json(_) | ClientError::Io(_) => {
+            ClientError::Reqwest(_)
+            | ClientError::Json(_)
+            | ClientError::Io(_)
+            | ClientError::Ostree(_) => {
                 let error_type = match self {
                     ClientError::Reqwest(_) => "reqwest",
                     ClientError::Json(_) => "json",
                     ClientError::Io(_) => "io",
+                    ClientError::Ostree(_) => "ostree",
                     _ => unreachable!(),
                 };
 
@@ -78,6 +97,12 @@ impl ClientError {
     }
 }
 
+impl From<glib::Error> for ClientError {
+    fn from(err: glib::Error) -> Self {
+        ClientError::Ostree(err.to_string())
+    }
+}
+
 pub struct ApiResponse {
     pub body: Value,
     pub location: Option<String>,
@@ -89,6 +114,7 @@ pub struct ApiClient {
 }
 
 const PURGE_IN_USE_MESSAGE: &str = "Can't prune build while in use";
+const UPLOAD_CHUNK_LIMIT: u64 = 4 * 1024 * 1024;
 
 #[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -127,6 +153,31 @@ struct CommitRequest<'a> {
 #[serde(rename_all = "kebab-case")]
 struct JobRequest {
     log_offset: usize,
+}
+
+#[derive(Serialize)]
+struct MissingObjectsRequest<'a> {
+    wanted: &'a [String],
+}
+
+#[derive(Debug, Deserialize)]
+struct MissingObjectsResponse {
+    missing: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct CreateBuildRefRequest<'a> {
+    #[serde(rename = "ref")]
+    ref_name: &'a str,
+    commit: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    build_log_url: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct AddExtraIdsRequest<'a> {
+    ids: &'a [String],
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +314,201 @@ fn failed_check(checks: &[BuildCheck]) -> Option<&BuildCheck> {
     checks.iter().find(|check| check.status == 3)
 }
 
+async fn parse_error_body(response: reqwest::Response) -> Result<Value, ClientError> {
+    let text = response.text().await?;
+    Ok(serde_json::from_str(&text).unwrap_or_else(|_| {
+        json!({
+            "message": format!("Non-json error from server: {text}"),
+        })
+    }))
+}
+
+async fn parse_api_response(
+    url: &str,
+    response: reqwest::Response,
+) -> Result<ApiResponse, ClientError> {
+    let status = response.status();
+    let location = response
+        .headers()
+        .get(LOCATION)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+
+    if status.as_u16() != 200 {
+        return Err(ClientError::Http {
+            url: url.to_owned(),
+            status: status.as_u16(),
+            body: parse_error_body(response).await?,
+        });
+    }
+
+    let body = response.json().await?;
+    Ok(ApiResponse { body, location })
+}
+
+fn checksum_from_bytes_variant(
+    variant: &glib::Variant,
+    field_name: &str,
+) -> Result<String, ClientError> {
+    let bytes = variant
+        .fixed_array::<u8>()
+        .map_err(|err| ClientError::Ostree(format!("Invalid {field_name}: {err}")))?;
+    Ok(hex::encode(bytes))
+}
+
+fn load_dirtree(
+    repo: &libostree::Repo,
+    checksum: &str,
+) -> Result<libostree::TreeVariantType, ClientError> {
+    repo.load_variant(libostree::ObjectType::DirTree, checksum)?
+        .try_get::<libostree::TreeVariantType>()
+        .map_err(|err| ClientError::Ostree(format!("Invalid dirtree variant {checksum}: {err}")))
+}
+
+fn local_needed_metadata(
+    repo: &libostree::Repo,
+    commits: &[String],
+) -> Result<HashSet<String>, ClientError> {
+    let mut objects = HashSet::new();
+
+    for commit in commits {
+        let commit_name = format!("{commit}.commit");
+        if !objects.insert(commit_name) {
+            continue;
+        }
+
+        let (commit_v, _state) = repo.load_commit(commit)?;
+        let dirtree_content =
+            checksum_from_bytes_variant(&commit_v.child_value(6), "commit root tree checksum")?;
+        let dirtree_meta =
+            checksum_from_bytes_variant(&commit_v.child_value(7), "commit root meta checksum")?;
+        local_needed_metadata_dirtree(repo, &mut objects, &dirtree_content, &dirtree_meta)?;
+    }
+
+    Ok(objects)
+}
+
+fn local_needed_metadata_dirtree(
+    repo: &libostree::Repo,
+    objects: &mut HashSet<String>,
+    dirtree_content: &str,
+    dirtree_meta: &str,
+) -> Result<(), ClientError> {
+    objects.insert(format!("{dirtree_meta}.dirmeta"));
+
+    let dirtree_name = format!("{dirtree_content}.dirtree");
+    if !objects.insert(dirtree_name) {
+        return Ok(());
+    }
+
+    let (_files, dirs) = load_dirtree(repo, dirtree_content)?;
+    for (_name, content_checksum, meta_checksum) in dirs {
+        local_needed_metadata_dirtree(
+            repo,
+            objects,
+            &hex::encode(content_checksum),
+            &hex::encode(meta_checksum),
+        )?;
+    }
+
+    Ok(())
+}
+
+fn local_needed_files(
+    repo: &libostree::Repo,
+    metadata_objects: &HashSet<String>,
+) -> Result<HashSet<String>, ClientError> {
+    let mut objects = HashSet::new();
+
+    for metadata_object in metadata_objects {
+        if metadata_object.ends_with(".dirtree") {
+            ostree_get_dir_files(repo, &mut objects, metadata_object)?;
+        }
+    }
+
+    Ok(objects)
+}
+
+fn ostree_get_dir_files(
+    repo: &libostree::Repo,
+    objects: &mut HashSet<String>,
+    dirtree: &str,
+) -> Result<(), ClientError> {
+    let checksum = dirtree
+        .strip_suffix(".dirtree")
+        .ok_or_else(|| ClientError::Usage(format!("Invalid dirtree object: {dirtree}")))?;
+    let (files, _dirs) = load_dirtree(repo, checksum)?;
+
+    for (_name, file_checksum) in files {
+        objects.insert(format!("{}.filez", hex::encode(file_checksum)));
+    }
+
+    Ok(())
+}
+
+fn object_path(repo_path: &str, object_name: &str) -> PathBuf {
+    Path::new(repo_path)
+        .join("objects")
+        .join(&object_name[..2])
+        .join(&object_name[2..])
+}
+
+fn is_lower_hex_checksum(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+}
+
+fn parse_delta_name(name: &str) -> Result<Delta, ClientError> {
+    let parts: Vec<&str> = name.split('-').collect();
+    match parts.as_slice() {
+        [to] if is_lower_hex_checksum(to) => Ok(Delta::new(None, to)),
+        [from, to] if is_lower_hex_checksum(from) && is_lower_hex_checksum(to) => {
+            Ok(Delta::new(Some(from), to))
+        }
+        _ => Delta::from_name(name).map_err(|err| ClientError::Ostree(format!("{name}: {err}"))),
+    }
+}
+
+fn glob_matches(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    let mut pattern_index = 0usize;
+    let mut text_index = 0usize;
+    let mut star_index = None;
+    let mut match_index = 0usize;
+
+    while text_index < text.len() {
+        if pattern_index < pattern.len()
+            && (pattern[pattern_index] == '?' || pattern[pattern_index] == text[text_index])
+        {
+            pattern_index += 1;
+            text_index += 1;
+        } else if pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+            star_index = Some(pattern_index);
+            match_index = text_index;
+            pattern_index += 1;
+        } else if let Some(star) = star_index {
+            pattern_index = star + 1;
+            match_index += 1;
+            text_index = match_index;
+        } else {
+            return false;
+        }
+    }
+
+    while pattern_index < pattern.len() && pattern[pattern_index] == '*' {
+        pattern_index += 1;
+    }
+
+    pattern_index == pattern.len()
+}
+
+fn should_skip_delta(app_id: &str, globs: &[String]) -> bool {
+    globs.iter().any(|glob| glob_matches(glob, app_id))
+}
+
 pub struct JobPoller<'a> {
     client: &'a ApiClient,
     job_url: String,
@@ -286,57 +532,16 @@ impl ApiClient {
         }
     }
 
-    async fn request_with_retry<T>(
-        &self,
-        method: Method,
-        url: &str,
-        body: Option<&T>,
-    ) -> Result<ApiResponse, ClientError>
+    async fn with_retry<F, Fut, T>(&self, mut f: F) -> Result<T, ClientError>
     where
-        T: Serialize + ?Sized,
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T, ClientError>>,
     {
         let deadline = Instant::now() + Duration::from_secs(300);
         let mut backoff_cap_secs = 1_u64;
 
         loop {
-            let result = async {
-                let mut request = self
-                    .client
-                    .request(method.clone(), url)
-                    .bearer_auth(&self.token);
-                if let Some(body) = body {
-                    request = request.json(body);
-                }
-                let response = request.send().await?;
-                let status = response.status();
-                let location = response
-                    .headers()
-                    .get(LOCATION)
-                    .and_then(|value| value.to_str().ok())
-                    .map(str::to_owned);
-
-                if status.as_u16() != 200 {
-                    let text = response.text().await?;
-                    let body = serde_json::from_str(&text).unwrap_or_else(|_| {
-                        json!({
-                            "message": format!("Non-json error from server: {text}"),
-                        })
-                    });
-
-                    return Err(ClientError::Http {
-                        url: url.to_owned(),
-                        status: status.as_u16(),
-                        body,
-                    });
-                }
-
-                let body = response.json().await?;
-
-                Ok(ApiResponse { body, location })
-            }
-            .await;
-
-            match result {
+            match f().await {
                 Ok(response) => return Ok(response),
                 Err(err) if err.is_retryable() => {
                     let now = Instant::now();
@@ -370,6 +575,29 @@ impl ApiClient {
                 Err(err) => return Err(err),
             }
         }
+    }
+
+    async fn request_with_retry<T>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<&T>,
+    ) -> Result<ApiResponse, ClientError>
+    where
+        T: Serialize + ?Sized,
+    {
+        self.with_retry(|| async {
+            let mut request = self
+                .client
+                .request(method.clone(), url)
+                .bearer_auth(&self.token);
+            if let Some(body) = body {
+                request = request.json(body);
+            }
+            let response = request.send().await?;
+            parse_api_response(url, response).await
+        })
+        .await
     }
 
     pub async fn post_json<T>(&self, url: &str, body: &T) -> Result<ApiResponse, ClientError>
@@ -452,6 +680,437 @@ impl ApiClient {
         };
 
         self.post_json(&url, &body).await
+    }
+
+    pub async fn missing_objects(
+        &self,
+        build_url: &str,
+        wanted: &[String],
+    ) -> Result<Vec<String>, ClientError> {
+        let mut missing = Vec::new();
+
+        for chunk in wanted.chunks(2000) {
+            missing.extend(self.missing_objects_chunk(build_url, chunk).await?);
+        }
+
+        Ok(missing)
+    }
+
+    async fn missing_objects_chunk(
+        &self,
+        build_url: &str,
+        chunk: &[String],
+    ) -> Result<Vec<String>, ClientError> {
+        let url = format!("{}/missing_objects", build_url.trim_end_matches('/'));
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&serde_json::to_vec(&MissingObjectsRequest {
+            wanted: chunk,
+        })?)?;
+        let body = encoder.finish()?;
+
+        self.with_retry(|| async {
+            let request = self
+                .client
+                .request(Method::GET, &url)
+                .bearer_auth(&self.token)
+                .header(CONTENT_ENCODING, "gzip")
+                .header(CONTENT_TYPE, "application/json")
+                .body(body.clone())
+                .build()?;
+            let response = self.client.execute(request).await?;
+            let status = response.status();
+
+            if status.as_u16() != 200 {
+                return Err(ClientError::Http {
+                    url: url.clone(),
+                    status: status.as_u16(),
+                    body: parse_error_body(response).await?,
+                });
+            }
+
+            Ok(response.json::<MissingObjectsResponse>().await?.missing)
+        })
+        .await
+    }
+
+    async fn upload_files(
+        &self,
+        build_url: &str,
+        files: Vec<(PathBuf, String)>,
+    ) -> Result<(), ClientError> {
+        if files.is_empty() {
+            return Ok(());
+        }
+
+        let total_size = files.iter().try_fold(0u64, |total, (path, _)| {
+            Ok::<u64, std::io::Error>(total + std::fs::metadata(path)?.len())
+        })?;
+        println!("Uploading {} files ({} bytes)", files.len(), total_size);
+
+        let url = format!("{}/upload", build_url.trim_end_matches('/'));
+        self.with_retry(|| async {
+            let mut form = multipart::Form::new();
+            for (index, (path, filename)) in files.iter().enumerate() {
+                let part = multipart::Part::bytes(std::fs::read(path)?)
+                    .file_name(filename.clone())
+                    .mime_str("application/octet-stream")?;
+                form = form.part(format!("file{index}"), part);
+            }
+
+            let response = self
+                .client
+                .post(&url)
+                .bearer_auth(&self.token)
+                .multipart(form)
+                .send()
+                .await?;
+            let status = response.status();
+
+            if status.as_u16() != 200 {
+                return Err(ClientError::Http {
+                    url: url.clone(),
+                    status: status.as_u16(),
+                    body: parse_error_body(response).await?,
+                });
+            }
+
+            let _ = response.bytes().await?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn upload_objects(
+        &self,
+        repo_path: &str,
+        build_url: &str,
+        objects: &[String],
+    ) -> Result<(), ClientError> {
+        let mut batch = Vec::new();
+        let mut batch_size = 0u64;
+
+        for object in objects {
+            let path = object_path(repo_path, object);
+            let file_size = std::fs::metadata(&path)?.len();
+
+            if batch_size + file_size > UPLOAD_CHUNK_LIMIT && !batch.is_empty() {
+                self.upload_files(build_url, std::mem::take(&mut batch))
+                    .await?;
+                batch_size = 0;
+            }
+
+            batch.push((path, object.clone()));
+            batch_size += file_size;
+
+            if batch_size > UPLOAD_CHUNK_LIMIT {
+                self.upload_files(build_url, std::mem::take(&mut batch))
+                    .await?;
+                batch_size = 0;
+            }
+        }
+
+        if !batch.is_empty() {
+            self.upload_files(build_url, batch).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn upload_deltas(
+        &self,
+        repo_path: &str,
+        build_url: &str,
+        deltas: &[String],
+        refs: &[(String, String)],
+        ignore_delta: &[String],
+    ) -> Result<(), ClientError> {
+        if deltas.is_empty() {
+            return Ok(());
+        }
+
+        let mut req = Vec::new();
+
+        for (ref_name, commit) in refs {
+            let ref_parts: Vec<&str> = ref_name.split('/').collect();
+            if ref_parts.len() != 4 || (ref_parts[0] != "app" && ref_parts[0] != "runtime") {
+                continue;
+            }
+
+            if should_skip_delta(ref_parts[1], ignore_delta) {
+                continue;
+            }
+
+            for delta in deltas {
+                let parsed_delta = parse_delta_name(delta)?;
+                if parsed_delta.from.is_some() || parsed_delta.to != *commit {
+                    continue;
+                }
+
+                println!(" {ref_name}: {}", parsed_delta.to);
+                let encoded_name = parsed_delta
+                    .to_name()
+                    .map_err(|err| ClientError::Ostree(err.to_string()))?;
+                let delta_dir = Path::new(repo_path)
+                    .join("deltas")
+                    .join(&encoded_name[..2])
+                    .join(&encoded_name[2..]);
+
+                let read_dir = match std::fs::read_dir(&delta_dir) {
+                    Ok(read_dir) => read_dir,
+                    Err(err) => {
+                        log::warn!(
+                            "Skipping delta {} at {}: {}",
+                            parsed_delta,
+                            delta_dir.display(),
+                            err
+                        );
+                        continue;
+                    }
+                };
+
+                let mut part_names = Vec::new();
+                for entry in read_dir {
+                    let entry = entry?;
+                    if !entry.file_type()?.is_file() {
+                        continue;
+                    }
+
+                    let part_name = entry.file_name().into_string().map_err(|_| {
+                        ClientError::Ostree(format!(
+                            "Non-utf8 delta part name in {}",
+                            delta_dir.display()
+                        ))
+                    })?;
+                    part_names.push(part_name);
+                }
+                part_names.sort();
+
+                for part_name in part_names {
+                    req.push((
+                        delta_dir.join(&part_name),
+                        format!("{encoded_name}.{part_name}.delta"),
+                    ));
+                }
+            }
+        }
+
+        self.upload_files(build_url, req).await
+    }
+
+    pub async fn create_ref(
+        &self,
+        build_url: &str,
+        ref_name: &str,
+        commit: &str,
+        build_log_url: Option<&str>,
+    ) -> Result<ApiResponse, ClientError> {
+        println!("Creating ref {ref_name} with commit {commit}");
+        let url = format!("{}/build_ref", build_url.trim_end_matches('/'));
+        let body = CreateBuildRefRequest {
+            ref_name,
+            commit,
+            build_log_url,
+        };
+        self.post_json(&url, &body).await
+    }
+
+    pub async fn add_extra_ids(
+        &self,
+        build_url: &str,
+        ids: &[String],
+    ) -> Result<ApiResponse, ClientError> {
+        println!("Adding extra ids {ids:?}");
+        let url = format!("{}/add_extra_ids", build_url.trim_end_matches('/'));
+        let body = AddExtraIdsRequest { ids };
+        self.post_json(&url, &body).await
+    }
+
+    pub async fn get_build(&self, build_url: &str) -> Result<Value, ClientError> {
+        Ok(self.get(build_url).await?.body)
+    }
+
+    pub async fn push_build(&self, args: &PushArgs) -> Result<Value, ClientError> {
+        let repo_file = gio::File::for_path(&args.repo_path);
+        let repo = libostree::Repo::new(&repo_file);
+        repo.open(gio::Cancellable::NONE).map_err(|err| {
+            ClientError::Usage(format!("Can't open repo {}: {}", args.repo_path, err))
+        })?;
+
+        let refs: HashMap<String, String> = if args.branches.is_empty() {
+            repo.list_refs_ext(
+                None,
+                libostree::RepoListRefsExtFlags::NONE,
+                gio::Cancellable::NONE,
+            )?
+            .into_iter()
+            .filter(|(name, _)| {
+                name.starts_with("app/")
+                    || name.starts_with("runtime/")
+                    || name.starts_with("screenshots/")
+            })
+            .collect()
+        } else {
+            let mut refs = HashMap::new();
+            for branch in &args.branches {
+                let rev = repo
+                    .resolve_rev(branch, false)?
+                    .ok_or_else(|| ClientError::Usage(format!("No such ref: {branch}")))?;
+                refs.insert(branch.clone(), rev.to_string());
+            }
+            refs
+        };
+
+        if refs.is_empty() {
+            println!("No matching refs to upload");
+            return self.get_build(&args.build_url).await;
+        }
+
+        let mut ref_pairs: Vec<(String, String)> = refs.into_iter().collect();
+        ref_pairs.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
+
+        let minimal_upload_client = if args.minimal_token {
+            let manager_url = build_url_to_api(&args.build_url)?;
+            let build_id = args
+                .build_url
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .filter(|segment| !segment.is_empty())
+                .ok_or_else(|| ClientError::Usage("Invalid build URL".into()))?;
+            let scope = vec!["upload".to_string()];
+            let response = self
+                .create_token(
+                    &manager_url,
+                    "minimal-upload",
+                    &format!("build/{build_id}"),
+                    &scope,
+                    3600,
+                )
+                .await?;
+            let minimal_token = response
+                .body
+                .get("token")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ClientError::Usage("No token in create-token response".into()))?
+                .to_string();
+            Some(ApiClient::new(minimal_token))
+        } else {
+            None
+        };
+        let upload_client = minimal_upload_client.as_ref().unwrap_or(self);
+
+        let ref_names = ref_pairs
+            .iter()
+            .map(|(ref_name, _)| ref_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Uploading refs to {}: {ref_names}", args.build_url);
+
+        let commits = ref_pairs
+            .iter()
+            .map(|(_, commit)| commit.clone())
+            .collect::<Vec<_>>();
+        let metadata_objects = local_needed_metadata(&repo, &commits)?;
+        println!("Refs contain {} metadata objects", metadata_objects.len());
+
+        let mut wanted_metadata = metadata_objects.iter().cloned().collect::<Vec<_>>();
+        wanted_metadata.sort();
+        let mut missing_metadata = upload_client
+            .missing_objects(&args.build_url, &wanted_metadata)
+            .await?;
+        println!("Remote missing {} of those", missing_metadata.len());
+        missing_metadata.sort();
+
+        let file_objects = local_needed_files(&repo, &metadata_objects)?;
+        println!("Has {} file objects for those", file_objects.len());
+
+        let mut wanted_files = file_objects.iter().cloned().collect::<Vec<_>>();
+        wanted_files.sort();
+        let mut missing_files = upload_client
+            .missing_objects(&args.build_url, &wanted_files)
+            .await?;
+        println!("Remote missing {} of those", missing_files.len());
+        missing_files.sort();
+
+        println!("Uploading file objects");
+        upload_client
+            .upload_objects(&args.repo_path, &args.build_url, &missing_files)
+            .await?;
+
+        println!("Uploading metadata objects");
+        upload_client
+            .upload_objects(&args.repo_path, &args.build_url, &missing_metadata)
+            .await?;
+
+        let deltas = repo
+            .list_static_delta_names(gio::Cancellable::NONE)?
+            .into_iter()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>();
+        println!("Uploading deltas");
+        upload_client
+            .upload_deltas(
+                &args.repo_path,
+                &args.build_url,
+                &deltas,
+                &ref_pairs,
+                &args.ignore_delta,
+            )
+            .await?;
+
+        for (ref_name, commit) in &ref_pairs {
+            upload_client
+                .create_ref(
+                    &args.build_url,
+                    ref_name,
+                    commit,
+                    args.build_log_url.as_deref(),
+                )
+                .await?;
+        }
+
+        if !args.extra_id.is_empty() {
+            upload_client
+                .add_extra_ids(&args.build_url, &args.extra_id)
+                .await?;
+        }
+
+        let commit_job = if args.commit || args.publish {
+            Some(
+                self.commit_build(
+                    &args.build_url,
+                    args.end_of_life.as_deref(),
+                    args.end_of_life_rebase.as_deref(),
+                    args.token_type,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let publish_job = if args.publish {
+            Some(
+                self.publish_build(
+                    &args.build_url,
+                    args.wait || args.wait_update,
+                    args.wait_update,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+
+        let mut data = self.get_build(&args.build_url).await?;
+        if let Some(commit_job) = commit_job {
+            data["commit_job"] = commit_job;
+        }
+        if let Some(publish_job) = publish_job {
+            data["publish_job"] = publish_job;
+        }
+
+        Ok(data)
     }
 
     pub async fn wait_for_checks(&self, build_url: &str) -> Result<(), ClientError> {
@@ -866,5 +1525,38 @@ mod tests {
         assert_eq!(poll_sleep_duration(5), Duration::from_secs(5));
         assert_eq!(poll_sleep_duration(15), Duration::from_secs(10));
         assert_eq!(poll_sleep_duration(30), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn matches_simple_globs() {
+        assert!(glob_matches("org.example.*", "org.example.App"));
+        assert!(glob_matches("org.?xample.App", "org.example.App"));
+        assert!(glob_matches("org.example.App", "org.example.App"));
+        assert!(!glob_matches("org.example.App", "org.example.Other"));
+    }
+
+    #[test]
+    fn skips_deltas_for_matching_globs() {
+        assert!(should_skip_delta(
+            "org.example.App",
+            &["org.example.*".to_string()]
+        ));
+        assert!(!should_skip_delta(
+            "org.example.App",
+            &["org.other.*".to_string()]
+        ));
+        assert!(!should_skip_delta("org.example.App", &[]));
+    }
+
+    #[test]
+    fn builds_object_paths_like_ostree_layout() {
+        let checksum = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let object_name = format!("{checksum}.filez");
+        assert_eq!(
+            object_path("/repo", &object_name),
+            PathBuf::from(format!(
+                "/repo/objects/01/23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.filez"
+            ))
+        );
     }
 }
