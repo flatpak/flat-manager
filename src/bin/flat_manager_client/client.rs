@@ -639,7 +639,11 @@ impl<'a> JobPoller<'a> {
                     let status: JobStatus = serde_json::from_value(
                         response.body.get("status").cloned().unwrap_or_default(),
                     )?;
-                    let log = response.body.get("log").and_then(Value::as_str).unwrap_or("");
+                    let log = response
+                        .body
+                        .get("log")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
                     let start_after: Option<SystemTime> = response
                         .body
                         .get("start_after")
