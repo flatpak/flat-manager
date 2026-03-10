@@ -13,6 +13,7 @@ use std::process;
 #[derive(Debug, Parser)]
 #[command(
     name = "flat-manager-client",
+    subcommand_required = true,
     disable_version_flag = true,
     disable_help_subcommand = true
 )]
@@ -34,7 +35,7 @@ struct Cli {
     )]
     token_file: Option<PathBuf>,
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Debug, Subcommand)]
@@ -55,6 +56,21 @@ enum Command {
     CreateToken(CreateTokenArgs),
     #[command(name = "follow-job", about = "Follow existing job log")]
     FollowJob(FollowJobArgs),
+}
+
+impl Command {
+    fn name(&self) -> &'static str {
+        match self {
+            Command::Create(_) => "create",
+            Command::Push(_) => "push",
+            Command::Commit(_) => "commit",
+            Command::Publish(_) => "publish",
+            Command::Purge(_) => "purge",
+            Command::Prune(_) => "prune",
+            Command::CreateToken(_) => "create-token",
+            Command::FollowJob(_) => "follow-job",
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -232,19 +248,6 @@ fn resolve_token(cli: &Cli) -> Result<String, ClientError> {
     ))
 }
 
-fn command_name(command: &Command) -> &'static str {
-    match command {
-        Command::Create(_) => "create",
-        Command::Push(_) => "push",
-        Command::Commit(_) => "commit",
-        Command::Publish(_) => "publish",
-        Command::Purge(_) => "purge",
-        Command::Prune(_) => "prune",
-        Command::CreateToken(_) => "create-token",
-        Command::FollowJob(_) => "follow-job",
-    }
-}
-
 async fn run(
     command: Command,
     client: &ApiClient,
@@ -372,16 +375,11 @@ async fn main() {
         })
         .init();
 
-    if cli.command.is_none() {
-        println!("No subcommand specified, see --help for usage");
-        process::exit(1);
-    }
-
     let token = resolve_token(&cli);
     let print_output = cli.print_output;
     let output_path = cli.output.clone();
-    let command = cli.command.expect("checked above");
-    let default_cmd_name = command_name(&command);
+    let command = cli.command;
+    let default_cmd_name = command.name();
 
     let (cmd_name, result) = match token {
         Ok(token) => {
