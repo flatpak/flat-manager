@@ -58,27 +58,22 @@ impl ClientError {
                     "message": message,
                 },
             }),
-            ClientError::Reqwest(err) => json!({
-                "type": "exception",
-                "details": {
-                    "error-type": "reqwest",
-                    "message": err.to_string(),
-                },
-            }),
-            ClientError::Json(err) => json!({
-                "type": "exception",
-                "details": {
-                    "error-type": "json",
-                    "message": err.to_string(),
-                },
-            }),
-            ClientError::Io(err) => json!({
-                "type": "exception",
-                "details": {
-                    "error-type": "io",
-                    "message": err.to_string(),
-                },
-            }),
+            ClientError::Reqwest(_) | ClientError::Json(_) | ClientError::Io(_) => {
+                let error_type = match self {
+                    ClientError::Reqwest(_) => "reqwest",
+                    ClientError::Json(_) => "json",
+                    ClientError::Io(_) => "io",
+                    _ => unreachable!(),
+                };
+
+                json!({
+                    "type": "exception",
+                    "details": {
+                        "error-type": error_type,
+                        "message": self.to_string(),
+                    },
+                })
+            }
         }
     }
 }
