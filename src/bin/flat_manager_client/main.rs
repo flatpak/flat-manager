@@ -87,12 +87,13 @@ struct CreateArgs {
     app_id: Option<String>,
     #[arg(
         long = "public_download",
+        conflicts_with = "no_public_download",
         help = "Allow public read access to the build repo"
     )]
     public_download: bool,
     #[arg(
         long = "no_public_download",
-        help = "Allow public read access to the build repo"
+        help = "Disallow public read access to the build repo"
     )]
     no_public_download: bool,
     #[arg(
