@@ -140,7 +140,6 @@ struct PushArgs {
     build_log_url: Option<String>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct CommitArgs {
     #[arg(long, help = "Wait for commit to finish")]
@@ -167,7 +166,6 @@ struct CommitArgs {
     build_url: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct PublishArgs {
     #[arg(long, help = "Wait for publish to finish")]
@@ -178,14 +176,12 @@ struct PublishArgs {
     build_url: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct PurgeArgs {
     #[arg(value_name = "build_url", help = "Remote build URL")]
     build_url: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct PruneArgs {
     #[arg(value_name = "manager_url", help = "Remote repo manager URL")]
@@ -194,7 +190,6 @@ struct PruneArgs {
     repo: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct CreateTokenArgs {
     #[arg(value_name = "manager_url", help = "Remote repo manager URL")]
@@ -214,7 +209,6 @@ struct CreateTokenArgs {
     duration: i32,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Args)]
 struct FollowJobArgs {
     #[arg(value_name = "job_url", help = "URL of job")]
