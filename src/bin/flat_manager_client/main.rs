@@ -340,9 +340,9 @@ async fn run(
                 .poll_to_completion()
                 .await,
         ),
-        _ => (
-            "unknown",
-            Err(ClientError::Usage("Not yet implemented".into())),
+        Command::Push(_) => (
+            "push",
+            Err(ClientError::Usage("Push not yet implemented".into())),
         ),
     }
 }
