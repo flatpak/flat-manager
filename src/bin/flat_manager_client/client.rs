@@ -151,7 +151,8 @@ struct BuildCheck {
     results: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "u8")]
 #[repr(u8)]
 pub enum JobStatus {
     Queued = 0,
@@ -160,19 +161,16 @@ pub enum JobStatus {
     Failed = 3,
 }
 
-impl<'de> Deserialize<'de> for JobStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        match u8::deserialize(deserializer)? {
-            0 => Ok(JobStatus::Queued),
-            1 => Ok(JobStatus::Running),
-            2 => Ok(JobStatus::Completed),
-            3 => Ok(JobStatus::Failed),
-            value => Err(serde::de::Error::custom(format!(
-                "invalid job status {value}"
-            ))),
+impl TryFrom<u8> for JobStatus {
+    type Error = String;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Queued),
+            1 => Ok(Self::Running),
+            2 => Ok(Self::Completed),
+            3 => Ok(Self::Failed),
+            _ => Err(format!("invalid job status {value}")),
         }
     }
 }
