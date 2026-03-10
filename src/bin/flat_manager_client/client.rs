@@ -584,6 +584,8 @@ impl ApiClient {
             response.body
         };
 
+        // In the non-wait path this is still the initial POST response body, not the
+        // already-reparsed terminal job payload returned by JobPoller.
         reparse_job_results(&mut job)?;
         job = with_location(job, job_url);
 
