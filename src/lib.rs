@@ -7,6 +7,7 @@ mod db;
 mod delayed;
 mod deltas;
 pub mod errors;
+pub mod gentoken;
 mod jobs;
 mod logger;
 mod models;

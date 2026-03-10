@@ -2,6 +2,7 @@ mod client;
 
 use clap::{Args, Parser, Subcommand};
 use client::{ApiClient, ClientError, JobPoller};
+use flatmanager::gentoken::{run_gentoken, GentokenArgs};
 use log::LevelFilter;
 use serde_json::{json, Value};
 use std::env;
@@ -56,6 +57,8 @@ enum Command {
     CreateToken(CreateTokenArgs),
     #[command(name = "follow-job", about = "Follow existing job log")]
     FollowJob(FollowJobArgs),
+    #[command(name = "gentoken", about = "Generate token for flat-manager")]
+    Gentoken(GentokenArgs),
 }
 
 impl Command {
@@ -69,6 +72,7 @@ impl Command {
             Command::Prune(_) => "prune",
             Command::CreateToken(_) => "create-token",
             Command::FollowJob(_) => "follow-job",
+            Command::Gentoken(_) => "gentoken",
         }
     }
 }
@@ -231,11 +235,14 @@ struct FollowJobArgs {
     job_url: String,
 }
 
-fn resolve_token(cli: &Cli) -> Result<String, ClientError> {
-    if let Some(ref token) = cli.token {
+fn resolve_token(
+    token: &Option<String>,
+    token_file: Option<&PathBuf>,
+) -> Result<String, ClientError> {
+    if let Some(token) = token {
         return Ok(token.clone());
     }
-    if let Some(ref path) = cli.token_file {
+    if let Some(path) = token_file {
         let contents = fs::read(path)?;
         let first_line = contents.split(|&b| b == b'\n').next().unwrap_or(&contents);
         return Ok(String::from_utf8_lossy(first_line).trim().to_string());
@@ -343,6 +350,12 @@ async fn run(
                 .poll_to_completion()
                 .await,
         ),
+        Command::Gentoken(_) => (
+            "gentoken",
+            Err(ClientError::Usage(
+                "gentoken is handled before API client initialization".into(),
+            )),
+        ),
         Command::Push(_) => (
             "push",
             Err(ClientError::Usage("Push not yet implemented".into())),
@@ -352,10 +365,19 @@ async fn run(
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
-    let log_level = if cli.debug {
+    let Cli {
+        verbose,
+        debug,
+        output,
+        print_output,
+        token,
+        token_file,
+        command,
+    } = Cli::parse();
+
+    let log_level = if debug {
         LevelFilter::Debug
-    } else if cli.verbose {
+    } else if verbose {
         LevelFilter::Info
     } else {
         LevelFilter::Warn
@@ -375,11 +397,19 @@ async fn main() {
         })
         .init();
 
-    let token = resolve_token(&cli);
-    let print_output = cli.print_output;
-    let output_path = cli.output.clone();
-    let command = cli.command;
+    let command = match command {
+        Command::Gentoken(mut args) => {
+            if verbose {
+                args.enable_verbose();
+            }
+            process::exit(run_gentoken(args))
+        }
+        command => command,
+    };
+
     let default_cmd_name = command.name();
+    let token = resolve_token(&token, token_file.as_ref());
+    let output_path = output;
 
     let (cmd_name, result) = match token {
         Ok(token) => {
