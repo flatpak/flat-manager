@@ -580,12 +580,10 @@ impl ApiClient {
             println!("Waiting for publish job");
             JobPoller::new(self, &job_url).poll_to_completion().await?
         } else {
-            response.body
+            let mut body = response.body;
+            reparse_job_results(&mut body)?;
+            body
         };
-
-        // In the non-wait path this is still the initial POST response body, not the
-        // already-reparsed terminal job payload returned by JobPoller.
-        reparse_job_results(&mut job)?;
         job = with_location(job, job_url);
 
         if let Some(update_job_id) = update_repo_job_id(&job) {
