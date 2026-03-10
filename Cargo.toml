@@ -33,10 +33,10 @@ dotenv = "0.15"
 filetime = "0.2"
 flate2 = "1.0"
 hex = "0.4"
-jwt = {package = "jsonwebtoken", version = "9.3"}
+jwt = { package = "jsonwebtoken", version = "10.3.0" }
 libc = "0.2"
 log = "0.4"
-libostree = { package = "ostree", version = "0.19", features = ["v2021_5"] }
+libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
 r2d2 = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
