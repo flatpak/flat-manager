@@ -61,30 +61,22 @@ exec(
 
 # Generate a flat-manager token
 os.environ["REPO_TOKEN"] = exec(
-    [
-        "cargo",
-        "run",
-        "--bin=flat-manager-client",
-        "--",
-        "gentoken",
-        "--secret=secret",
-        "--repo=stable",
-    ]
+    ["./target/debug/gentoken", "--secret=secret", "--repo=stable"]
 )
 
 # Create a new build and save the repo URL
 build_repo = exec(
-    ["./flat-manager-client", "create", "http://127.0.0.1:8080", "stable"]
+    ["./target/debug/flat-manager-client", "create", "http://127.0.0.1:8080", "stable"]
 )
 
 # Push to the upload repo
-exec(["./flat-manager-client", "push", build_repo, REPO_DIR])
+exec(["./target/debug/flat-manager-client", "push", build_repo, REPO_DIR])
 
 # Commit to the build repo
-exec(["./flat-manager-client", "commit", "--wait", build_repo])
+exec(["./target/debug/flat-manager-client", "commit", "--wait", build_repo])
 
 # Publish to the main repo
-exec(["./flat-manager-client", "publish", "--wait", build_repo])
+exec(["./target/debug/flat-manager-client", "publish", "--wait", build_repo])
 
 # Publish completion can race delayed update-repo jobs that generate summary files.
 wait_for_repo_summary("http://127.0.0.1:8080/repo/stable")
@@ -104,14 +96,10 @@ exec(["flatpak", "install", "-y", "flat-manager", "org.flatpak.FlatManagerCI"])
 
 os.environ["REPO_TOKEN"] = exec(
     [
-        "cargo",
-        "run",
-        "--bin=flat-manager-client",
-        "--",
-        "gentoken",
+        "./target/debug/gentoken",
         "--secret=secret",
         "--repo=stable",
         "--scope=tokenmanagement",
     ]
 )
-exec(["./flat-manager-client", "prune", "http://127.0.0.1:8080", "stable"])
+exec(["./target/debug/flat-manager-client", "prune", "http://127.0.0.1:8080", "stable"])

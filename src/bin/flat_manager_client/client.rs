@@ -226,6 +226,15 @@ impl TryFrom<u8> for JobStatus {
     }
 }
 
+fn parse_optional_system_time(
+    value: Option<&Value>,
+) -> Result<Option<SystemTime>, serde_json::Error> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone()).map(Some),
+    }
+}
+
 fn is_build_in_use_purge_error(body: &Value) -> bool {
     body.get("message").and_then(Value::as_str) == Some(PURGE_IN_USE_MESSAGE)
 }
@@ -1298,12 +1307,7 @@ impl<'a> JobPoller<'a> {
                         .get("log")
                         .and_then(Value::as_str)
                         .unwrap_or("");
-                    let start_after: Option<SystemTime> = response
-                        .body
-                        .get("start_after")
-                        .cloned()
-                        .map(serde_json::from_value)
-                        .transpose()?;
+                    let start_after = parse_optional_system_time(response.body.get("start_after"))?;
 
                     if status == JobStatus::Queued && !self.reported_delay {
                         self.reported_delay = true;
@@ -1477,6 +1481,15 @@ mod tests {
             json!({
                 "update-repo-job": 42,
             })
+        );
+    }
+
+    #[test]
+    fn parses_optional_system_time_from_missing_or_null() {
+        assert_eq!(parse_optional_system_time(None).unwrap(), None);
+        assert_eq!(
+            parse_optional_system_time(Some(&Value::Null)).unwrap(),
+            None
         );
     }
 
