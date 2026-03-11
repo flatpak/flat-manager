@@ -1,5 +1,3 @@
-use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
-
 mod api;
 mod app;
 mod config;
@@ -7,13 +5,14 @@ mod db;
 mod delayed;
 mod deltas;
 pub mod errors;
-pub mod gentoken;
 mod jobs;
 mod logger;
 mod models;
 pub mod ostree;
 mod schema;
 pub mod tokens;
+
+use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
 use actix::prelude::*;
 use actix_web::dev::{Server, ServerHandle};
@@ -32,12 +31,13 @@ pub use errors::DeltaGenerationError;
 
 type Pool = diesel::r2d2::Pool<ConnectionManager<PgConnection>>;
 
+pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
+
 pub fn load_config(path: &path::Path) -> Arc<Config> {
     let config_data =
         app::load_config(path).unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
     Arc::new(config_data)
 }
-pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 
 fn connect_to_db(config: &Arc<Config>) -> r2d2::Pool<ConnectionManager<PgConnection>> {
     let manager = ConnectionManager::<PgConnection>::new(config.database_url.clone());

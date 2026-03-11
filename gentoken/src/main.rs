@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::process;
 
-use flatmanager::gentoken::{run_gentoken, GentokenArgs};
+use flat_manager_common::gentoken::{run_gentoken, GentokenArgs};
 
 #[derive(Debug, Parser)]
 #[command(

@@ -1,0 +1,17 @@
+[package]
+name = "flat-manager-common"
+version = "0.5.0-rc.2"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4.5.60", features = ["derive"] }
+hex = "0.4"
+jwt = { package = "jsonwebtoken", version = "10.3.0", features = ["aws_lc_rs"] }
+libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+thiserror = "2"

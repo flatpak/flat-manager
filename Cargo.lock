@@ -1086,7 +1086,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "flat-manager"
-version = "0.5.0-rc.1"
+version = "0.5.0-rc.2"
 dependencies = [
  "actix",
  "actix-files",
@@ -1098,13 +1098,12 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "chrono",
- "clap",
  "diesel",
  "diesel_migrations",
  "dotenv",
  "env_logger",
  "filetime",
- "flate2",
+ "flat-manager-common",
  "futures",
  "hex",
  "jsonwebtoken",
@@ -1113,7 +1112,6 @@ dependencies = [
  "ostree",
  "pin-project-lite",
  "r2d2",
- "reqwest",
  "serde",
  "serde_derive",
  "serde_json",
@@ -1121,6 +1119,43 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "walkdir",
+]
+
+[[package]]
+name = "flat-manager-client"
+version = "0.5.0-rc.2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "env_logger",
+ "flat-manager-common",
+ "flate2",
+ "hex",
+ "log",
+ "ostree",
+ "reqwest",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "flat-manager-common"
+version = "0.5.0-rc.2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "clap",
+ "hex",
+ "jsonwebtoken",
+ "ostree",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1256,6 +1291,14 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "gentoken"
+version = "0.5.0-rc.2"
+dependencies = [
+ "clap",
+ "flat-manager-common",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
 use client::{ApiClient, ClientError, JobPoller};
-use flatmanager::gentoken::{run_gentoken, GentokenArgs};
+use flat_manager_common::gentoken::{run_gentoken, GentokenArgs};
 use log::LevelFilter;
 use serde::Deserialize;
 use serde_json::{json, Value};

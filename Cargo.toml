@@ -6,13 +6,17 @@ license = "MIT OR Apache-2.0"
 default-run = "flat-manager"
 edition = "2021"
 
+[workspace]
+members = ["common", "client", "gentoken"]
+default-members = [".", "common", "client", "gentoken"]
+
 [lib]
 name = "flatmanager"
 path = "src/lib.rs"
 
 [[bin]]
-name = "flat-manager-client"
-path = "src/bin/flat_manager_client/main.rs"
+name = "flat-manager"
+path = "src/bin/flat-manager.rs"
 
 [dependencies]
 env_logger = "0.11"
@@ -31,7 +35,7 @@ diesel = { version = "2.0", features = ["postgres", "chrono", "serde_json", "r2d
 diesel_migrations = { version = "2.0" }
 dotenv = "0.15"
 filetime = "0.2"
-flate2 = "1.0"
+flat-manager-common = { path = "common" }
 hex = "0.4"
 jwt = { package = "jsonwebtoken", version = "10.3.0", features = ["aws_lc_rs"] }
 libc = "0.2"
@@ -47,5 +51,3 @@ tokio = { version = "1.18", features = ["time", "macros", "rt", "rt-multi-thread
 walkdir = "2"
 futures = "0.3"
 pin-project-lite = "0.2.17"
-clap = { version = "4.5.60", features = ["derive"] }
-reqwest = { version = "0.13.2", features = ["json", "multipart", "gzip", "stream"] }

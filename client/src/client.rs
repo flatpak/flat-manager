@@ -1,6 +1,6 @@
 use super::PushArgs;
+use flat_manager_common::ostree::Delta;
 use flate2::{write::GzEncoder, Compression};
-use flatmanager::ostree::Delta;
 use libostree::{self, gio, glib};
 use reqwest::{
     header::{CONTENT_ENCODING, CONTENT_TYPE, LOCATION},
