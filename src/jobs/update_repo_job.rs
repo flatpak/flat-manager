@@ -145,10 +145,23 @@ impl UpdateRepoJobInstance {
             if dst.exists() {
                 fs::remove_dir_all(&dst)?;
             }
-            fs::rename(&src, &dst)?;
-
-            /* Update mtime so we can use it to trigger deletion */
-            filetime::set_file_times(&dst, now_filetime, now_filetime)?;
+            match fs::rename(&src, &dst) {
+                Ok(_) => {
+                    filetime::set_file_times(&dst, now_filetime, now_filetime)?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    job_log_and_info!(
+                        self.job_id,
+                        conn,
+                        &format!(
+                            " Delta {:?} already removed, skipping",
+                            src.strip_prefix(&deltas_dir).unwrap()
+                        ),
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
 
         /* Delete all temporary deltas older than one hour */
@@ -179,7 +192,20 @@ impl UpdateRepoJobInstance {
                     dir.strip_prefix(&tmp_deltas_dir).unwrap()
                 ),
             );
-            fs::remove_dir_all(&dir)?;
+            match fs::remove_dir_all(&dir) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    job_log_and_info!(
+                        self.job_id,
+                        conn,
+                        &format!(
+                            " Old delta {:?} already removed, skipping",
+                            dir.strip_prefix(&tmp_deltas_dir).unwrap()
+                        ),
+                    );
+                }
+                Err(e) => return Err(e.into()),
+            }
         }
 
         Ok(())
