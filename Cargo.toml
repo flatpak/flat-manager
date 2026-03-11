@@ -1,7 +1,7 @@
 [package]
 name = "flat-manager"
-version = "0.5.0-rc.1"
-authors = ["Alexander Larsson <alexander.larsson@gmail.com>"]
+version = "0.5.0-rc.2"
+authors = ["Alexander Larsson <alexander.larsson@gmail.com>", "Bart Piotrowski <b@bpiotrowski.pl>"]
 license = "MIT OR Apache-2.0"
 default-run = "flat-manager"
 edition = "2021"
