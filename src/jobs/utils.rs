@@ -116,15 +116,17 @@ Url={url}
 
 pub fn add_gpg_args(
     cmd: &mut Command,
-    maybe_gpg_key: &Option<String>,
+    maybe_gpg_key: &Option<Vec<String>>,
     maybe_gpg_homedir: &Option<String>,
 ) {
     if let Some(gpg_homedir) = maybe_gpg_homedir {
         cmd.arg(format!("--gpg-homedir={gpg_homedir}"));
     };
 
-    if let Some(key) = maybe_gpg_key {
-        cmd.arg(format!("--gpg-sign={key}"));
+    if let Some(keys) = maybe_gpg_key {
+        for key in keys {
+            cmd.arg(format!("--gpg-sign={key}"));
+        }
     };
 }
 

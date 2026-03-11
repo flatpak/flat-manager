@@ -21,15 +21,15 @@ use crate::Pool;
 
 fn load_gpg_key(
     maybe_gpg_homedir: &Option<String>,
-    maybe_gpg_key: &Option<String>,
+    maybe_gpg_keys: &Option<Vec<String>>,
 ) -> io::Result<Option<String>> {
-    match maybe_gpg_key {
-        Some(gpg_key) => {
+    match maybe_gpg_keys {
+        Some(gpg_keys) => {
             let mut cmd = Command::new("gpg2");
             if let Some(gpg_homedir) = maybe_gpg_homedir {
                 cmd.arg(format!("--homedir={gpg_homedir}"));
             }
-            cmd.arg("--export").arg(gpg_key);
+            cmd.arg("--export").args(gpg_keys);
 
             let output = cmd.output()?;
             if output.status.success() {
@@ -51,8 +51,7 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
         load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
     for (reponame, repoconfig) in &mut config_data.repos {
         reponame.clone_into(&mut repoconfig.name);
-        repoconfig.gpg_key_content =
-            load_gpg_key(&config_data.gpg_homedir, &config_data.build_gpg_key)?;
+        repoconfig.gpg_key_content = load_gpg_key(&config_data.gpg_homedir, &repoconfig.gpg_key)?;
     }
 
     if config_data.base_url.is_empty() {

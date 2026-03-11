@@ -67,6 +67,50 @@ fn default_depth() -> u32 {
     5
 }
 
+fn string_or_vec<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrVec;
+
+    impl<'de> de::Visitor<'de> for StringOrVec {
+        type Value = Option<Vec<String>>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("null, a string, or an array of strings")
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(vec![v.to_owned()]))
+        }
+
+        fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element::<String>()? {
+                values.push(value);
+            }
+
+            Ok(if values.is_empty() {
+                None
+            } else {
+                Some(values)
+            })
+        }
+    }
+
+    deserializer.deserialize_any(StringOrVec)
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct RepoConfig {
@@ -81,7 +125,8 @@ pub struct RepoConfig {
     pub collection_id: Option<String>,
     #[serde(default)]
     pub deploy_collection_id: bool,
-    pub gpg_key: Option<String>,
+    #[serde(default, deserialize_with = "string_or_vec")]
+    pub gpg_key: Option<Vec<String>>,
     #[serde(skip)]
     pub gpg_key_content: Option<String>,
     pub base_url: Option<String>,
@@ -137,7 +182,8 @@ pub struct Config {
 
     pub repos: HashMap<String, RepoConfig>,
     pub build_repo_base: PathBuf,
-    pub build_gpg_key: Option<String>,
+    #[serde(default, deserialize_with = "string_or_vec")]
+    pub build_gpg_key: Option<Vec<String>>,
     #[serde(skip)]
     pub build_gpg_key_content: Option<String>,
     #[serde(default)]
@@ -303,5 +349,83 @@ mod tests {
         assert!(!match_glob("foo*gazonk*test", "foobargazonktest"));
         assert!(match_glob("foo*gazonk*test", "foobargazonkWOOtest"));
         assert!(!match_glob("foo*gazonk*test", "foobargazonkWOOtestXX"));
+    }
+
+    #[test]
+    fn repo_gpg_key_accepts_string_array_and_null() {
+        let repo: RepoConfig = serde_json::from_str(
+            r#"{
+                "path": "/tmp/repo",
+                "subsets": {},
+                "gpg-key": "KEYID"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(repo.gpg_key, Some(vec!["KEYID".to_string()]));
+
+        let repo: RepoConfig = serde_json::from_str(
+            r#"{
+                "path": "/tmp/repo",
+                "subsets": {},
+                "gpg-key": ["KEY1", "KEY2"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            repo.gpg_key,
+            Some(vec!["KEY1".to_string(), "KEY2".to_string()])
+        );
+
+        let repo: RepoConfig = serde_json::from_str(
+            r#"{
+                "path": "/tmp/repo",
+                "subsets": {},
+                "gpg-key": null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(repo.gpg_key, None);
+    }
+
+    #[test]
+    fn build_gpg_key_accepts_string_array_and_null() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "database-url": "postgres://example",
+                "secret": "c2VjcmV0",
+                "repos": {},
+                "build-repo-base": "/tmp/build-repo",
+                "build-gpg-key": "KEYID"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.build_gpg_key, Some(vec!["KEYID".to_string()]));
+
+        let config: Config = serde_json::from_str(
+            r#"{
+                "database-url": "postgres://example",
+                "secret": "c2VjcmV0",
+                "repos": {},
+                "build-repo-base": "/tmp/build-repo",
+                "build-gpg-key": ["KEY1", "KEY2"]
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.build_gpg_key,
+            Some(vec!["KEY1".to_string(), "KEY2".to_string()])
+        );
+
+        let config: Config = serde_json::from_str(
+            r#"{
+                "database-url": "postgres://example",
+                "secret": "c2VjcmV0",
+                "repos": {},
+                "build-repo-base": "/tmp/build-repo",
+                "build-gpg-key": null
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.build_gpg_key, None);
     }
 }
