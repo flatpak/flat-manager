@@ -657,6 +657,10 @@ impl ApiClient {
                 body: json!({}),
                 location: None,
             }),
+            Err(ClientError::Http { status: 404, .. }) => Ok(ApiResponse {
+                body: json!({"status": "build not found"}),
+                location: None,
+            }),
             Err(err) => Err(err),
         }
     }
