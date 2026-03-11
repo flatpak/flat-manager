@@ -1,9 +1,12 @@
 mod client;
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use chrono::DateTime;
 use clap::{Args, Parser, Subcommand};
 use client::{ApiClient, ClientError, JobPoller};
 use flatmanager::gentoken::{run_gentoken, GentokenArgs};
 use log::LevelFilter;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
@@ -235,6 +238,51 @@ struct FollowJobArgs {
     job_url: String,
 }
 
+#[derive(Deserialize)]
+struct TokenExpiry {
+    exp: i64,
+}
+
+fn check_token_expiry(token: &str) -> Result<(), ClientError> {
+    let Some(payload) = token.split('.').nth(1) else {
+        eprintln!("Warning: Could not parse token for expiry check.");
+        return Ok(());
+    };
+
+    let bytes = URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload));
+    let Ok(bytes) = bytes else {
+        eprintln!("Warning: Could not decode token for expiry check.");
+        return Ok(());
+    };
+
+    let Ok(expiry) = serde_json::from_slice::<TokenExpiry>(&bytes) else {
+        eprintln!("Warning: Could not read token expiry.");
+        return Ok(());
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let remaining_secs = expiry.exp - now;
+    let expiry_dt = DateTime::from_timestamp(expiry.exp, 0)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+        .unwrap_or_else(|| "unknown".into());
+
+    if remaining_secs <= 0 {
+        return Err(ClientError::Usage(format!(
+            "Token expired at {expiry_dt}. Request a new token."
+        )));
+    }
+
+    const THIRTY_DAYS: i64 = 30 * 24 * 3600;
+    if remaining_secs < THIRTY_DAYS {
+        let days = remaining_secs / 86400;
+        eprintln!("Warning: Token expires in {days} day(s) ({expiry_dt}).");
+    }
+
+    Ok(())
+}
+
 fn resolve_token(
     token: &Option<String>,
     token_file: Option<&PathBuf>,
@@ -410,6 +458,10 @@ async fn main() {
 
     let (cmd_name, result) = match token {
         Ok(token) => {
+            if let Err(e) = check_token_expiry(&token) {
+                eprintln!("{e}");
+                process::exit(1);
+            }
             let client = ApiClient::new(token);
             run(command, &client, print_output).await
         }
