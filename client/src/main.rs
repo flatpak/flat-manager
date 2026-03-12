@@ -17,8 +17,8 @@ use std::process;
 #[derive(Debug, Parser)]
 #[command(
     name = "flat-manager-client",
+    version,
     subcommand_required = true,
-    disable_version_flag = true,
     disable_help_subcommand = true
 )]
 struct Cli {
