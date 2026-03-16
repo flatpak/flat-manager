@@ -1132,6 +1132,7 @@ dependencies = [
  "flat-manager-common",
  "flate2",
  "hex",
+ "jsonwebtoken",
  "log",
  "ostree",
  "reqwest",
@@ -1147,10 +1148,7 @@ name = "flat-manager-common"
 version = "0.5.0-rc.4"
 dependencies = [
  "base64 0.22.1",
- "chrono",
- "clap",
  "hex",
- "jsonwebtoken",
  "ostree",
  "serde",
  "serde_derive",
@@ -1291,14 +1289,6 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
-]
-
-[[package]]
-name = "gentoken"
-version = "0.5.0-rc.4"
-dependencies = [
- "clap",
- "flat-manager-common",
 ]
 
 [[package]]

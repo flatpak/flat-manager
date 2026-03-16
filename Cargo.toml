@@ -7,8 +7,8 @@ default-run = "flat-manager"
 edition = "2021"
 
 [workspace]
-members = ["common", "client", "gentoken"]
-default-members = [".", "common", "client", "gentoken"]
+members = ["common", "client"]
+default-members = [".", "common", "client"]
 
 [lib]
 name = "flatmanager"

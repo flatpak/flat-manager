@@ -22,7 +22,6 @@ RUN chmod +x /usr/local/bin/catatonit
 
 COPY --from=builder /src/target/release/flat-manager /usr/local/bin/flat-manager
 COPY --from=builder /flat-manager-hooks/target/release/flathub-hooks /usr/local/bin/flathub-hooks
-COPY --from=builder /src/target/release/gentoken /usr/local/bin/gentoken
 COPY --from=builder /src/target/release/flat-manager-client  /usr/local/bin/flat-manager-client
 
 ENV RUST_BACKTRACE=1

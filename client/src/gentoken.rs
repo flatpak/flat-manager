@@ -4,7 +4,7 @@ use jwt::{encode, EncodingKey, Header};
 use std::fs;
 use std::io::{self, Read};
 
-use crate::tokens::{Claims, ClaimsScope};
+use flat_manager_common::tokens::{Claims, ClaimsScope};
 
 fn default_duration() -> i64 {
     Duration::days(365).num_seconds()

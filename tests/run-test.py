@@ -61,7 +61,7 @@ exec(
 
 # Generate a flat-manager token
 os.environ["REPO_TOKEN"] = exec(
-    ["./target/debug/gentoken", "--secret=secret", "--repo=stable"]
+    ["./target/debug/flat-manager-client", "gentoken", "--secret=secret", "--repo=stable"]
 )
 
 # Create a new build and save the repo URL
@@ -96,7 +96,8 @@ exec(["flatpak", "install", "-y", "flat-manager", "org.flatpak.FlatManagerCI"])
 
 os.environ["REPO_TOKEN"] = exec(
     [
-        "./target/debug/gentoken",
+        "./target/debug/flat-manager-client",
+        "gentoken",
         "--secret=secret",
         "--repo=stable",
         "--scope=tokenmanagement",

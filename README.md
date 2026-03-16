@@ -142,7 +142,7 @@ your token for sharing with others (for example sending the above
 upload-only token to a builder), but you can also generate a
 token with the gentoken command:
 
-    echo -n "secret" | base64 | cargo run --bin gentoken -- --base64 --secret-file - --name testtoken
+    echo -n "secret" | base64 | cargo run --bin flat-manager-client -- gentoken --base64 --secret-file - --name testtoken
 
 The above matches the default secret, so can be used for testing.
 
@@ -157,7 +157,7 @@ For a production setup, you will also want to generate a token
 for `delta-generator`. This can be done by following the above
 command with these arguments:
 
-    echo -n "secret" | base64 | cargo run --bin gentoken -- --base64 --secret-file - --name delta-generator --sub delta --scope generate
+    echo -n "secret" | base64 | cargo run --bin flat-manager-client -- gentoken --base64 --secret-file - --name delta-generator --sub delta --scope generate
 
 ## Running
 
@@ -180,7 +180,7 @@ the repository, but for testing we can just do it in a subdirectory:
 
 Then we can upload it to the repository by doing (assuming the default secret):
 
-    export REPO_TOKEN=$(echo -n "secret" | base64 | cargo run --bin gentoken -- --base64 --secret-file - --name test)
+    export REPO_TOKEN=$(echo -n "secret" | base64 | cargo run --bin flat-manager-client -- gentoken --base64 --secret-file - --name test)
     ./flat-manager-client push --commit $(./flat-manager-client create http://127.0.0.1:8080 stable) test-build/local-repo
 
 This will create a new "build", upload the build to it and then "commit" the build.
