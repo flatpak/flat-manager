@@ -149,10 +149,8 @@ fn default_port() -> i32 {
     8080
 }
 
-fn default_numcpu() -> u32 {
-    std::thread::available_parallelism()
-        .map(|n| n.get() as u32)
-        .unwrap_or(1)
+fn default_one() -> u32 {
+    1
 }
 
 fn default_workers() -> usize {
@@ -188,7 +186,7 @@ pub struct Config {
     pub build_gpg_key_content: Option<String>,
     #[serde(default)]
     pub delay_update_secs: u64,
-    #[serde(default = "default_numcpu")]
+    #[serde(default = "default_one")]
     pub local_delta_threads: u32,
     #[serde(default = "default_workers")]
     pub workers: usize,
