@@ -198,8 +198,13 @@ impl JobInstance for PublishJobInstance {
                 current_build.published_state,
                 &current_build.published_state_reason,
             );
-            if !current_published_state.same_state_as(&PublishedState::Publishing) {
-                // Something weird was happening, we expected this build to be in the publishing state
+            let is_restart_recovery = res.is_ok()
+                && current_published_state
+                    == PublishedState::Failed("Server was restarted during publish".to_string());
+
+            if !current_published_state.same_state_as(&PublishedState::Publishing)
+                && !is_restart_recovery
+            {
                 error!("Unexpected publishing state {:?}", current_published_state);
                 return Err(DieselError::RollbackTransaction);
             };
