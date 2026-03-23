@@ -5,9 +5,9 @@ at an ostree repository and it will allow Flatpak clients to install
 apps from the repository over HTTP. Additionally, it has an HTTP API
 that lets you upload new builds and manage the repository.
 
-## Building the server
+## Building
 
-The server is written in Rust, so you need to have Rust and Cargo
+flat-manager is written in Rust, so you need Rust and Cargo
 installed. Everything works with the stable version of Rust,
 so you can get it from [rustup](https://github.com/rust-lang/rustup.rs)
 or your distribution. On Fedora:
@@ -23,18 +23,12 @@ You also need ostree. On Fedora, this is done with:
 
     sudo dnf install ostree-devel
 
-Then build the server by running:
+Then build both the server and client by running:
 
     cargo build
 
-## Building the client
-
-flat-manager contains a Python-based client that can be used
-to talk to the server. To run this, you need Python 3 as
-well as the aiohttp packages, installed via pip or the
-distribution packages. On Fedora, this can be installed using:
-
-    sudo dnf install python3-aiohttp
+This builds both `flat-manager` and `flat-manager-client` since
+they're part of the same workspace.
 
 ## Configuration
 
@@ -50,6 +44,15 @@ The source repository contains an `example.env` and an
     cp example.env .env
     cp example-config.json config.json
     # edit config.json
+
+### GPG keys
+
+The `gpg-key` and `build-gpg-key` config fields accept either a
+single string or an array of strings, so you can sign with multiple
+GPG keys:
+
+    "gpg-key": "KEYID"
+    "gpg-key": ["KEY1", "KEY2"]
 
 ### Hooks
 
@@ -124,7 +127,7 @@ otherwise performance will be degraded.
 
 ## Tokens
 
-All requests to the API require a token. Token are signed with a secret
+All requests to the API require a token. Tokens are signed with a secret
 that has to be stored on the server. The default configuration contains:
 
     "secret": "c2VjcmV0"
@@ -140,24 +143,20 @@ could let you do everything, while another would only allow you to
 upload builds to a particular build. There is an API to subset
 your token for sharing with others (for example sending the above
 upload-only token to a builder), but you can also generate a
-token with the gentoken command:
+token with the `flat-manager-client gentoken` subcommand:
 
     echo -n "secret" | base64 | cargo run --bin flat-manager-client -- gentoken --base64 --secret-file - --name testtoken
 
 The above matches the default secret, so can be used for testing.
 
 Some token privileges are for managing flat-manager and shouldn't be
-given to third parties who are just uploading apps. The token privileges
-are described in the [`ClaimsScope` enum in `tokens.rs`](https://github.com/flatpak/flat-manager/blob/d1c3d36da7b5779163ff70007c4d2f145cfce664/src/tokens.rs#L21-L46).
+given to third parties who are just uploading apps. The token scopes
+are: `jobs`, `build`, `upload`, `publish`, `generate`, `download`,
+`republish`, `reviewcheck`, and `tokenmanagement`. See the
+`ClaimsScope` enum in `common/src/tokens.rs` for details.
 
 The client takes tokens via either the `--token` argument or in the
 `REPO_TOKEN` environment variable.
-
-For a production setup, you will also want to generate a token
-for `delta-generator`. This can be done by following the above
-command with these arguments:
-
-    echo -n "secret" | base64 | cargo run --bin flat-manager-client -- gentoken --base64 --secret-file - --name delta-generator --sub delta --scope generate
 
 ## Running
 
@@ -165,11 +164,13 @@ To start the server, run:
 
     cargo run --bin flat-manager
 
-It will listen on port 8080 by default.
+You can check the version with `flat-manager --version`. The server
+listens on port 8080 by default. The number of worker threads can be
+overridden with the `ACTIX_WORKERS` environment variable.
 
 To test adding something to the repository, you can try building a
 simple app and exporting it to a repository. Use a recent version of
-flatpak and flatpak-builer to make sure you can build from Yaml files.
+flatpak and flatpak-builder to make sure you can build from Yaml files.
 This would normally happen on a different machine than the one serving
 the repository, but for testing we can just do it in a subdirectory:
 
@@ -181,9 +182,13 @@ the repository, but for testing we can just do it in a subdirectory:
 Then we can upload it to the repository by doing (assuming the default secret):
 
     export REPO_TOKEN=$(echo -n "secret" | base64 | cargo run --bin flat-manager-client -- gentoken --base64 --secret-file - --name test)
-    ./flat-manager-client push --commit $(./flat-manager-client create http://127.0.0.1:8080 stable) test-build/local-repo
+    cargo run --bin flat-manager-client -- push --commit $(cargo run --bin flat-manager-client -- create http://127.0.0.1:8080 stable) test-build/local-repo
 
 This will create a new "build", upload the build to it and then "commit" the build.
+
+The client supports these subcommands: `create`, `push`, `commit`,
+`publish`, `purge`, `prune`, `create-token`, `follow-job`, and
+`gentoken`. Run `flat-manager-client --help` for usage details.
 
 ## License
 
