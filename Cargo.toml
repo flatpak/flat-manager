@@ -1,6 +1,6 @@
 [package]
 name = "flat-manager"
-version = "0.5.0-rc.4"
+version = "0.5.0"
 authors = ["Alexander Larsson <alexander.larsson@gmail.com>", "Bart Piotrowski <b@bpiotrowski.pl>"]
 license = "MIT OR Apache-2.0"
 default-run = "flat-manager"
