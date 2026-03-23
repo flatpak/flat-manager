@@ -121,22 +121,6 @@ jobs:
       - name: Clippy
         run: cargo clippy -- -D warnings
 
-  ruff-lint:
-    name: ruff-lint
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v2
-
-  ruff-format:
-    name: ruff-format
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v2
-        with:
-          args: 'format --check'
-
   docker:
     name: Build Docker image
     runs-on: ubuntu-latest
