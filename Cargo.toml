@@ -38,7 +38,6 @@ filetime = "0.2"
 flat-manager-common = { path = "common" }
 hex = "0.4"
 jwt = { package = "jsonwebtoken", version = "10.3.0", features = ["aws_lc_rs"] }
-libc = "0.2"
 log = "0.4"
 libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
 r2d2 = "0.8"

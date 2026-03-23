@@ -3,7 +3,6 @@ use diesel::prelude::*;
 use diesel::result::Error as DieselError;
 use log::{error, info};
 use std::fmt::Write as _;
-use std::os::unix::process::CommandExt as _;
 use std::process::{Command, Output, Stdio};
 use std::str;
 
@@ -13,34 +12,6 @@ use crate::models::{self, Job};
 use crate::schema::*;
 
 use super::job_queue::queue_update_job;
-
-pub trait SetsidCommandExt {
-    fn setsid(&mut self) -> &mut Self;
-}
-
-impl SetsidCommandExt for Command {
-    fn setsid(&mut self) -> &mut Self {
-        unsafe {
-            self.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        self
-    }
-}
-
-impl SetsidCommandExt for tokio::process::Command {
-    fn setsid(&mut self) -> &mut Self {
-        unsafe {
-            self.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        self
-    }
-}
 
 pub fn generate_flatpakref(
     ref_name: &str,
@@ -161,7 +132,7 @@ macro_rules! job_log_and_error {
 /// Executes a command and returns its output. A JobError is returned if the command couldn't be executed, but not if
 /// it exits with a status code.
 pub fn do_command_with_output(cmd: &mut Command) -> JobResult<Output> {
-    let output = SetsidCommandExt::setsid(cmd)
+    let output = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

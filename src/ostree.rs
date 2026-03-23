@@ -3,11 +3,8 @@ pub use flat_manager_common::ostree::*;
 use std::path::Path;
 use tokio::process::Command;
 
-use crate::jobs::SetsidCommandExt;
 pub async fn generate_delta_async(repo_path: &Path, delta: &Delta) -> Result<(), OstreeError> {
-    let mut cmd = Command::new("timeout");
-    cmd.arg("3600").arg("flatpak");
-    SetsidCommandExt::setsid(&mut cmd);
+    let mut cmd = Command::new("flatpak");
 
     cmd.arg("build-update-repo")
         .arg("--generate-static-delta-to")

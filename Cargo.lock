@@ -1107,7 +1107,6 @@ dependencies = [
  "futures",
  "hex",
  "jsonwebtoken",
- "libc",
  "log",
  "ostree",
  "pin-project-lite",
