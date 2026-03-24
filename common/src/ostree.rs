@@ -266,13 +266,6 @@ fn hex_to_delta_part(hex: &str) -> OstreeResult<String> {
     Ok(part.replace('/', "_"))
 }
 
-fn is_lower_hex_checksum(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
-}
-
 impl Delta {
     pub fn new(from: Option<&str>, to: &str) -> Delta {
         Delta {
@@ -282,22 +275,16 @@ impl Delta {
     }
     pub fn from_name(name: &str) -> OstreeResult<Delta> {
         let parts: Vec<&str> = name.split('-').collect();
-        match parts.as_slice() {
-            [to] if is_lower_hex_checksum(to) => Ok(Delta::new(None, to)),
-            [from, to] if is_lower_hex_checksum(from) && is_lower_hex_checksum(to) => {
-                Ok(Delta::new(Some(from), to))
-            }
-            [to] => Ok(Delta {
+        if parts.len() == 1 {
+            Ok(Delta {
                 from: None,
-                to: delta_part_to_hex(to)?,
-            }),
-            [from, to] => Ok(Delta {
-                from: Some(delta_part_to_hex(from)?),
-                to: delta_part_to_hex(to)?,
-            }),
-            _ => Err(OstreeError::InternalError(format!(
-                "Invalid delta name '{name}'"
-            ))),
+                to: delta_part_to_hex(parts[0])?,
+            })
+        } else {
+            Ok(Delta {
+                from: Some(delta_part_to_hex(parts[0])?),
+                to: delta_part_to_hex(parts[1])?,
+            })
         }
     }
 
@@ -489,26 +476,6 @@ mod tests {
         );
         assert_eq!(Delta::from_name("OkiocD9GLq_Nt660BvWyrH8G62dAvtLv7RPqngWqf5c-3dpOrJG4MNyKHDDGXHpH_zd9NXugnexr5jpvSFQ77S4"),
                    Ok(Delta { from: Some("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string()), to: "ddda4eac91b830dc8a1c30c65c7a47ff377d357ba09dec6be63a6f48543bed2e".to_string() }));
-        assert_eq!(
-            Delta::from_name("3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97"),
-            Ok(Delta {
-                from: None,
-                to: "3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97".to_string()
-            })
-        );
-        assert_eq!(
-            Delta::from_name(
-                "3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97-ddda4eac91b830dc8a1c30c65c7a47ff377d357ba09dec6be63a6f48543bed2e"
-            ),
-            Ok(Delta {
-                from: Some(
-                    "3a48a8703f462eafcdb7aeb406f5b2ac7f06eb6740bed2efed13ea9e05aa7f97"
-                        .to_string()
-                ),
-                to: "ddda4eac91b830dc8a1c30c65c7a47ff377d357ba09dec6be63a6f48543bed2e"
-                    .to_string()
-            })
-        );
     }
 
     #[test]
