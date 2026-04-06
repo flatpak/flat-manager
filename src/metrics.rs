@@ -37,12 +37,9 @@ impl Metrics {
         let jobs_queued = Family::<JobLabels, Gauge>::default();
         let job_duration_seconds =
             Family::<JobResultLabels, Histogram>::new_with_constructor(|| {
-                Histogram::new(
-                    [
-                        1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0,
-                    ]
-                    .into_iter(),
-                )
+                Histogram::new([
+                    1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0,
+                ])
             });
 
         flat_manager_registry.register(

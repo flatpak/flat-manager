@@ -35,10 +35,12 @@ impl Actor for JobExecutor {
     type Context = SyncContext<Self>;
 }
 
+type QueuedJobInstance = (i16, Option<String>, Box<dyn JobInstance>);
+
 fn pick_next_job(
     executor: &mut JobExecutor,
     conn: &mut PgConnection,
-) -> Result<(i16, Option<String>, Box<dyn JobInstance>), DieselError> {
+) -> Result<QueuedJobInstance, DieselError> {
     use diesel::dsl::exists;
     use diesel::dsl::not;
     use diesel::dsl::now;
@@ -63,8 +65,7 @@ fn pick_next_job(
                     ),
                 )));
 
-            let mut new_instances: Vec<(i16, Option<String>, Box<dyn JobInstance>)> = match for_repo
-            {
+            let mut new_instances: Vec<QueuedJobInstance> = match for_repo {
                 None => jobs::table
                     .order(jobs::id)
                     .filter(ready_job_filter.and(jobs::repo.is_null()))

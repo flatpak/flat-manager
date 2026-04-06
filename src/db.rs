@@ -156,9 +156,8 @@ impl Db {
             Ok(job)
         })
         .await
-        .map(|job| {
-            self.increment_queued_job_metric(&job);
-            job
+        .inspect(|job| {
+            self.increment_queued_job_metric(job);
         })
     }
 
@@ -258,9 +257,8 @@ impl Db {
             Ok(job)
         })
         .await
-        .map(|job| {
-            self.increment_queued_job_metric(&job);
-            job
+        .inspect(|job| {
+            self.increment_queued_job_metric(job);
         })
     }
 
@@ -289,9 +287,8 @@ impl Db {
             Ok(job)
         })
         .await
-        .map(|job| {
-            self.increment_queued_job_metric(&job);
-            job
+        .inspect(|job| {
+            self.increment_queued_job_metric(job);
         })
     }
 
@@ -308,9 +305,8 @@ impl Db {
                 .map_err(ApiError::from)
         })
         .await
-        .map(|job| {
-            self.increment_queued_job_metric(&job);
-            job
+        .inspect(|job| {
+            self.increment_queued_job_metric(job);
         })
     }
 
