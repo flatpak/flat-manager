@@ -63,9 +63,10 @@ pub async fn review_check(
 
     let check = db.get_check_by_job_id(params.id).await?;
     web::block(move || {
-        let mut conn =
-            db.0.get()
-                .map_err(|err| JobError::InternalError(err.to_string()))?;
+        let mut conn = db
+            .pool
+            .get()
+            .map_err(|err| JobError::InternalError(err.to_string()))?;
         update_build_status_after_check(check.build_id, &mut conn)
     })
     .await

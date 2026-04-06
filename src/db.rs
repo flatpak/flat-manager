@@ -2,16 +2,33 @@ use actix_web::*;
 use chrono::Utc;
 use diesel::prelude::*;
 use serde_json::json;
+use std::sync::Arc;
 
 use crate::errors::ApiError;
+use crate::metrics::{kind_label, repo_label, JobLabels, Metrics};
 use crate::models::*;
 use crate::schema;
 use crate::Pool;
 
 #[derive(Clone)]
-pub struct Db(pub Pool);
+pub struct Db {
+    pub pool: Pool,
+    pub metrics: Option<Arc<Metrics>>,
+}
 
 impl Db {
+    fn increment_queued_job_metric(&self, job: &Job) {
+        if let Some(metrics) = &self.metrics {
+            metrics
+                .jobs_queued
+                .get_or_create(&JobLabels {
+                    kind: kind_label(job.kind),
+                    repo: repo_label(&job.repo),
+                })
+                .inc();
+        }
+    }
+
     async fn run<Func, T>(&self, func: Func) -> Result<T, ApiError>
     where
         Func: FnOnce(
@@ -20,7 +37,7 @@ impl Db {
         Func: Send + 'static,
         T: Send + 'static,
     {
-        let p = self.0.clone();
+        let p = self.pool.clone();
         web::block(move || {
             let mut conn = p.get()?;
             func(&mut conn)
@@ -139,6 +156,10 @@ impl Db {
             Ok(job)
         })
         .await
+        .map(|job| {
+            self.increment_queued_job_metric(&job);
+            job
+        })
     }
 
     pub async fn start_publish_job(&self, build_id: i32, repo: String) -> Result<Job, ApiError> {
@@ -237,6 +258,10 @@ impl Db {
             Ok(job)
         })
         .await
+        .map(|job| {
+            self.increment_queued_job_metric(&job);
+            job
+        })
     }
 
     pub async fn start_republish_job(
@@ -264,6 +289,10 @@ impl Db {
             Ok(job)
         })
         .await
+        .map(|job| {
+            self.increment_queued_job_metric(&job);
+            job
+        })
     }
 
     pub async fn start_prune_job(&self, repo: String) -> Result<Job, ApiError> {
@@ -279,6 +308,10 @@ impl Db {
                 .map_err(ApiError::from)
         })
         .await
+        .map(|job| {
+            self.increment_queued_job_metric(&job);
+            job
+        })
     }
 
     /* Checks */

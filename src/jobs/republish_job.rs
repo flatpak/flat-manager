@@ -167,7 +167,13 @@ impl JobInstance for RepublishJobInstance {
         do_command(cmd)?;
 
         /* The repo summary may need to be updated */
-        let update_job = schedule_update_job(config, repoconfig, conn, self.job_id)?;
+        let update_job = schedule_update_job(
+            config,
+            repoconfig,
+            conn,
+            self.job_id,
+            Some(&executor.metrics),
+        )?;
 
         Ok(json!({
             "update-repo-job": update_job.id,

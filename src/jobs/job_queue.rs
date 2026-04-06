@@ -14,6 +14,7 @@ use std::str;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
+use crate::metrics::{kind_label, repo_label, JobLabels, Metrics};
 use crate::models::{
     Job, JobDependency, JobKind, JobStatus, NewJob, PublishedState, RepoState, UpdateRepoJob,
 };
@@ -42,6 +43,7 @@ pub struct JobQueue {
     pub running: bool,
     pub config: Arc<Config>,
     pub delta_generator: Addr<DeltaGenerator>,
+    pub metrics: Arc<Metrics>,
     pub pool: Pool,
 }
 
@@ -78,8 +80,13 @@ impl JobQueue {
             return false;
         }
 
-        let new_executor_info =
-            start_executor(repo, &self.config, &self.delta_generator, &self.pool);
+        let new_executor_info = start_executor(
+            repo,
+            &self.config,
+            &self.delta_generator,
+            &self.metrics,
+            &self.pool,
+        );
 
         {
             let mut new_info = new_executor_info.borrow_mut();
@@ -308,7 +315,7 @@ pub fn cleanup_started_jobs(pool: &Pool) -> Result<(), diesel::result::Error> {
                 }
                 for reponame in queue_update_for_repos {
                     info!("Queueing new update job for repo {:?}", reponame);
-                    let _update_job = queue_update_job(0, &mut conn, &reponame, None);
+                    let _update_job = queue_update_job(0, &mut conn, &reponame, None, None);
                 }
             }
         }
@@ -321,6 +328,7 @@ pub fn queue_update_job(
     conn: &mut PgConnection,
     repo: &str,
     starting_job_id: Option<i32>,
+    metrics: Option<&Arc<Metrics>>,
 ) -> Result<(bool, Job), DieselError> {
     let transaction_result = conn
         .build_transaction()
@@ -392,8 +400,22 @@ pub fn queue_update_job(
 
     match transaction_result {
         Err(DieselError::DatabaseError(SerializationFailure, _)) => {
-            queue_update_job(delay_secs, conn, repo, starting_job_id)
+            queue_update_job(delay_secs, conn, repo, starting_job_id, metrics)
         }
-        _ => transaction_result,
+        _ => {
+            let result = transaction_result?;
+            if result.0 {
+                if let Some(metrics) = metrics {
+                    metrics
+                        .jobs_queued
+                        .get_or_create(&JobLabels {
+                            kind: kind_label(result.1.kind),
+                            repo: repo_label(&result.1.repo),
+                        })
+                        .inc();
+                }
+            }
+            Ok(result)
+        }
     }
 }

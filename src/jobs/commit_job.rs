@@ -11,6 +11,7 @@ use std::str;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
+use crate::metrics::{kind_label, repo_label, JobLabels};
 use crate::models::{
     self, Check, CheckJob, CheckStatus, CommitJob, Job, JobKind, NewJob, RepoState,
 };
@@ -230,6 +231,17 @@ impl JobInstance for CommitJobInstance {
                                     .collect::<Vec<_>>(),
                             )
                             .get_results::<Job>(conn)?;
+
+                        for job in &check_jobs {
+                            executor
+                                .metrics
+                                .jobs_queued
+                                .get_or_create(&JobLabels {
+                                    kind: kind_label(job.kind),
+                                    repo: repo_label(&job.repo),
+                                })
+                                .inc();
+                        }
 
                         // Create a check row for each new check job. This row ties the job to the build and records its status.
                         let (pending_status, pending_status_msg) = CheckStatus::Pending.to_db();

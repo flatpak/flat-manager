@@ -9,10 +9,12 @@ use serde_json::json;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::config::Config;
 use crate::deltas::DeltaGenerator;
 use crate::jobs::job_instance::new_job_instance;
+use crate::metrics::{kind_label, repo_label, JobLabels, JobResultLabels, Metrics};
 use crate::models;
 use crate::models::{job_dependencies_with_status, JobStatus};
 use crate::schema::*;
@@ -25,6 +27,7 @@ pub struct JobExecutor {
     pub repo: Option<String>,
     pub config: Arc<Config>,
     pub delta_generator: Addr<DeltaGenerator>,
+    pub metrics: Arc<Metrics>,
     pub pool: Pool,
 }
 
@@ -35,7 +38,7 @@ impl Actor for JobExecutor {
 fn pick_next_job(
     executor: &mut JobExecutor,
     conn: &mut PgConnection,
-) -> Result<Box<dyn JobInstance>, DieselError> {
+) -> Result<(i16, Option<String>, Box<dyn JobInstance>), DieselError> {
     use diesel::dsl::exists;
     use diesel::dsl::not;
     use diesel::dsl::now;
@@ -60,33 +63,42 @@ fn pick_next_job(
                     ),
                 )));
 
-            let mut new_instances: Vec<Box<dyn JobInstance>> = match for_repo {
+            let mut new_instances: Vec<(i16, Option<String>, Box<dyn JobInstance>)> = match for_repo
+            {
                 None => jobs::table
                     .order(jobs::id)
                     .filter(ready_job_filter.and(jobs::repo.is_null()))
                     .get_results::<models::Job>(conn)?
                     .into_iter()
-                    .map(|job| new_job_instance(executor, job))
+                    .map(|job| {
+                        let kind = job.kind;
+                        let repo = job.repo.clone();
+                        (kind, repo, new_job_instance(executor, job))
+                    })
                     .collect(),
                 Some(repo) => jobs::table
                     .order(jobs::id)
                     .filter(ready_job_filter.and(jobs::repo.eq(repo)))
                     .get_results::<models::Job>(conn)?
                     .into_iter()
-                    .map(|job| new_job_instance(executor, job))
+                    .map(|job| {
+                        let kind = job.kind;
+                        let repo = job.repo.clone();
+                        (kind, repo, new_job_instance(executor, job))
+                    })
                     .collect(),
             };
 
             /* Sort by prio */
-            new_instances.sort_by_key(|a| a.order());
+            new_instances.sort_by_key(|(_, _, instance)| instance.order());
 
             /* Handle the first, if any */
-            if let Some(new_instance) = new_instances.into_iter().next() {
+            if let Some((kind, repo, new_instance)) = new_instances.into_iter().next() {
                 diesel::update(jobs::table)
                     .filter(jobs::id.eq(new_instance.get_job_id()))
                     .set((jobs::status.eq(JobStatus::Started as i16),))
                     .execute(conn)?;
-                return Ok(new_instance);
+                return Ok((kind, repo, new_instance));
             }
 
             Err(diesel::NotFound)
@@ -103,7 +115,19 @@ fn process_one_job(executor: &mut JobExecutor, conn: &mut PgConnection) -> bool 
     let new_instance = pick_next_job(executor, conn);
 
     match new_instance {
-        Ok(mut instance) => {
+        Ok((job_kind, job_repo, mut instance)) => {
+            let labels = JobLabels {
+                kind: kind_label(job_kind),
+                repo: repo_label(&job_repo),
+            };
+            executor.metrics.jobs_queued.get_or_create(&labels).dec();
+            executor
+                .metrics
+                .jobs_in_progress
+                .get_or_create(&labels)
+                .inc();
+
+            let start_time = Instant::now();
             let (new_status, new_results) = match instance.handle_job(executor, conn) {
                 Ok(json) => {
                     info!("#{}: Job succeeded", instance.get_job_id());
@@ -118,6 +142,17 @@ fn process_one_job(executor: &mut JobExecutor, conn: &mut PgConnection) -> bool 
                 }
             };
 
+            let result_labels = JobResultLabels {
+                kind: labels.kind.clone(),
+                status: match new_status {
+                    JobStatus::Ended => "ended",
+                    JobStatus::Broken => "broken",
+                    _ => "unknown",
+                }
+                .to_string(),
+                repo: labels.repo.clone(),
+            };
+
             let update_res = diesel::update(jobs::table)
                 .filter(jobs::id.eq(instance.get_job_id()))
                 .set((
@@ -128,6 +163,22 @@ fn process_one_job(executor: &mut JobExecutor, conn: &mut PgConnection) -> bool 
             if let Err(e) = update_res {
                 error!("handle_job: Error updating job {}", e);
             }
+
+            executor
+                .metrics
+                .jobs_in_progress
+                .get_or_create(&labels)
+                .dec();
+            executor
+                .metrics
+                .jobs_total
+                .get_or_create(&result_labels)
+                .inc();
+            executor
+                .metrics
+                .job_duration_seconds
+                .get_or_create(&result_labels)
+                .observe(start_time.elapsed().as_secs_f64());
             true /* We handled a job */
         }
         Err(diesel::NotFound) => {
@@ -176,10 +227,12 @@ pub fn start_executor(
     repo: &Option<String>,
     config: &Arc<Config>,
     delta_generator: &Addr<DeltaGenerator>,
+    metrics: &Arc<Metrics>,
     pool: &Pool,
 ) -> RefCell<ExecutorInfo> {
     let config_copy = config.clone();
     let delta_generator_copy = delta_generator.clone();
+    let metrics_copy = metrics.clone();
     let pool_copy = pool.clone();
     let repo_clone = repo.clone();
     RefCell::new(ExecutorInfo {
@@ -187,6 +240,7 @@ pub fn start_executor(
             repo: repo_clone.clone(),
             config: config_copy.clone(),
             delta_generator: delta_generator_copy.clone(),
+            metrics: metrics_copy.clone(),
             pool: pool_copy.clone(),
         }),
         processing_job: false,
@@ -200,17 +254,24 @@ pub fn start_job_executor(
     config: Arc<Config>,
     delta_generator: Addr<DeltaGenerator>,
     pool: Pool,
+    metrics: Arc<Metrics>,
 ) -> Addr<JobQueue> {
     let mut executors = HashMap::new();
     executors.insert(
         None,
-        start_executor(&None, &config, &delta_generator, &pool),
+        start_executor(&None, &config, &delta_generator, &metrics, &pool),
     );
 
     for repo in config.repos.keys() {
         executors.insert(
             Some(repo.clone()),
-            start_executor(&Some(repo.clone()), &config, &delta_generator, &pool),
+            start_executor(
+                &Some(repo.clone()),
+                &config,
+                &delta_generator,
+                &metrics,
+                &pool,
+            ),
         );
     }
     JobQueue {
@@ -218,6 +279,7 @@ pub fn start_job_executor(
         running: true,
         config: config.clone(),
         delta_generator: delta_generator.clone(),
+        metrics,
         pool: pool.clone(),
     }
     .start()

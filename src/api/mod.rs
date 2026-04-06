@@ -1,4 +1,5 @@
 pub mod build;
+pub mod metrics;
 pub mod prune;
 pub mod repo;
 pub mod status;

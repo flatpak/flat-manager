@@ -49,6 +49,7 @@ impl PublishJobInstance {
         build_refs: &[models::BuildRef],
         config: &Config,
         repoconfig: &RepoConfig,
+        executor: &JobExecutor,
         conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
         let build_repo_path = config.build_repo_base.join(self.build_id.to_string());
@@ -133,7 +134,13 @@ impl PublishJobInstance {
             }
         }
 
-        let update_job = schedule_update_job(config, repoconfig, conn, self.job_id)?;
+        let update_job = schedule_update_job(
+            config,
+            repoconfig,
+            conn,
+            self.job_id,
+            Some(&executor.metrics),
+        )?;
 
         let path = Path::new(&build_repo_path);
         job_log_and_info!(
@@ -181,7 +188,7 @@ impl JobInstance for PublishJobInstance {
         let build_refs = load_build_refs(self.build_id, conn)?;
 
         // Do the actual work
-        let res = self.do_publish(&build_data, &build_refs, config, repoconfig, conn);
+        let res = self.do_publish(&build_data, &build_refs, config, repoconfig, executor, conn);
 
         // Update the publish repo state in db
 

@@ -5,9 +5,11 @@ use log::{error, info};
 use std::fmt::Write as _;
 use std::process::{Command, Output, Stdio};
 use std::str;
+use std::sync::Arc;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
+use crate::metrics::Metrics;
 use crate::models::{self, Job};
 use crate::schema::*;
 
@@ -162,10 +164,12 @@ pub fn schedule_update_job(
     repoconfig: &RepoConfig,
     conn: &mut PgConnection,
     job_id: i32,
+    metrics: Option<&Arc<Metrics>>,
 ) -> Result<Job, DieselError> {
     /* Create update repo job */
     let delay = config.delay_update_secs;
-    let (is_new, update_job) = queue_update_job(delay, conn, &repoconfig.name, Some(job_id))?;
+    let (is_new, update_job) =
+        queue_update_job(delay, conn, &repoconfig.name, Some(job_id), metrics)?;
     if is_new {
         job_log_and_info!(
             job_id,

@@ -16,6 +16,7 @@ use crate::db::Db;
 use crate::deltas::DeltaGenerator;
 use crate::jobs::JobQueue;
 use crate::logger::Logger;
+use crate::metrics::Metrics;
 use crate::tokens::TokenParser;
 use crate::Pool;
 
@@ -72,6 +73,7 @@ pub fn create_app(
     config: &Arc<Config>,
     job_queue: Addr<JobQueue>,
     delta_generator: Addr<DeltaGenerator>,
+    metrics: Arc<Metrics>,
 ) -> Server {
     let c = config.clone();
     let secret = config.secret.clone();
@@ -81,7 +83,10 @@ pub fn create_app(
         .unwrap_or_else(|| config.secret.as_ref())
         .clone();
 
-    let db = Db(pool);
+    let db = Db {
+        pool,
+        metrics: Some(metrics.clone()),
+    };
 
     let http_server = HttpServer::new(move || {
         App::new()
@@ -89,6 +94,7 @@ pub fn create_app(
             .app_data(Data::new(delta_generator.clone()))
             .app_data(Data::new((*c).clone()))
             .app_data(Data::new(db.clone()))
+            .app_data(Data::new(metrics.clone()))
             .wrap(Logger::default())
             .wrap(middleware::Compress::default())
             .service(
@@ -212,6 +218,7 @@ pub fn create_app(
                     .route(web::head().to(api::repo::handle_build_repo))
                     .to(HttpResponse::MethodNotAllowed),
             )
+            .service(web::resource("/metrics").route(web::get().to(api::metrics::metrics)))
             .service(web::resource("/status").route(web::get().to(api::status::status)))
             .service(web::resource("/status/{id}").route(web::get().to(api::status::job_status)))
     });
