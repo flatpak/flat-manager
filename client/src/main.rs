@@ -133,6 +133,11 @@ struct PushArgs {
         help = "Don't upload deltas matching this glob"
     )]
     ignore_delta: Vec<String>,
+    #[arg(
+        long,
+        help = "Upload all objects unconditionally, ignoring what the remote already has"
+    )]
+    all_objects: bool,
     #[arg(long, help = "Wait for commit/publish to finish")]
     wait: bool,
     #[arg(long = "wait-update", help = "Wait for update-repo to finish")]

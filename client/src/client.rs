@@ -1028,22 +1028,34 @@ impl ApiClient {
 
         let mut wanted_metadata = metadata_objects.iter().cloned().collect::<Vec<_>>();
         wanted_metadata.sort();
-        let mut missing_metadata = upload_client
-            .missing_objects(&args.build_url, &wanted_metadata)
-            .await?;
-        println!("Remote missing {} of those", missing_metadata.len());
-        missing_metadata.sort();
+        let missing_metadata = if args.all_objects {
+            println!("Uploading all metadata objects");
+            wanted_metadata.clone()
+        } else {
+            let mut m = upload_client
+                .missing_objects(&args.build_url, &wanted_metadata)
+                .await?;
+            println!("Remote missing {} of those", m.len());
+            m.sort();
+            m
+        };
 
         let file_objects = local_needed_files(&repo, &metadata_objects)?;
         println!("Has {} file objects for those", file_objects.len());
 
         let mut wanted_files = file_objects.iter().cloned().collect::<Vec<_>>();
         wanted_files.sort();
-        let mut missing_files = upload_client
-            .missing_objects(&args.build_url, &wanted_files)
-            .await?;
-        println!("Remote missing {} of those", missing_files.len());
-        missing_files.sort();
+        let missing_files = if args.all_objects {
+            println!("Uploading all file objects");
+            wanted_files.clone()
+        } else {
+            let mut m = upload_client
+                .missing_objects(&args.build_url, &wanted_files)
+                .await?;
+            println!("Remote missing {} of those", m.len());
+            m.sort();
+            m
+        };
 
         println!("Uploading file objects");
         upload_client
