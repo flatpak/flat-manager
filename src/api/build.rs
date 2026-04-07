@@ -2,7 +2,6 @@ use actix::prelude::*;
 use actix_multipart::Multipart;
 use actix_web::web::{self, Data, Json, Path, Query};
 use actix_web::{HttpRequest, HttpResponse, ResponseError, Result};
-use log::info;
 
 use chrono::Utc;
 use futures::StreamExt;
@@ -562,20 +561,10 @@ pub async fn upload(
 
     let mut multipart = multipart;
     let mut sizes = Vec::new();
-    let mut saved_files = Vec::new();
     while let Some(field) = multipart.next().await {
         let field = field.map_err(|e| ApiError::InternalServerError(e.to_string()))?;
-        let (subpath, size) = save_file(field, &uploadstate).await?;
-        saved_files.push(subpath);
-        sizes.push(size);
+        sizes.push(save_file(field, &uploadstate).await?);
     }
-
-    info!(
-        "Build {}: upload: saved {} files: {:?}",
-        params.id,
-        sizes.len(),
-        saved_files,
-    );
 
     Ok(HttpResponse::Ok().json(sizes))
 }

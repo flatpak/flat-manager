@@ -166,7 +166,7 @@ pub fn start_save(
 pub async fn save_file(
     mut field: actix_multipart::Field,
     state: &Arc<UploadState>,
-) -> Result<(path::PathBuf, i64), ApiError> {
+) -> Result<i64, ApiError> {
     let repo_subpath = get_upload_subpath(&field, state)?;
 
     let (mut named_file, object_file) = start_save(&repo_subpath, state)
@@ -194,7 +194,7 @@ pub async fn save_file(
         warn!("Can't get permissions on uploaded file");
     };
 
-    Ok((repo_subpath, size))
+    Ok(size)
 }
 
 #[cfg(test)]
