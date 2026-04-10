@@ -799,34 +799,61 @@ impl ApiClient {
         build_url: &str,
         objects: &[String],
     ) -> Result<(), ClientError> {
-        let mut batch = Vec::new();
-        let mut batch_size = 0u64;
+        const MAX_ATTEMPTS: u32 = 6;
 
-        for object in objects {
-            let path = object_path(repo_path, object);
-            let file_size = std::fs::metadata(&path)?.len();
-
-            if batch_size + file_size > UPLOAD_CHUNK_LIMIT && !batch.is_empty() {
-                self.upload_files(build_url, std::mem::take(&mut batch))
-                    .await?;
-                batch_size = 0;
-            }
-
-            batch.push((path, object.clone()));
-            batch_size += file_size;
-
-            if batch_size > UPLOAD_CHUNK_LIMIT {
-                self.upload_files(build_url, std::mem::take(&mut batch))
-                    .await?;
-                batch_size = 0;
-            }
+        if objects.is_empty() {
+            return Ok(());
         }
 
-        if !batch.is_empty() {
-            self.upload_files(build_url, batch).await?;
+        let mut to_upload: Vec<String> = objects.to_vec();
+
+        for attempt in 1..=MAX_ATTEMPTS {
+            if attempt > 1 {
+                println!(
+                    "{} objects still missing on server; re-uploading (attempt {attempt}/{MAX_ATTEMPTS})",
+                    to_upload.len(),
+                );
+            }
+
+            let mut batch = Vec::new();
+            let mut batch_size = 0u64;
+
+            for object in &to_upload {
+                let path = object_path(repo_path, object);
+                let file_size = std::fs::metadata(&path)?.len();
+
+                if batch_size + file_size > UPLOAD_CHUNK_LIMIT && !batch.is_empty() {
+                    self.upload_files(build_url, std::mem::take(&mut batch))
+                        .await?;
+                    batch_size = 0;
+                }
+
+                batch.push((path, object.clone()));
+                batch_size += file_size;
+
+                if batch_size > UPLOAD_CHUNK_LIMIT {
+                    self.upload_files(build_url, std::mem::take(&mut batch))
+                        .await?;
+                    batch_size = 0;
+                }
+            }
+
+            if !batch.is_empty() {
+                self.upload_files(build_url, batch).await?;
+            }
+
+            let mut still_missing = self.missing_objects(build_url, objects).await?;
+            if still_missing.is_empty() {
+                return Ok(());
+            }
+            still_missing.sort();
+            to_upload = still_missing;
         }
 
-        Ok(())
+        Err(ClientError::Usage(format!(
+            "{} objects still missing on server after {MAX_ATTEMPTS} upload attempts: {to_upload:?}",
+            to_upload.len(),
+        )))
     }
 
     async fn upload_deltas(
