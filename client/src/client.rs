@@ -298,6 +298,14 @@ fn build_url_to_api(build_url: &str) -> Result<String, ClientError> {
     }
 }
 
+fn build_url_to_manager(build_url: &str) -> Result<String, ClientError> {
+    let api_base = build_url_to_api(build_url)?;
+    Ok(api_base
+        .trim_end_matches("/api/v1")
+        .trim_end_matches('/')
+        .to_string())
+}
+
 fn publish_current_state(body: &Value) -> Option<String> {
     if let Some(state) = body.get("current-state").and_then(Value::as_str) {
         return Some(state.to_string());
@@ -982,7 +990,7 @@ impl ApiClient {
         ref_pairs.sort_by(|(left_name, _), (right_name, _)| left_name.cmp(right_name));
 
         let minimal_upload_client = if args.minimal_token {
-            let manager_url = build_url_to_api(&args.build_url)?;
+            let manager_url = build_url_to_manager(&args.build_url)?;
             let build_id = args
                 .build_url
                 .trim_end_matches('/')
