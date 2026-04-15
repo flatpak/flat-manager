@@ -23,12 +23,12 @@ use super::job_queue::queue_update_job;
 /// **Both the commit job and the publish job use this predicate** to decide which refs get a
 /// `.flatpakref` file.
 pub fn should_generate_flatpakref(ref_name: &str) -> bool {
-    let unwanted_exts = [".Debug", ".Locale", ".Sources", ".Docs"];
+    const UNWANTED_EXTS: &[&str] = &[".Debug", ".Locale", ".Sources", ".Docs"];
     let ref_id = ref_name.split('/').nth(1).unwrap_or("");
 
     ref_name.starts_with("app/")
         || (ref_name.starts_with("runtime/")
-            && !unwanted_exts.iter().any(|&ext| ref_id.ends_with(ext)))
+            && !UNWANTED_EXTS.iter().any(|&ext| ref_id.ends_with(ext)))
 }
 
 pub fn generate_flatpakref(
