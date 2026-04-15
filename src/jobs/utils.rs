@@ -15,6 +15,22 @@ use crate::schema::*;
 
 use super::job_queue::queue_update_job;
 
+/// We generate flatpakref files for all `app/` refs and for `runtime/` refs that represent
+/// actual runtimes or addons/plugins/extensions. The sub-refs that Flatpak generates
+/// automatically (`.Debug`, `.Locale`, `.Sources`, `.Docs`) are excluded because they are
+/// not directly installable by end-users.
+///
+/// **Both the commit job and the publish job use this predicate** to decide which refs get a
+/// `.flatpakref` file.
+pub fn should_generate_flatpakref(ref_name: &str) -> bool {
+    let unwanted_exts = [".Debug", ".Locale", ".Sources", ".Docs"];
+    let ref_id = ref_name.split('/').nth(1).unwrap_or("");
+
+    ref_name.starts_with("app/")
+        || (ref_name.starts_with("runtime/")
+            && !unwanted_exts.iter().any(|&ext| ref_id.ends_with(ext)))
+}
+
 pub fn generate_flatpakref(
     ref_name: &str,
     maybe_build_id: Option<i32>,
@@ -23,7 +39,11 @@ pub fn generate_flatpakref(
 ) -> (String, String) {
     let parts: Vec<&str> = ref_name.split('/').collect();
 
-    let filename = format!("{}.flatpakref", parts[1]);
+    let filename = if parts[0] == "app" {
+        format!("{}.flatpakref", parts[1])
+    } else {
+        format!("{}.{}.flatpakref", parts[1], parts[3])
+    };
     let app_id = &parts[1];
     let branch = &parts[3];
 
@@ -229,4 +249,244 @@ pub fn load_build_refs(build_id: i32, conn: &mut PgConnection) -> JobResult<Vec<
     }
 
     Ok(refs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_config(base_url: &str) -> Config {
+        serde_json::from_str(&format!(
+            r#"{{
+                "database-url": "postgres://example",
+                "secret": "c2VjcmV0",
+                "repos": {{}},
+                "build-repo-base": "/tmp/build-repo",
+                "base-url": "{base_url}"
+            }}"#
+        ))
+        .unwrap()
+    }
+
+    fn make_repoconfig(name: &str, base_url: Option<&str>) -> RepoConfig {
+        let base_url_field = match base_url {
+            Some(u) => format!(r#""base-url": "{u}","#),
+            None => String::new(),
+        };
+        let mut repo: RepoConfig = serde_json::from_str(&format!(
+            r#"{{
+                "path": "/tmp/repo",
+                "subsets": {{}},
+                {base_url_field}
+                "runtime-repo-url": null
+            }}"#
+        ))
+        .unwrap();
+        repo.name = name.to_string();
+        repo
+    }
+
+    #[test]
+    fn app_refs_always_get_a_flatpakref() {
+        assert!(should_generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable"
+        ));
+        assert!(should_generate_flatpakref("app/org.gnome.eog/aarch64/beta"));
+    }
+
+    #[test]
+    fn plain_runtime_refs_get_a_flatpakref() {
+        assert!(should_generate_flatpakref(
+            "runtime/org.gnome.Platform/x86_64/46"
+        ));
+    }
+
+    #[test]
+    fn addon_and_plugin_refs_get_a_flatpakref() {
+        assert!(should_generate_flatpakref(
+            "runtime/org.gnome.eog.Plugin/x86_64/stable"
+        ));
+        assert!(should_generate_flatpakref(
+            "runtime/com.example.App.Addon/x86_64/stable"
+        ));
+    }
+
+    #[test]
+    fn debug_extension_refs_do_not_get_a_flatpakref() {
+        assert!(!should_generate_flatpakref(
+            "runtime/org.gnome.eog.Debug/x86_64/stable"
+        ));
+    }
+
+    #[test]
+    fn locale_extension_refs_do_not_get_a_flatpakref() {
+        assert!(!should_generate_flatpakref(
+            "runtime/org.gnome.eog.Locale/x86_64/stable"
+        ));
+    }
+
+    #[test]
+    fn sources_extension_refs_do_not_get_a_flatpakref() {
+        assert!(!should_generate_flatpakref(
+            "runtime/org.gnome.eog.Sources/x86_64/stable"
+        ));
+    }
+
+    #[test]
+    fn docs_extension_refs_do_not_get_a_flatpakref() {
+        assert!(!should_generate_flatpakref(
+            "runtime/org.gnome.eog.Docs/x86_64/stable"
+        ));
+    }
+
+    #[test]
+    fn screenshot_and_appstream_refs_do_not_get_a_flatpakref() {
+        assert!(!should_generate_flatpakref(
+            "screenshots/org.gnome.eog/x86_64/stable"
+        ));
+        assert!(!should_generate_flatpakref("appstream/x86_64"));
+    }
+
+    #[test]
+    fn generate_flatpakref_for_app_ref_in_main_repo() {
+        let config = make_config("https://dl.example.com");
+        let repoconfig = make_repoconfig("stable", Some("https://dl.example.com/repo/stable"));
+
+        let (filename, contents) = generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable",
+            None,
+            &config,
+            &repoconfig,
+        );
+
+        assert_eq!(filename, "org.gnome.eog.flatpakref");
+        assert!(contents.contains("Name=org.gnome.eog"));
+        assert!(contents.contains("Branch=stable"));
+        assert!(contents.contains("IsRuntime=false"));
+        assert!(contents.contains("Url=https://dl.example.com/repo/stable"));
+        assert!(contents.contains("org.gnome.eog from"));
+    }
+
+    #[test]
+    fn generate_flatpakref_for_app_ref_in_build_repo() {
+        let config = make_config("https://dl.example.com");
+        let repoconfig = make_repoconfig("stable", None);
+
+        let (filename, contents) = generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable",
+            Some(42),
+            &config,
+            &repoconfig,
+        );
+
+        assert_eq!(filename, "org.gnome.eog.flatpakref");
+        assert!(contents.contains("IsRuntime=false"));
+        assert!(contents.contains("Url=https://dl.example.com/build-repo/42"));
+        assert!(contents.contains("Title=org.gnome.eog build nr 42"));
+    }
+
+    #[test]
+    fn generate_flatpakref_for_runtime_ref_sets_is_runtime_true() {
+        let config = make_config("https://dl.example.com");
+        let repoconfig = make_repoconfig("stable", None);
+
+        let (_filename, contents) = generate_flatpakref(
+            "runtime/org.gnome.Platform/x86_64/46",
+            None,
+            &config,
+            &repoconfig,
+        );
+
+        assert!(contents.contains("IsRuntime=true"));
+        assert!(contents.contains("Name=org.gnome.Platform"));
+        assert!(contents.contains("Branch=46"));
+    }
+
+    #[test]
+    fn generate_flatpakref_for_addon_ref_sets_is_runtime_true() {
+        let config = make_config("https://dl.example.com");
+        let repoconfig = make_repoconfig("stable", None);
+
+        let (filename, contents) = generate_flatpakref(
+            "runtime/org.gnome.eog.Plugin/x86_64/stable",
+            None,
+            &config,
+            &repoconfig,
+        );
+
+        assert_eq!(filename, "org.gnome.eog.Plugin.stable.flatpakref");
+        assert!(contents.contains("IsRuntime=true"));
+        assert!(contents.contains("Name=org.gnome.eog.Plugin"));
+    }
+
+    #[test]
+    fn generate_flatpakref_includes_deploy_collection_id_for_main_repo_only() {
+        let config = make_config("https://dl.example.com");
+        let mut repoconfig = make_repoconfig("stable", None);
+        repoconfig.collection_id = Some("org.example.Repo".to_string());
+        repoconfig.deploy_collection_id = true;
+
+        let (_filename, contents) = generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable",
+            None,
+            &config,
+            &repoconfig,
+        );
+        assert!(contents.contains("DeployCollectionID=org.example.Repo"));
+
+        let (_filename, contents) = generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable",
+            Some(1),
+            &config,
+            &repoconfig,
+        );
+        assert!(!contents.contains("DeployCollectionID"));
+    }
+
+    #[test]
+    fn generate_flatpakref_includes_suggested_remote_name_for_main_repo_only() {
+        let config = make_config("https://dl.example.com");
+        let mut repoconfig = make_repoconfig("stable", None);
+        repoconfig.suggested_repo_name = Some("flathub".to_string());
+
+        let (_filename, contents) = generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable",
+            None,
+            &config,
+            &repoconfig,
+        );
+        assert!(contents.contains("SuggestRemoteName=flathub"));
+        assert!(contents.contains("org.gnome.eog from flathub"));
+
+        let (_filename, contents) = generate_flatpakref(
+            "app/org.gnome.eog/x86_64/stable",
+            Some(7),
+            &config,
+            &repoconfig,
+        );
+        assert!(!contents.contains("SuggestRemoteName"));
+    }
+
+    #[test]
+    fn different_branches_of_same_ref_produce_distinct_filenames() {
+        let config = make_config("https://dl.example.com");
+        let repoconfig = make_repoconfig("stable", None);
+
+        let (stable_filename, _) = generate_flatpakref(
+            "runtime/org.gnome.eog.Plugin/x86_64/stable",
+            None,
+            &config,
+            &repoconfig,
+        );
+        let (beta_filename, _) = generate_flatpakref(
+            "runtime/org.gnome.eog.Plugin/x86_64/beta",
+            None,
+            &config,
+            &repoconfig,
+        );
+
+        assert_ne!(stable_filename, beta_filename);
+        assert_eq!(stable_filename, "org.gnome.eog.Plugin.stable.flatpakref");
+        assert_eq!(beta_filename, "org.gnome.eog.Plugin.beta.flatpakref");
+    }
 }
