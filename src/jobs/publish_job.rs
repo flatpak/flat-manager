@@ -21,7 +21,7 @@ use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
 use super::utils::{
     add_gpg_args, do_command, generate_flatpakref, load_build_and_config, load_build_refs,
-    schedule_update_job,
+    schedule_update_job, should_generate_flatpakref,
 };
 
 #[derive(Debug)]
@@ -111,7 +111,7 @@ impl PublishJobInstance {
                 commits.insert(build_ref.ref_name.to_string(), commit);
             }
 
-            if build_ref.ref_name.starts_with("app/") {
+            if should_generate_flatpakref(&build_ref.ref_name) {
                 let (filename, contents) =
                     generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
                 let path = appstream_dir.join(&filename);
