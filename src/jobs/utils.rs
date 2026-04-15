@@ -287,60 +287,37 @@ mod tests {
     }
 
     #[test]
-    fn app_refs_always_get_a_flatpakref() {
+    fn should_generate_flatpakref_cases() {
+        // app/ refs always get a flatpakref
         assert!(should_generate_flatpakref(
             "app/org.gnome.eog/x86_64/stable"
         ));
         assert!(should_generate_flatpakref("app/org.gnome.eog/aarch64/beta"));
-    }
-
-    #[test]
-    fn plain_runtime_refs_get_a_flatpakref() {
+        // plain runtime refs get a flatpakref
         assert!(should_generate_flatpakref(
             "runtime/org.gnome.Platform/x86_64/46"
         ));
-    }
-
-    #[test]
-    fn addon_and_plugin_refs_get_a_flatpakref() {
+        // addon / plugin / extension refs get a flatpakref
         assert!(should_generate_flatpakref(
             "runtime/org.gnome.eog.Plugin/x86_64/stable"
         ));
         assert!(should_generate_flatpakref(
             "runtime/com.example.App.Addon/x86_64/stable"
         ));
-    }
-
-    #[test]
-    fn debug_extension_refs_do_not_get_a_flatpakref() {
+        // auto-generated sub-refs do not get a flatpakref
         assert!(!should_generate_flatpakref(
             "runtime/org.gnome.eog.Debug/x86_64/stable"
         ));
-    }
-
-    #[test]
-    fn locale_extension_refs_do_not_get_a_flatpakref() {
         assert!(!should_generate_flatpakref(
             "runtime/org.gnome.eog.Locale/x86_64/stable"
         ));
-    }
-
-    #[test]
-    fn sources_extension_refs_do_not_get_a_flatpakref() {
         assert!(!should_generate_flatpakref(
             "runtime/org.gnome.eog.Sources/x86_64/stable"
         ));
-    }
-
-    #[test]
-    fn docs_extension_refs_do_not_get_a_flatpakref() {
         assert!(!should_generate_flatpakref(
             "runtime/org.gnome.eog.Docs/x86_64/stable"
         ));
-    }
-
-    #[test]
-    fn screenshot_and_appstream_refs_do_not_get_a_flatpakref() {
+        // unrelated ref kinds do not get a flatpakref
         assert!(!should_generate_flatpakref(
             "screenshots/org.gnome.eog/x86_64/stable"
         ));
