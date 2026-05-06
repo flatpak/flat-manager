@@ -31,7 +31,7 @@ askama = "0.12"
 base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
-diesel = { version = "2.0", features = ["postgres", "chrono", "serde_json", "r2d2"] }
+diesel = { version = "2.3", features = ["postgres", "chrono", "serde_json", "r2d2"] }
 diesel_migrations = { version = "2.0" }
 dotenv = "0.15"
 filetime = "0.2"
