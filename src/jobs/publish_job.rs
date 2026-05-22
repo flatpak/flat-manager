@@ -8,7 +8,6 @@ use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::os::fd::{AsRawFd, FromRawFd, RawFd};
-use std::os::raw::{c_char, c_int, c_uint};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 use std::process::Command;
@@ -27,23 +26,6 @@ use super::utils::{
     add_gpg_args, do_command, generate_flatpakref, load_build_and_config, load_build_refs,
     schedule_update_job,
 };
-
-const O_RDONLY: c_int = 0;
-const O_WRONLY: c_int = 1;
-const O_CREAT: c_int = 0o100;
-const O_EXCL: c_int = 0o200;
-const O_DIRECTORY: c_int = 0o200000;
-const O_NOFOLLOW: c_int = 0o400000;
-const O_CLOEXEC: c_int = 0o2000000;
-const O_PATH: c_int = 0o10000000;
-const ELOOP: i32 = 40;
-
-unsafe extern "C" {
-    fn open(pathname: *const c_char, flags: c_int, ...) -> c_int;
-    fn openat(dirfd: c_int, pathname: *const c_char, flags: c_int, ...) -> c_int;
-    fn mkdirat(dirfd: c_int, pathname: *const c_char, mode: c_uint) -> c_int;
-    fn unlinkat(dirfd: c_int, pathname: *const c_char, flags: c_int) -> c_int;
-}
 
 #[derive(Debug)]
 pub struct PublishJobInstance {
@@ -366,7 +348,7 @@ fn open_or_create_destination_directory(
         Ok(directory) => Ok(directory),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             let name = c_string_for_path_component(name, destination_path)?;
-            let result = unsafe { mkdirat(parent_fd, name.as_ptr(), 0o755) };
+            let result = unsafe { libc::mkdirat(parent_fd, name.as_ptr(), 0o755) };
             if result != 0 {
                 let err = io::Error::last_os_error();
                 if err.kind() != io::ErrorKind::AlreadyExists {
@@ -401,7 +383,7 @@ fn destination_directory_error(
     destination_path: &Path,
     err: io::Error,
 ) -> JobError {
-    if err.raw_os_error() == Some(ELOOP) {
+    if err.raw_os_error() == Some(libc::ELOOP) {
         return unsafe_screenshot_destination(destination_path, "is a symlink");
     }
 
@@ -425,10 +407,15 @@ fn destination_directory_error(
 
 fn open_source_file(path: &Path) -> JobResult<File> {
     let path_name = c_string_for_path(path)?;
-    let fd = unsafe { open(path_name.as_ptr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW) };
+    let fd = unsafe {
+        libc::open(
+            path_name.as_ptr(),
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
     if fd < 0 {
         let err = io::Error::last_os_error();
-        if err.raw_os_error() == Some(ELOOP) {
+        if err.raw_os_error() == Some(libc::ELOOP) {
             return Err(unsafe_screenshot_source(path, "is a symlink"));
         }
         return Err(unsafe_screenshot_source(
@@ -480,7 +467,7 @@ fn remove_existing_destination_file(
     destination_path: &Path,
 ) -> JobResult<()> {
     let existing = openat_path_no_follow(parent_dir.as_raw_fd(), name).map_err(|err| {
-        if err.raw_os_error() == Some(ELOOP) {
+        if err.raw_os_error() == Some(libc::ELOOP) {
             unsafe_screenshot_destination(destination_path, "is a symlink")
         } else {
             unsafe_screenshot_destination(
@@ -518,7 +505,7 @@ fn remove_existing_destination_file(
     drop(existing);
 
     let name = c_string_for_path_component(name, destination_path)?;
-    let result = unsafe { unlinkat(parent_dir.as_raw_fd(), name.as_ptr(), 0) };
+    let result = unsafe { libc::unlinkat(parent_dir.as_raw_fd(), name.as_ptr(), 0) };
     if result != 0 {
         return Err(unsafe_screenshot_destination(
             destination_path,
@@ -536,9 +523,9 @@ fn open_dir_path_no_follow(path: &Path) -> Result<File, io::Error> {
     let path_name = c_string_for_path(path)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
     let fd = unsafe {
-        open(
+        libc::open(
             path_name.as_ptr(),
-            O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW,
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
         )
     };
     if fd < 0 {
@@ -552,10 +539,10 @@ fn openat_dir_no_follow(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Erro
     let name = CString::new(name.as_bytes())
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
     let fd = unsafe {
-        openat(
+        libc::openat(
             parent_fd,
             name.as_ptr(),
-            O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW,
+            libc::O_RDONLY | libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW,
         )
     };
     if fd < 0 {
@@ -568,7 +555,13 @@ fn openat_dir_no_follow(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Erro
 fn openat_path_no_follow(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Error> {
     let name = CString::new(name.as_bytes())
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
-    let fd = unsafe { openat(parent_fd, name.as_ptr(), O_PATH | O_CLOEXEC | O_NOFOLLOW) };
+    let fd = unsafe {
+        libc::openat(
+            parent_fd,
+            name.as_ptr(),
+            libc::O_PATH | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
     if fd < 0 {
         Err(io::Error::last_os_error())
     } else {
@@ -580,10 +573,10 @@ fn openat_create_new(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Error> 
     let name = CString::new(name.as_bytes())
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
     let fd = unsafe {
-        openat(
+        libc::openat(
             parent_fd,
             name.as_ptr(),
-            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
             0o644,
         )
     };

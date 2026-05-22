@@ -39,6 +39,7 @@ flat-manager-common = { path = "common" }
 hex = "0.4"
 jwt = { package = "jsonwebtoken", version = "10.3.0", features = ["aws_lc_rs"] }
 log = "0.4"
+libc = "0.2"
 libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
 r2d2 = "0.8"
 serde = "1.0"
