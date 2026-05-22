@@ -4,11 +4,15 @@ use diesel::result::Error as DieselError;
 use log::{error, info};
 use serde_json::json;
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{CString, OsStr, OsString};
 use std::fs::{self, File};
-use std::io::Write;
-use std::path::Path;
+use std::io::{self, Write};
+use std::os::fd::{AsRawFd, FromRawFd, RawFd};
+use std::os::raw::{c_char, c_int, c_uint};
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Component, Path};
 use std::process::Command;
+use walkdir::WalkDir;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
@@ -23,6 +27,23 @@ use super::utils::{
     add_gpg_args, do_command, generate_flatpakref, load_build_and_config, load_build_refs,
     schedule_update_job,
 };
+
+const O_RDONLY: c_int = 0;
+const O_WRONLY: c_int = 1;
+const O_CREAT: c_int = 0o100;
+const O_EXCL: c_int = 0o200;
+const O_DIRECTORY: c_int = 0o200000;
+const O_NOFOLLOW: c_int = 0o400000;
+const O_CLOEXEC: c_int = 0o2000000;
+const O_PATH: c_int = 0o10000000;
+const ELOOP: i32 = 40;
+
+unsafe extern "C" {
+    fn open(pathname: *const c_char, flags: c_int, ...) -> c_int;
+    fn openat(dirfd: c_int, pathname: *const c_char, flags: c_int, ...) -> c_int;
+    fn mkdirat(dirfd: c_int, pathname: *const c_char, mode: c_uint) -> c_int;
+    fn unlinkat(dirfd: c_int, pathname: *const c_char, flags: c_int) -> c_int;
+}
 
 #[derive(Debug)]
 pub struct PublishJobInstance {
@@ -130,7 +151,7 @@ impl PublishJobInstance {
                     conn,
                     &format!("extracting {}", build_ref.ref_name),
                 );
-                ostree::checkout_ref(&build_repo_path, &build_ref.ref_name, &media_dir)?;
+                extract_screenshot_ref(&build_repo_path, &build_ref.ref_name, &media_dir)?;
             }
         }
 
@@ -158,6 +179,451 @@ impl PublishJobInstance {
             "update-repo-job": update_job.id,
         }))
     }
+}
+
+fn extract_screenshot_ref(
+    build_repo_path: &Path,
+    ref_name: &str,
+    media_dir: &Path,
+) -> JobResult<()> {
+    let staged_dir = tempfile::tempdir().map_err(|err| {
+        JobError::InternalError(format!(
+            "Failed to create temporary screenshot checkout: {err}"
+        ))
+    })?;
+
+    ostree::checkout_ref(build_repo_path, ref_name, staged_dir.path())?;
+    install_staged_screenshot_tree(staged_dir.path(), media_dir)
+}
+
+fn validate_staged_screenshot_tree(staged_dir: &Path) -> JobResult<()> {
+    let metadata = fs::symlink_metadata(staged_dir).map_err(|err| {
+        unsafe_screenshot_source(staged_dir, format!("failed to inspect path: {err}"))
+    })?;
+    if !metadata.file_type().is_dir() {
+        return Err(unsafe_screenshot_source(
+            staged_dir,
+            "is not a real directory",
+        ));
+    }
+
+    for entry in WalkDir::new(staged_dir).follow_links(false) {
+        let entry = entry.map_err(|err| {
+            let path = err.path().unwrap_or(staged_dir);
+            unsafe_screenshot_source(path, format!("failed to read path: {err}"))
+        })?;
+        let path = entry.path();
+        let relative_path = relative_screenshot_path(staged_dir, path)?;
+        validate_relative_screenshot_path(relative_path)?;
+
+        let metadata = fs::symlink_metadata(path).map_err(|err| {
+            unsafe_screenshot_source(path, format!("failed to inspect path: {err}"))
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(unsafe_screenshot_source(path, "is a symlink"));
+        }
+        if !file_type.is_dir() && !file_type.is_file() {
+            return Err(unsafe_screenshot_source(
+                path,
+                "is not a regular file or directory",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn install_staged_screenshot_tree(staged_dir: &Path, media_dir: &Path) -> JobResult<()> {
+    validate_staged_screenshot_tree(staged_dir)?;
+    copy_staged_screenshot_tree(staged_dir, media_dir)
+}
+
+fn copy_staged_screenshot_tree(staged_dir: &Path, media_dir: &Path) -> JobResult<()> {
+    let media_root = open_media_dir(media_dir)?;
+
+    for entry in WalkDir::new(staged_dir).follow_links(false) {
+        let entry = entry.map_err(|err| {
+            let path = err.path().unwrap_or(staged_dir);
+            unsafe_screenshot_source(path, format!("failed to read path: {err}"))
+        })?;
+        let source_path = entry.path();
+        let relative_path = relative_screenshot_path(staged_dir, source_path)?;
+        validate_relative_screenshot_path(relative_path)?;
+
+        let metadata = fs::symlink_metadata(source_path).map_err(|err| {
+            unsafe_screenshot_source(source_path, format!("failed to inspect path: {err}"))
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() {
+            return Err(unsafe_screenshot_source(source_path, "is a symlink"));
+        } else if file_type.is_dir() {
+            let _dir = open_destination_directory(&media_root, media_dir, relative_path)?;
+        } else if file_type.is_file() {
+            copy_screenshot_file(source_path, &media_root, media_dir, relative_path)?;
+        } else {
+            return Err(unsafe_screenshot_source(
+                source_path,
+                "is not a regular file or directory",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn relative_screenshot_path<'a>(base: &Path, path: &'a Path) -> JobResult<&'a Path> {
+    path.strip_prefix(base).map_err(|err| {
+        unsafe_screenshot_source(path, format!("failed to calculate relative path: {err}"))
+    })
+}
+
+fn validate_relative_screenshot_path(path: &Path) -> JobResult<()> {
+    for component in path.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(JobError::InternalError(format!(
+                "Unsafe screenshot path {}: contains non-normal component",
+                path.display()
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+fn copy_screenshot_file(
+    source_path: &Path,
+    media_root: &File,
+    media_dir: &Path,
+    relative_path: &Path,
+) -> JobResult<()> {
+    let parent_path = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    let file_name = relative_path.file_name().ok_or_else(|| {
+        unsafe_screenshot_source(source_path, "regular file has no destination file name")
+    })?;
+    let parent_dir = open_destination_directory(media_root, media_dir, parent_path)?;
+    let destination_path = media_dir.join(relative_path);
+
+    let mut source_file = open_source_file(source_path)?;
+    let mut destination_file = create_destination_file(&parent_dir, file_name, &destination_path)?;
+    io::copy(&mut source_file, &mut destination_file).map_err(|err| {
+        JobError::InternalError(format!(
+            "Failed to copy screenshot file {} to {}: {err}",
+            source_path.display(),
+            destination_path.display()
+        ))
+    })?;
+
+    Ok(())
+}
+
+fn open_media_dir(media_dir: &Path) -> JobResult<File> {
+    open_dir_path_no_follow(media_dir).map_err(|err| {
+        unsafe_screenshot_destination(
+            media_dir,
+            format!("is not a real directory or could not be opened: {err}"),
+        )
+    })
+}
+
+fn open_destination_directory(
+    media_root: &File,
+    media_dir: &Path,
+    relative_path: &Path,
+) -> JobResult<File> {
+    validate_relative_screenshot_path(relative_path)?;
+
+    let mut directory = media_root.try_clone().map_err(|err| {
+        unsafe_screenshot_destination(
+            media_dir,
+            format!("failed to duplicate media directory handle: {err}"),
+        )
+    })?;
+    let mut destination_path = media_dir.to_path_buf();
+
+    for component in relative_path.components() {
+        let Component::Normal(name) = component else {
+            return Err(JobError::InternalError(format!(
+                "Unsafe screenshot path {}: contains non-normal component",
+                relative_path.display()
+            )));
+        };
+
+        destination_path.push(name);
+        directory =
+            open_or_create_destination_directory(directory.as_raw_fd(), name, &destination_path)?;
+    }
+
+    Ok(directory)
+}
+
+fn open_or_create_destination_directory(
+    parent_fd: RawFd,
+    name: &OsStr,
+    destination_path: &Path,
+) -> JobResult<File> {
+    match openat_dir_no_follow(parent_fd, name) {
+        Ok(directory) => Ok(directory),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            let name = c_string_for_path_component(name, destination_path)?;
+            let result = unsafe { mkdirat(parent_fd, name.as_ptr(), 0o755) };
+            if result != 0 {
+                let err = io::Error::last_os_error();
+                if err.kind() != io::ErrorKind::AlreadyExists {
+                    return Err(unsafe_screenshot_destination(
+                        destination_path,
+                        format!("failed to create directory: {err}"),
+                    ));
+                }
+            }
+
+            openat_dir_no_follow(parent_fd, destination_path.file_name().unwrap()).map_err(|err| {
+                destination_directory_error(
+                    parent_fd,
+                    destination_path.file_name().unwrap(),
+                    destination_path,
+                    err,
+                )
+            })
+        }
+        Err(err) => Err(destination_directory_error(
+            parent_fd,
+            name,
+            destination_path,
+            err,
+        )),
+    }
+}
+
+fn destination_directory_error(
+    parent_fd: RawFd,
+    name: &OsStr,
+    destination_path: &Path,
+    err: io::Error,
+) -> JobError {
+    if err.raw_os_error() == Some(ELOOP) {
+        return unsafe_screenshot_destination(destination_path, "is a symlink");
+    }
+
+    if let Ok(existing) = openat_path_no_follow(parent_fd, name) {
+        if let Ok(metadata) = existing.metadata() {
+            let file_type = metadata.file_type();
+            if file_type.is_symlink() {
+                return unsafe_screenshot_destination(destination_path, "is a symlink");
+            }
+            if !file_type.is_dir() {
+                return unsafe_screenshot_destination(destination_path, "is not a directory");
+            }
+        }
+    }
+
+    unsafe_screenshot_destination(
+        destination_path,
+        format!("is not a real directory or could not be opened: {err}"),
+    )
+}
+
+fn open_source_file(path: &Path) -> JobResult<File> {
+    let path_name = c_string_for_path(path)?;
+    let fd = unsafe { open(path_name.as_ptr(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW) };
+    if fd < 0 {
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(ELOOP) {
+            return Err(unsafe_screenshot_source(path, "is a symlink"));
+        }
+        return Err(unsafe_screenshot_source(
+            path,
+            format!("failed to open file without following symlinks: {err}"),
+        ));
+    }
+
+    let file = unsafe { File::from_raw_fd(fd) };
+    let metadata = file.metadata().map_err(|err| {
+        unsafe_screenshot_source(path, format!("failed to inspect opened file: {err}"))
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(unsafe_screenshot_source(path, "is not a regular file"));
+    }
+
+    Ok(file)
+}
+
+fn create_destination_file(
+    parent_dir: &File,
+    name: &OsStr,
+    destination_path: &Path,
+) -> JobResult<File> {
+    for _ in 0..2 {
+        match openat_create_new(parent_dir.as_raw_fd(), name) {
+            Ok(file) => return Ok(file),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                remove_existing_destination_file(parent_dir, name, destination_path)?;
+            }
+            Err(err) => {
+                return Err(unsafe_screenshot_destination(
+                    destination_path,
+                    format!("failed to create file without following symlinks: {err}"),
+                ));
+            }
+        }
+    }
+
+    Err(unsafe_screenshot_destination(
+        destination_path,
+        "failed to replace existing file safely",
+    ))
+}
+
+fn remove_existing_destination_file(
+    parent_dir: &File,
+    name: &OsStr,
+    destination_path: &Path,
+) -> JobResult<()> {
+    let existing = openat_path_no_follow(parent_dir.as_raw_fd(), name).map_err(|err| {
+        if err.raw_os_error() == Some(ELOOP) {
+            unsafe_screenshot_destination(destination_path, "is a symlink")
+        } else {
+            unsafe_screenshot_destination(
+                destination_path,
+                format!("failed to inspect existing destination: {err}"),
+            )
+        }
+    })?;
+    let metadata = existing.metadata().map_err(|err| {
+        unsafe_screenshot_destination(
+            destination_path,
+            format!("failed to inspect existing destination: {err}"),
+        )
+    })?;
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Err(unsafe_screenshot_destination(
+            destination_path,
+            "is a symlink",
+        ));
+    }
+    if file_type.is_dir() {
+        return Err(unsafe_screenshot_destination(
+            destination_path,
+            "is a directory",
+        ));
+    }
+    if !file_type.is_file() {
+        return Err(unsafe_screenshot_destination(
+            destination_path,
+            "is not a regular file",
+        ));
+    }
+
+    drop(existing);
+
+    let name = c_string_for_path_component(name, destination_path)?;
+    let result = unsafe { unlinkat(parent_dir.as_raw_fd(), name.as_ptr(), 0) };
+    if result != 0 {
+        return Err(unsafe_screenshot_destination(
+            destination_path,
+            format!(
+                "failed to remove existing file: {}",
+                io::Error::last_os_error()
+            ),
+        ));
+    }
+
+    Ok(())
+}
+
+fn open_dir_path_no_follow(path: &Path) -> Result<File, io::Error> {
+    let path_name = c_string_for_path(path)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
+    let fd = unsafe {
+        open(
+            path_name.as_ptr(),
+            O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+fn openat_dir_no_follow(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Error> {
+    let name = CString::new(name.as_bytes())
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
+    let fd = unsafe {
+        openat(
+            parent_fd,
+            name.as_ptr(),
+            O_RDONLY | O_CLOEXEC | O_DIRECTORY | O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+fn openat_path_no_follow(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Error> {
+    let name = CString::new(name.as_bytes())
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
+    let fd = unsafe { openat(parent_fd, name.as_ptr(), O_PATH | O_CLOEXEC | O_NOFOLLOW) };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+fn openat_create_new(parent_fd: RawFd, name: &OsStr) -> Result<File, io::Error> {
+    let name = CString::new(name.as_bytes())
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err.to_string()))?;
+    let fd = unsafe {
+        openat(
+            parent_fd,
+            name.as_ptr(),
+            O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+            0o644,
+        )
+    };
+    if fd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+}
+
+fn c_string_for_path(path: &Path) -> JobResult<CString> {
+    CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        JobError::InternalError(format!(
+            "Unsafe screenshot path {}: contains a NUL byte",
+            path.display()
+        ))
+    })
+}
+
+fn c_string_for_path_component(name: &OsStr, path: &Path) -> JobResult<CString> {
+    CString::new(name.as_bytes()).map_err(|_| {
+        JobError::InternalError(format!(
+            "Unsafe screenshot path {}: contains a NUL byte",
+            path.display()
+        ))
+    })
+}
+
+fn unsafe_screenshot_source(path: &Path, reason: impl std::fmt::Display) -> JobError {
+    JobError::InternalError(format!(
+        "Unsafe screenshot source path {}: {reason}",
+        path.display()
+    ))
+}
+
+fn unsafe_screenshot_destination(path: &Path, reason: impl std::fmt::Display) -> JobError {
+    JobError::InternalError(format!(
+        "Unsafe screenshot destination path {}: {reason}",
+        path.display()
+    ))
 }
 
 impl JobInstance for PublishJobInstance {
@@ -226,5 +692,130 @@ impl JobInstance for PublishJobInstance {
         })?;
 
         res
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use std::os::unix::net::UnixListener;
+
+    fn write_file(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    fn assert_error_contains(result: JobResult<()>, expected: &str) {
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains(expected),
+            "expected error to contain {expected:?}, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn copies_nested_screenshot_files() {
+        let staged = tempfile::tempdir().unwrap();
+        let media = tempfile::tempdir().unwrap();
+        write_file(
+            &staged.path().join("nested/screenshots/flat-manager.json"),
+            r#"{"ok":true}"#,
+        );
+
+        install_staged_screenshot_tree(staged.path(), media.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(media.path().join("nested/screenshots/flat-manager.json")).unwrap(),
+            r#"{"ok":true}"#
+        );
+    }
+
+    #[test]
+    fn replaces_existing_regular_destination_file() {
+        let staged = tempfile::tempdir().unwrap();
+        let media = tempfile::tempdir().unwrap();
+        let relative_path = Path::new("screenshots/flat-manager.json");
+        write_file(&staged.path().join(relative_path), "new");
+        write_file(&media.path().join(relative_path), "old");
+
+        install_staged_screenshot_tree(staged.path(), media.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(media.path().join(relative_path)).unwrap(),
+            "new"
+        );
+    }
+
+    #[test]
+    fn rejects_staged_symlink_before_copying_anything() {
+        let staged = tempfile::tempdir().unwrap();
+        let media = tempfile::tempdir().unwrap();
+        let safe_path = Path::new("screenshots/ok.json");
+        let link_path = Path::new("screenshots/link.json");
+        write_file(&staged.path().join(safe_path), "new");
+        fs::create_dir_all(staged.path().join("screenshots")).unwrap();
+        symlink("target", staged.path().join(link_path)).unwrap();
+        write_file(&media.path().join(safe_path), "old");
+
+        assert_error_contains(
+            install_staged_screenshot_tree(staged.path(), media.path()),
+            "symlink",
+        );
+        assert_eq!(
+            fs::read_to_string(media.path().join(safe_path)).unwrap(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn rejects_staged_unix_socket() {
+        let staged = tempfile::tempdir().unwrap();
+        let media = tempfile::tempdir().unwrap();
+        let socket_path = staged.path().join("screenshots/socket");
+        fs::create_dir_all(socket_path.parent().unwrap()).unwrap();
+        let _socket = UnixListener::bind(&socket_path).unwrap();
+
+        assert_error_contains(
+            install_staged_screenshot_tree(staged.path(), media.path()),
+            "not a regular file or directory",
+        );
+    }
+
+    #[test]
+    fn rejects_existing_destination_symlink_file_target() {
+        let staged = tempfile::tempdir().unwrap();
+        let media = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        fs::write(outside.path(), "outside").unwrap();
+        let relative_path = Path::new("screenshots/flat-manager.json");
+        write_file(&staged.path().join(relative_path), "new");
+        fs::create_dir_all(media.path().join("screenshots")).unwrap();
+        symlink(outside.path(), media.path().join(relative_path)).unwrap();
+
+        assert_error_contains(
+            install_staged_screenshot_tree(staged.path(), media.path()),
+            "symlink",
+        );
+        assert_eq!(fs::read_to_string(outside.path()).unwrap(), "outside");
+    }
+
+    #[test]
+    fn rejects_destination_symlink_pivot() {
+        let repo = tempfile::tempdir().unwrap();
+        let staged = tempfile::tempdir().unwrap();
+        let media = repo.path().join("media");
+        fs::create_dir_all(&media).unwrap();
+        write_file(
+            &staged.path().join("pivot/screenshots/flat-manager.json"),
+            "new",
+        );
+        symlink("..", media.join("pivot")).unwrap();
+
+        assert_error_contains(
+            install_staged_screenshot_tree(staged.path(), &media),
+            "symlink",
+        );
+        assert!(!repo.path().join("screenshots/flat-manager.json").exists());
     }
 }
