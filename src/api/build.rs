@@ -346,7 +346,55 @@ pub async fn missing_objects(
     Ok(HttpResponse::Ok().json(MissingObjectsResponse { missing }))
 }
 
-fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
+fn token_has_global_prefix_access(req: &HttpRequest) -> bool {
+    req.get_claims().is_some_and(|claims| {
+        claims.prefixes.is_empty() || claims.prefixes.iter().any(|prefix| prefix.is_empty())
+    })
+}
+
+fn app_id_for_ref_arch<'a>(ref_name: &'a str, arch: &str) -> Option<&'a str> {
+    let ref_parts: Vec<&str> = ref_name.split('/').collect();
+    if ref_parts.len() == 4 && ref_parts[0] == "app" && ref_parts[2] == arch {
+        Some(ref_parts[1])
+    } else {
+        None
+    }
+}
+
+fn validate_screenshot_ref(
+    arch: &str,
+    req: &HttpRequest,
+    build: &Build,
+    existing_refs: &[BuildRef],
+) -> Result<(), ApiError> {
+    if let Some(app_id) = &build.app_id {
+        return req.has_token_prefix(app_id);
+    }
+
+    let app_ids = existing_refs
+        .iter()
+        .filter_map(|build_ref| app_id_for_ref_arch(&build_ref.ref_name, arch))
+        .collect::<std::collections::BTreeSet<_>>();
+
+    match app_ids.len() {
+        0 if token_has_global_prefix_access(req) => Ok(()),
+        0 => Err(ApiError::NotEnoughPermissions(
+            "Screenshot refs require a build app_id or matching app ref for app-scoped tokens"
+                .to_string(),
+        )),
+        1 => req.has_token_prefix(app_ids.iter().next().unwrap()),
+        _ => Err(ApiError::NotEnoughPermissions(
+            "Screenshot ref matches multiple app IDs".to_string(),
+        )),
+    }
+}
+
+fn validate_ref(
+    ref_name: &str,
+    req: &HttpRequest,
+    build: &Build,
+    existing_refs: &[BuildRef],
+) -> Result<(), ApiError> {
     let ref_parts: Vec<&str> = ref_name.split('/').collect();
 
     match ref_parts[0] {
@@ -354,7 +402,7 @@ fn validate_ref(ref_name: &str, req: &HttpRequest) -> Result<(), ApiError> {
             if ref_parts.len() != 2 {
                 return Err(ApiError::BadRequest(format!("Invalid ref_name {ref_name}")));
             }
-            Ok(())
+            validate_screenshot_ref(ref_parts[1], req, build, existing_refs)
         }
         "app" | "runtime" => {
             if ref_parts.len() != 4 {
@@ -382,8 +430,13 @@ pub async fn create_build_ref(
     req: HttpRequest,
 ) -> Result<HttpResponse, ApiError> {
     let build_id = params.id;
-    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
-    validate_ref(&args.ref_name, &req)?;
+    let build = lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
+    let existing_refs = if args.ref_name.starts_with("screenshots/") && build.app_id.is_none() {
+        db.lookup_build_refs(build_id).await?
+    } else {
+        Vec::new()
+    };
+    validate_ref(&args.ref_name, &req, &build, &existing_refs)?;
 
     let existing_ref = db
         .lookup_build_ref_by_name(build_id, args.ref_name.clone())
@@ -731,4 +784,202 @@ pub async fn republish(
     job_queue.do_send(ProcessJobs(Some(params.repo.clone())));
 
     respond_with_url(&job, &req, "show_job", &[job.id.to_string()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::HttpMessage;
+    use chrono::NaiveDate;
+
+    fn request_with_prefixes(prefixes: &[&str]) -> HttpRequest {
+        let req = actix_web::test::TestRequest::default().to_http_request();
+        req.extensions_mut().insert(Claims {
+            name: None,
+            sub: "build/1".to_string(),
+            exp: i64::MAX,
+            jti: None,
+            scope: vec![ClaimsScope::Upload],
+            prefixes: prefixes.iter().map(|prefix| prefix.to_string()).collect(),
+            apps: Vec::new(),
+            repos: vec!["".to_string()],
+            branches: Vec::new(),
+            token_type: None,
+        });
+        req
+    }
+
+    fn build_with_app_id(app_id: Option<&str>) -> Build {
+        Build {
+            id: 1,
+            created: NaiveDate::from_ymd_opt(2026, 1, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap(),
+            repo_state: 0,
+            repo_state_reason: None,
+            published_state: 0,
+            published_state_reason: None,
+            commit_job_id: None,
+            publish_job_id: None,
+            repo: "stable".to_string(),
+            extra_ids: Vec::new(),
+            app_id: app_id.map(str::to_string),
+            public_download: true,
+            build_log_url: None,
+            token_name: None,
+            token_type: None,
+        }
+    }
+
+    fn build_ref(ref_name: &str) -> BuildRef {
+        BuildRef {
+            id: 1,
+            build_id: 1,
+            ref_name: ref_name.to_string(),
+            commit: "0123456789abcdef".to_string(),
+            build_log_url: None,
+        }
+    }
+
+    fn assert_not_enough_permissions(result: Result<(), ApiError>, expected: &str) {
+        match result {
+            Err(ApiError::NotEnoughPermissions(message)) => assert_eq!(message, expected),
+            other => panic!("Expected NotEnoughPermissions({expected:?}), got {other:?}"),
+        }
+    }
+
+    fn assert_bad_ref(result: Result<(), ApiError>, ref_name: &str) {
+        match result {
+            Err(ApiError::BadRequest(message)) => {
+                assert_eq!(message, format!("Invalid ref_name {ref_name}"));
+            }
+            other => panic!("Expected BadRequest for {ref_name:?}, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn screenshot_ref_uses_build_app_id() {
+        let req = request_with_prefixes(&["org.example.App"]);
+        let build = build_with_app_id(Some("org.example.App"));
+
+        validate_ref("screenshots/x86_64", &req, &build, &[]).unwrap();
+    }
+
+    #[test]
+    fn screenshot_ref_rejects_nonmatching_build_app_id() {
+        let req = request_with_prefixes(&["org.other.App"]);
+        let build = build_with_app_id(Some("org.example.App"));
+
+        assert_not_enough_permissions(
+            validate_ref("screenshots/x86_64", &req, &build, &[]),
+            "Id org.example.App not matching prefix in token",
+        );
+    }
+
+    #[test]
+    fn legacy_build_infers_app_id_from_same_arch_app_ref() {
+        let req = request_with_prefixes(&["org.example.App"]);
+        let build = build_with_app_id(None);
+        let existing_refs = vec![build_ref("app/org.example.App/x86_64/stable")];
+
+        validate_ref("screenshots/x86_64", &req, &build, &existing_refs).unwrap();
+    }
+
+    #[test]
+    fn legacy_build_rejects_app_scoped_token_without_same_arch_app_ref() {
+        let req = request_with_prefixes(&["org.example.App"]);
+        let build = build_with_app_id(None);
+        let existing_refs = vec![build_ref("app/org.example.App/aarch64/stable")];
+
+        assert_not_enough_permissions(
+            validate_ref("screenshots/x86_64", &req, &build, &existing_refs),
+            "Screenshot refs require a build app_id or matching app ref for app-scoped tokens",
+        );
+    }
+
+    #[test]
+    fn legacy_screenshot_only_build_rejects_app_scoped_token() {
+        let req = request_with_prefixes(&["org.example.App"]);
+        let build = build_with_app_id(None);
+
+        assert_not_enough_permissions(
+            validate_ref("screenshots/x86_64", &req, &build, &[]),
+            "Screenshot refs require a build app_id or matching app ref for app-scoped tokens",
+        );
+    }
+
+    #[test]
+    fn legacy_screenshot_only_build_allows_global_token() {
+        let req = request_with_prefixes(&[]);
+        let build = build_with_app_id(None);
+
+        validate_ref("screenshots/x86_64", &req, &build, &[]).unwrap();
+    }
+
+    #[test]
+    fn legacy_screenshot_only_build_allows_empty_prefix_token() {
+        let req = request_with_prefixes(&[""]);
+        let build = build_with_app_id(None);
+
+        validate_ref("screenshots/x86_64", &req, &build, &[]).unwrap();
+    }
+
+    #[test]
+    fn legacy_build_rejects_ambiguous_same_arch_app_refs() {
+        let req = request_with_prefixes(&["org.example"]);
+        let build = build_with_app_id(None);
+        let existing_refs = vec![
+            build_ref("app/org.example.App/x86_64/stable"),
+            build_ref("app/org.example.Other/x86_64/stable"),
+        ];
+
+        assert_not_enough_permissions(
+            validate_ref("screenshots/x86_64", &req, &build, &existing_refs),
+            "Screenshot ref matches multiple app IDs",
+        );
+    }
+
+    #[test]
+    fn app_and_runtime_refs_keep_existing_prefix_behavior() {
+        let req = request_with_prefixes(&["org.example.App"]);
+        let build = build_with_app_id(None);
+
+        validate_ref("app/org.example.App/x86_64/stable", &req, &build, &[]).unwrap();
+        validate_ref(
+            "runtime/org.example.App.Locale/x86_64/stable",
+            &req,
+            &build,
+            &[],
+        )
+        .unwrap();
+        assert_not_enough_permissions(
+            validate_ref("app/org.other.App/x86_64/stable", &req, &build, &[]),
+            "Id org.other.App not matching prefix in token",
+        );
+    }
+
+    #[test]
+    fn malformed_refs_keep_existing_bad_request_behavior() {
+        let req = request_with_prefixes(&["org.example.App"]);
+        let build = build_with_app_id(Some("org.example.App"));
+
+        assert_bad_ref(
+            validate_ref("screenshots/org.example.App/x86_64", &req, &build, &[]),
+            "screenshots/org.example.App/x86_64",
+        );
+        assert_bad_ref(
+            validate_ref("app/org.example.App/x86_64", &req, &build, &[]),
+            "app/org.example.App/x86_64",
+        );
+        assert_bad_ref(
+            validate_ref(
+                "runtime/org.example.App.Locale/x86_64/stable/extra",
+                &req,
+                &build,
+                &[],
+            ),
+            "runtime/org.example.App.Locale/x86_64/stable/extra",
+        );
+    }
 }
