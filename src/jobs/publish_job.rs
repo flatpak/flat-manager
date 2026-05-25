@@ -300,9 +300,16 @@ fn copy_screenshot_file(
 }
 
 fn open_media_dir(media_dir: &Path) -> JobResult<File> {
-    open_dir_path_no_follow(media_dir).map_err(|err| {
+    let media_dir = media_dir.canonicalize().map_err(|err| {
         unsafe_screenshot_destination(
             media_dir,
+            format!("is not a real directory or could not be resolved: {err}"),
+        )
+    })?;
+
+    open_dir_path_no_follow(&media_dir).map_err(|err| {
+        unsafe_screenshot_destination(
+            &media_dir,
             format!("is not a real directory or could not be opened: {err}"),
         )
     })
@@ -810,5 +817,23 @@ mod tests {
             "symlink",
         );
         assert!(!repo.path().join("screenshots/flat-manager.json").exists());
+    }
+
+    #[test]
+    fn allows_configured_media_directory_symlink() {
+        let repo = tempfile::tempdir().unwrap();
+        let media_target = tempfile::tempdir().unwrap();
+        let staged = tempfile::tempdir().unwrap();
+        let media = repo.path().join("media");
+        let relative_path = Path::new("screenshots/flat-manager.json");
+        symlink(media_target.path(), &media).unwrap();
+        write_file(&staged.path().join(relative_path), "new");
+
+        install_staged_screenshot_tree(staged.path(), &media).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(media_target.path().join(relative_path)).unwrap(),
+            "new"
+        );
     }
 }
