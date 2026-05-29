@@ -21,6 +21,8 @@ pub struct GentokenArgs {
         help = "Name for the token"
     )]
     name: String,
+    #[arg(long, value_name = "JTI", help = "Unique token ID for revocation")]
+    jti: Option<String>,
     #[arg(
         long,
         default_value = "build",
@@ -100,6 +102,7 @@ pub fn run_gentoken(args: GentokenArgs) -> i32 {
         verbose,
         base64,
         name,
+        jti,
         sub,
         secret,
         secret_file,
@@ -178,7 +181,7 @@ pub fn run_gentoken(args: GentokenArgs) -> i32 {
         name: Some(name),
         sub,
         exp: Utc::now().timestamp() + duration,
-        jti: None,
+        jti,
         scope,
         prefixes,
         apps: vec![],
