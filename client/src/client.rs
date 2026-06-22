@@ -99,6 +99,9 @@ pub enum ClientError {
     #[error("{0}")]
     Usage(String),
 
+    #[error("Incomplete upload: sent {sent} object(s) but the server stored {stored}")]
+    IncompleteUpload { sent: usize, stored: usize },
+
     #[error("OSTree error: {0}")]
     Ostree(String),
 
@@ -138,6 +141,7 @@ impl ClientError {
                 is_timeout,
                 ..
             } => *is_connect || *is_timeout,
+            ClientError::IncompleteUpload { .. } => true,
             _ => false,
         }
     }
@@ -158,6 +162,13 @@ impl ClientError {
                 "type": "usage",
                 "details": {
                     "message": message,
+                },
+            }),
+            ClientError::IncompleteUpload { sent, stored } => json!({
+                "type": "incomplete-upload",
+                "details": {
+                    "sent": sent,
+                    "stored": stored,
                 },
             }),
             ClientError::Reqwest { .. }
@@ -872,7 +883,17 @@ impl ApiClient {
                 });
             }
 
-            let _ = response.bytes().await.map_reqwest_err()?;
+            // The server returns one stored size per uploaded file. If it stored
+            // fewer than we sent, it silently dropped objects from the batch;
+            // treat that as a (retryable) failure rather than continuing with an
+            // incomplete upload that would only surface as a commit-time fsck error.
+            let stored: Vec<i64> = response.json().await.map_reqwest_err()?;
+            if stored.len() != files.len() {
+                return Err(ClientError::IncompleteUpload {
+                    sent: files.len(),
+                    stored: stored.len(),
+                });
+            }
             Ok(())
         })
         .await
@@ -1151,6 +1172,44 @@ impl ApiClient {
         upload_client
             .upload_objects(&args.repo_path, &args.build_url, &missing_metadata)
             .await?;
+
+        // Confirm the remote actually persisted everything we uploaded before we
+        // commit. A batch upload can be silently lossy (the server returning
+        // success without storing every object), which otherwise only surfaces
+        // much later as a "Couldn't find file object" failure in the commit job.
+        // Re-query and re-upload any stragglers; re-uploads go out as small
+        // batches, so they don't re-trigger whatever dropped them the first time.
+        let mut uploaded = missing_files;
+        uploaded.extend(missing_metadata);
+        if !uploaded.is_empty() {
+            for attempt in 1..=3 {
+                let still_missing = upload_client
+                    .missing_objects(&args.build_url, &uploaded)
+                    .await?;
+                if still_missing.is_empty() {
+                    break;
+                }
+                if attempt == 3 {
+                    return Err(ClientError::Usage(format!(
+                        "Upload incomplete: {} object(s) still missing on the remote after re-uploading (e.g. {})",
+                        still_missing.len(),
+                        still_missing
+                            .iter()
+                            .take(5)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                    )));
+                }
+                println!(
+                    "Remote is missing {} just-uploaded object(s); re-uploading (attempt {attempt})",
+                    still_missing.len(),
+                );
+                upload_client
+                    .upload_objects(&args.repo_path, &args.build_url, &still_missing)
+                    .await?;
+            }
+        }
 
         let deltas = repo
             .list_static_delta_names(gio::Cancellable::NONE)?
