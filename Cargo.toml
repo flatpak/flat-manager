@@ -10,6 +10,12 @@ edition = "2021"
 members = ["common", "client"]
 default-members = [".", "common", "client"]
 
+# Vendored actix-multipart 0.7.2 with a one-line fix for a silent field-drop bug in
+# the streaming parser (boundary delimiter split across a network chunk). See
+# vendor/actix-multipart/README.flatmanager.md. Remove once fixed upstream.
+[patch.crates-io]
+actix-multipart = { path = "vendor/actix-multipart" }
+
 [lib]
 name = "flatmanager"
 path = "src/lib.rs"
