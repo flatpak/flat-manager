@@ -209,7 +209,9 @@ impl UploadState {
                 libostree::gio::Cancellable::NONE,
             )
             .map_err(|e| {
-                ApiError::InternalServerError(format!("Can't create upload validation repository: {e}"))
+                ApiError::InternalServerError(format!(
+                    "Can't create upload validation repository: {e}"
+                ))
             })?;
         Ok(Self {
             repo_path,
@@ -317,8 +319,8 @@ pub async fn save_file(
 ) -> Result<i64, ApiError> {
     let target = get_upload_target(&field, state)?;
 
-    let (named_file, _object_file) = start_save(&target, state)
-        .map_err(|e| ApiError::InternalServerError(e.to_string()))?;
+    let (named_file, _object_file) =
+        start_save(&target, state).map_err(|e| ApiError::InternalServerError(e.to_string()))?;
     let mut async_file = tokio::fs::File::from_std(
         named_file
             .as_file()
@@ -361,8 +363,8 @@ pub async fn save_file(
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn test_is_all_lower_hexdigits() {
