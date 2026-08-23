@@ -38,7 +38,7 @@ pub const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations/");
 
 pub fn load_config(path: &path::Path) -> Arc<Config> {
     let config_data =
-        app::load_config(path).unwrap_or_else(|_| panic!("Failed to read config file {:?}", &path));
+        app::load_config(path).unwrap_or_else(|_| panic!("Failed to read config file {:?}", path));
     Arc::new(config_data)
 }
 

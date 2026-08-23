@@ -139,7 +139,7 @@ pub fn do_command_with_output(cmd: &mut Command) -> JobResult<Output> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
-        .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", &cmd, e)))?;
+        .map_err(|e| JobError::new(&format!("Failed to run {:?}: {}", cmd, e)))?;
 
     Ok(output)
 }
@@ -151,7 +151,7 @@ pub fn do_command(mut cmd: Command) -> JobResult<()> {
     if !output.status.success() {
         return Err(JobError::new(&format!(
             "Command {:?} exited unsuccessfully: {}",
-            &cmd,
+            cmd,
             String::from_utf8_lossy(&output.stderr)
         )));
     }
@@ -212,7 +212,7 @@ pub fn load_build_and_config<'a>(
 
     let repoconfig = config
         .get_repoconfig(&build.repo)
-        .map_err(|e| JobError::new(&format!("Can't find repo {}: {e}", &build.repo)))?;
+        .map_err(|e| JobError::new(&format!("Can't find repo {}: {e}", build.repo)))?;
 
     Ok(LoadedBuild { build, repoconfig })
 }

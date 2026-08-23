@@ -49,7 +49,7 @@ impl JobInstance for CheckJobInstance {
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job Check: name: {}, build: {}",
-            &self.job_id, self.name, &self.build_id,
+            self.job_id, self.name, self.build_id,
         );
 
         let config = &executor.config;

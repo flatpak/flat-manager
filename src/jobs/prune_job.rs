@@ -28,7 +28,7 @@ impl JobInstance for PruneJobInstance {
         executor: &JobExecutor,
         conn: &mut PgConnection,
     ) -> JobResult<serde_json::Value> {
-        info!("#{}: Handling Job Prune", &self.job.id);
+        info!("#{}: Handling Job Prune", self.job.id);
 
         // Get repo config
         let config = &executor.config;

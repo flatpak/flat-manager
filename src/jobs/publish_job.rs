@@ -118,7 +118,7 @@ impl PublishJobInstance {
                 let (filename, contents) =
                     generate_flatpakref(&build_ref.ref_name, None, config, repoconfig);
                 let path = appstream_dir.join(&filename);
-                job_log_and_info!(self.job_id, conn, &format!("generating {}", &filename));
+                job_log_and_info!(self.job_id, conn, &format!("generating {}", filename));
                 let old_contents = fs::read_to_string(&path).unwrap_or_default();
                 if contents != old_contents {
                     File::create(&path)?.write_all(contents.as_bytes())?;
@@ -643,7 +643,7 @@ impl JobInstance for PublishJobInstance {
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job Publish: build: {}",
-            &self.job_id, &self.build_id
+            self.job_id, self.build_id
         );
 
         let config = &executor.config;

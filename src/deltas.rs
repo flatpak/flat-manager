@@ -79,7 +79,7 @@ impl DeltaGenerator {
                     .delayed_result
                     .set(Err(DeltaGenerationError::new(&format!(
                         "No repo named: {}",
-                        &queued_request.request.repo
+                        queued_request.request.repo
                     ))));
                 return;
             }

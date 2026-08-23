@@ -67,17 +67,17 @@ impl JobInstance for RepublishJobInstance {
     ) -> JobResult<serde_json::Value> {
         info!(
             "#{}: Handling Job Republish: repo: {}, app: {}",
-            &self.job_id, &self.repo, &self.app_id,
+            self.job_id, self.repo, self.app_id,
         );
 
         // Get repo config
         let config = &executor.config;
         let repoconfig = config
             .get_repoconfig(&self.repo)
-            .map_err(|e| JobError::new(&format!("Can't find repo {}: {e}", &self.repo)))?;
+            .map_err(|e| JobError::new(&format!("Can't find repo {}: {e}", self.repo)))?;
 
         let repo = open_repo(&repoconfig.get_abs_repo_path())
-            .map_err(|e| JobError::new(&format!("Failed to open repo {}: {}", &self.repo, e)))?;
+            .map_err(|e| JobError::new(&format!("Failed to open repo {}: {}", self.repo, e)))?;
 
         /* Create a temporary repo to use while editing commits, so that intermediate commits don't clutter the main
         repo. */
@@ -99,11 +99,11 @@ impl JobInstance for RepublishJobInstance {
                 libostree::RepoListRefsExtFlags::NONE,
                 libostree::gio::Cancellable::NONE,
             )
-            .map_err(|e| JobError::new(&format!("Failed to load repo {}: {}", &self.repo, e)))?;
+            .map_err(|e| JobError::new(&format!("Failed to load repo {}: {}", self.repo, e)))?;
 
         // Import commits to the temporary repo
         for (ref_name, _checksum) in refs {
-            job_log_and_info!(self.job_id, conn, &format!("Re-publishing {}", &ref_name));
+            job_log_and_info!(self.job_id, conn, &format!("Re-publishing {}", ref_name));
 
             let mut cmd = Command::new("flatpak");
             cmd.arg("build-commit-from")
