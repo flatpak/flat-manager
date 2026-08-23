@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::clone::Clone;
 use std::fs;
 use std::path;
-use std::sync::Arc;
 
 use crate::config::Config;
 use crate::db::*;
@@ -602,15 +601,15 @@ pub async fn upload(
     db: Data<Db>,
     config: Data<Config>,
 ) -> Result<HttpResponse, ApiError> {
-    let uploadstate = Arc::new(UploadState {
-        only_deltas: false,
-        repo_path: config
+    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
+
+    let uploadstate = UploadState::new(
+        config
             .build_repo_base
             .join(params.id.to_string())
             .join("upload"),
-    });
-
-    lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
+        false,
+    )?;
 
     let mut multipart = multipart;
     let mut sizes = Vec::new();
