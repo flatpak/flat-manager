@@ -43,44 +43,7 @@ impl JobInstance for PruneJobInstance {
 
         let repo_path = repoconfig.get_abs_repo_path();
 
-        // First do a dry run
-        job_log_and_info!(self.job.id, conn, "Running prune dry-run");
-        let mut cmd = Command::new("flatpak");
-        cmd.arg("build-update-repo")
-            .arg("-v")
-            .arg("--no-update-summary")
-            .arg("--no-update-appstream")
-            .arg("--prune-dry-run")
-            .arg("--prune-depth=3")
-            .arg(&repo_path);
-
-        let output = super::utils::do_command_with_output(&mut cmd)?;
-        job_log_and_info!(
-            self.job.id,
-            conn,
-            &format!(
-                "Dry-run stdout:\n{}",
-                String::from_utf8_lossy(&output.stdout)
-            )
-        );
-        job_log_and_info!(
-            self.job.id,
-            conn,
-            &format!(
-                "Dry-run stderr:\n{}",
-                String::from_utf8_lossy(&output.stderr)
-            )
-        );
-
-        if !output.status.success() {
-            return Err(JobError::new(&format!(
-                "Prune dry-run failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-
-        // Then do the actual prune
-        job_log_and_info!(self.job.id, conn, "Running actual prune");
+        job_log_and_info!(self.job.id, conn, "Running prune");
         let mut cmd = Command::new("flatpak");
         cmd.arg("build-update-repo")
             .arg("-v")
