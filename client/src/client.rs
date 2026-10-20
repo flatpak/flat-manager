@@ -1730,9 +1730,9 @@ mod tests {
         let object_name = format!("{checksum}.filez");
         assert_eq!(
             object_path("/repo", &object_name),
-            PathBuf::from(format!(
-                "/repo/objects/01/23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.filez"
-            ))
+            PathBuf::from(
+                "/repo/objects/01/23456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.filez",
+            )
         );
     }
 }
