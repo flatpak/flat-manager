@@ -135,7 +135,7 @@ impl From<reqwest::Error> for ClientError {
 impl ClientError {
     pub fn is_retryable(&self) -> bool {
         match self {
-            ClientError::Http { status, .. } => *status >= 500,
+            ClientError::Http { status, .. } => *status >= 500 || *status == 408 || *status == 429,
             ClientError::Reqwest {
                 is_connect,
                 is_timeout,
