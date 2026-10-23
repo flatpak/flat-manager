@@ -335,12 +335,16 @@ pub async fn missing_objects(
 ) -> Result<HttpResponse, ApiError> {
     lookup_authorized_build(&req, db.get_ref(), params.id, ClaimsScope::Upload).await?;
 
-    let missing = args
-        .wanted
-        .iter()
-        .filter(|object| !has_object(params.id, object, &config))
-        .map(|s| s.to_string())
-        .collect::<Vec<String>>();
+    let build_id = params.id;
+    let wanted = args.into_inner().wanted;
+    let missing = web::block(move || {
+        wanted
+            .into_iter()
+            .filter(|object| !has_object(build_id, object, &config))
+            .collect::<Vec<String>>()
+    })
+    .await
+    .map_err(|err| ApiError::InternalServerError(err.to_string()))?;
 
     Ok(HttpResponse::Ok().json(MissingObjectsResponse { missing }))
 }
