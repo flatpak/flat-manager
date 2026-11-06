@@ -1,0 +1,175 @@
+name: Ubuntu binaries
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: 1.99.1
+
+jobs:
+  build:
+    name: Build and publish (${{ matrix.arch }})
+    if: github.repository == 'flatpak/flat-manager' && github.ref == 'refs/heads/master'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            oras-checksum: 66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            oras-checksum: b84269e78dfc2d5329a4aab373da3200de95e6c138338cf6c66c10c0a3f248c1
+    env:
+      ARCH: ${{ matrix.arch }}
+      GH_TOKEN: ${{ github.token }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libpq-dev libgpgme-dev libssl-dev libglib2.0-dev libostree-dev
+
+      - name: Build release binaries
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          cargo +"$RUST_VERSION" build --release --locked --workspace --bins
+
+      - name: Package binaries
+        run: |
+          mkdir -p dist
+          archive="flat-manager-ubuntu-24.04-${ARCH}.tar.gz"
+          tar -czf "dist/$archive" -C target/release flat-manager flat-manager-client
+          (cd dist && sha256sum "$archive" > "$archive.sha256")
+          {
+            echo "ARCHIVE=$archive"
+            echo "PACKAGE=ghcr.io/${GITHUB_REPOSITORY}-binaries"
+            echo "BUILD_URL=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}"
+          } >> "$GITHUB_ENV"
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
+        with:
+          url: https://github.com/oras-project/oras/releases/download/v1.3.6/oras_1.3.6_linux_${{ matrix.arch }}.tar.gz
+          checksum: ${{ matrix.oras-checksum }}
+
+      - name: Log in to GHCR
+        run: printf '%s' "$GH_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Publish OCI artifact
+        id: publish
+        working-directory: dist
+        run: |
+          tag="sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}-ubuntu-24.04-${ARCH}"
+          oras push "$PACKAGE:$tag" \
+            --artifact-type application/vnd.flatpak.flat-manager.binaries.v1 \
+            --annotation "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --annotation "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --annotation "org.opencontainers.image.url=${BUILD_URL}" \
+            --annotation "org.opencontainers.image.description=Ubuntu 24.04 ${ARCH} flat-manager binaries" \
+            --annotation "org.flatpak.flat-manager.architecture=${ARCH}" \
+            --annotation "org.flatpak.flat-manager.ubuntu=24.04" \
+            --annotation "org.flatpak.flat-manager.rust=${RUST_VERSION}" \
+            --format json \
+            "$ARCHIVE:application/gzip" "$ARCHIVE.sha256:text/plain" > push.json
+          digest="$(jq -er '.digest' push.json)"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "REFERENCE=$PACKAGE@$digest" >> "$GITHUB_ENV"
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ env.PACKAGE }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Verify provenance and downloaded bundle
+        run: |
+          gh attestation verify "oci://$REFERENCE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/binaries.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref "$GITHUB_REF" \
+            --deny-self-hosted-runners
+          oras pull "$REFERENCE" --output downloaded
+          (cd downloaded && sha256sum --check "../dist/$ARCHIVE.sha256")
+          cmp "dist/$ARCHIVE.sha256" "downloaded/$ARCHIVE.sha256"
+
+      - name: Write download commands
+        run: |
+          mkdir -p summaries
+          {
+            printf '## Ubuntu 24.04 %s\n\n' "$ARCH"
+            printf 'Source: [%s](%s/%s/commit/%s) | [Build](%s)\n\n' "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$BUILD_URL"
+            printf 'OCI artifact: %s\n\n' "\`$REFERENCE\`"
+            printf '%s\n' '~~~sh'
+            printf 'gh attestation verify oci://%s \\\n' "$REFERENCE"
+            printf '  --repo %s \\\n' "$GITHUB_REPOSITORY"
+            printf '  --signer-workflow %s/.github/workflows/binaries.yml \\\n' "$GITHUB_REPOSITORY"
+            printf '  --source-digest %s \\\n' "$GITHUB_SHA"
+            printf '  --source-ref %s \\\n' "$GITHUB_REF"
+            printf '  --deny-self-hosted-runners\n'
+            printf 'oras pull %s --output flat-manager-%s\n' "$REFERENCE" "$ARCH"
+            printf 'cd flat-manager-%s\n' "$ARCH"
+            printf 'sha256sum --check %s.sha256\n' "$ARCHIVE"
+            printf 'tar -xzf %s\n' "$ARCHIVE"
+            printf '%s\n\nSHA-256:\n\n%s\n' '~~~' '~~~text'
+            cat "dist/$ARCHIVE.sha256"
+            printf '%s\n\n' '~~~'
+            printf '%s\n\n' "Runtime packages: \`sudo apt-get install flatpak ostree libpq5 ca-certificates\`"
+            printf '%s\n\n' "The bundle contains \`flat-manager\` and \`flat-manager-client\`. No runtime smoke tests run here; existing CI covers application behavior."
+            printf 'Use the digest reference, not the discovery tag. GHCR administrators can still delete the artifact.\n'
+          } | tee "summaries/$ARCH.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload summary
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: binary-summary-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: summaries/*.md
+          if-no-files-found: error
+          retention-days: 7
+
+  summary:
+    name: Published Ubuntu binaries
+    needs: build
+    if: always() && github.repository == 'flatpak/flat-manager' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Download summaries
+        if: needs.build.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: binary-summary-*-${{ github.run_attempt }}
+          path: summaries
+          merge-multiple: true
+
+      - name: Summarize publication
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          if [ "$BUILD_RESULT" != success ]; then
+            echo 'Publication did not complete for both architectures. Check the architecture jobs for failures and any successfully published bundles.' >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          cat summaries/amd64.md summaries/arm64.md >> "$GITHUB_STEP_SUMMARY"
