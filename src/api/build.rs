@@ -496,6 +496,7 @@ pub async fn add_extra_ids(
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TokenSubsetArgs {
     sub: String,
     scope: Vec<ClaimsScope>,
@@ -984,5 +985,21 @@ mod tests {
             ),
             "runtime/org.example.App.Locale/x86_64/stable/extra",
         );
+    }
+
+    #[test]
+    fn token_subset_args_reject_unknown_fields() {
+        let args = r#"{"name":"upload","sub":"build/1","scope":["upload"],"duration":60"#;
+
+        assert!(serde_json::from_str::<TokenSubsetArgs>(&format!(
+            r#"{args},"prefixes":["org.example.App"]}}"#
+        ))
+        .is_ok());
+        assert!(serde_json::from_str::<TokenSubsetArgs>(&format!(
+            r#"{args},"prefix":["org.example.App"]}}"#
+        ))
+        .unwrap_err()
+        .to_string()
+        .contains("unknown field `prefix`"));
     }
 }
