@@ -7,7 +7,6 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Write;
 use std::process::Command;
-use std::str;
 
 use crate::config::{Config, RepoConfig};
 use crate::errors::{JobError, JobResult};
@@ -22,6 +21,7 @@ use super::job_executor::JobExecutor;
 use super::job_instance::{InvalidJobInstance, JobInstance};
 use super::utils::{
     add_gpg_args, do_command, generate_flatpakref, load_build_and_config, load_build_refs,
+    should_generate_flatpakref,
 };
 
 #[derive(Debug)]
@@ -122,15 +122,7 @@ impl CommitJobInstance {
             let commit = ostree::parse_ref(&build_repo_path, &build_ref.ref_name)?;
             commits.insert(build_ref.ref_name.to_string(), commit);
 
-            let unwanted_exts = [".Debug", ".Locale", ".Sources", ".Docs"];
-            let ref_id_parts: Vec<&str> = build_ref.ref_name.split('/').collect();
-
-            if build_ref.ref_name.starts_with("app/")
-                || (build_ref.ref_name.starts_with("runtime/")
-                    && !unwanted_exts
-                        .iter()
-                        .any(|&ext| ref_id_parts[1].ends_with(ext)))
-            {
+            if should_generate_flatpakref(&build_ref.ref_name) {
                 let (filename, contents) = generate_flatpakref(
                     &build_ref.ref_name,
                     Some(self.build_id),
