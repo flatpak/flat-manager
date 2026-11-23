@@ -4,7 +4,6 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
-use diesel::sql_types::{Array, Jsonb, Text};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -125,10 +124,15 @@ impl JobFinishedPayload {
             },
         }
     }
+
+    fn restamp(&mut self) {
+        self.created_at = format_timestamp(Utc::now());
+    }
 }
 
-const MAX_ATTEMPTS: u32 = 10;
+const MAX_ATTEMPTS: u32 = 66;
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const RETRY_BUDGET: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone)]
 pub struct WebhookQueue(mpsc::UnboundedSender<i64>);
@@ -234,6 +238,35 @@ impl WebhookSender {
         }
     }
 
+    async fn payload_bytes(&self, delivery_id: i64) -> Option<(String, Bytes)> {
+        let pool = self.pool.clone();
+        let loaded = run_blocking(&pool, move |conn| {
+            let row = webhook_deliveries::table
+                .find(delivery_id)
+                .select(WebhookDelivery::as_select())
+                .first::<WebhookDelivery>(conn)?;
+            let mut payload = serde_json::from_value::<JobFinishedPayload>(row.payload)
+                .map_err(|e| DieselError::DeserializationError(Box::new(e)))?;
+            payload.restamp();
+            let stored = serde_json::to_value(&payload)
+                .map_err(|e| DieselError::SerializationError(Box::new(e)))?;
+            diesel::update(webhook_deliveries::table.find(delivery_id))
+                .set(webhook_deliveries::payload.eq(stored))
+                .execute(conn)?;
+            let body = serde_json::to_vec(&payload)
+                .map_err(|e| DieselError::SerializationError(Box::new(e)))?;
+            Ok((row.event_type, body))
+        })
+        .await;
+        match loaded {
+            Ok((event_type, body)) => Some((event_type, Bytes::from(body))),
+            Err(e) => {
+                error!("Webhook delivery {delivery_id}: Failed to load: {e}");
+                None
+            }
+        }
+    }
+
     async fn send(
         &self,
         delivery_id: i64,
@@ -285,41 +318,15 @@ impl WebhookSender {
     }
 
     async fn deliver(&self, delivery_id: i64) {
-        let loaded = run_blocking(&self.pool, move |conn| {
-            webhook_deliveries::table
-                .find(delivery_id)
-                .select(WebhookDelivery::as_select())
-                .first::<WebhookDelivery>(conn)
-                .optional()
-        })
-        .await;
-        let delivery = match loaded {
-            Ok(Some(delivery)) => delivery,
-            Ok(None) => {
-                error!("Webhook delivery {delivery_id}: Not found");
-                return;
-            }
-            Err(e) => {
-                error!("Webhook delivery {delivery_id}: Failed to load: {e}");
-                return;
-            }
-        };
-
-        let body = match serde_json::from_value::<JobFinishedPayload>(delivery.payload)
-            .and_then(|payload| serde_json::to_vec(&payload))
-        {
-            Ok(body) => Bytes::from(body),
-            Err(e) => {
-                error!("Webhook delivery {delivery_id}: Invalid payload: {e}");
-                return;
-            }
-        };
-        let signature = sign(&self.key, &body);
+        let started = tokio::time::Instant::now();
 
         for attempt_number in 1..=MAX_ATTEMPTS {
-            let attempt = self
-                .send(delivery_id, &delivery.event_type, &body, &signature)
-                .await;
+            let Some((event_type, body)) = self.payload_bytes(delivery_id).await else {
+                return;
+            };
+            let signature = sign(&self.key, &body);
+
+            let attempt = self.send(delivery_id, &event_type, &body, &signature).await;
             self.record(delivery_id, &attempt).await;
 
             if attempt.is_success() {
@@ -333,13 +340,13 @@ impl WebhookSender {
                 error!("Webhook delivery {delivery_id}: {attempt} on attempt {attempt_number}, not retrying");
                 return;
             }
-            if attempt_number == MAX_ATTEMPTS {
+            if attempt_number == MAX_ATTEMPTS || started.elapsed() >= RETRY_BUDGET {
                 self.metrics.webhook_deliveries_exhausted.inc();
                 error!("Webhook delivery {delivery_id}: {attempt} on attempt {attempt_number}, giving up");
                 return;
             }
 
-            let delay = backoff(attempt_number);
+            let delay = backoff(attempt_number).min(RETRY_BUDGET.saturating_sub(started.elapsed()));
             warn!(
                 "Webhook delivery {delivery_id}: {attempt} on attempt {attempt_number}, retrying in {}s",
                 delay.as_secs()
@@ -375,18 +382,13 @@ pub fn start_webhook_sender(
     Some(WebhookQueue(tx))
 }
 
-define_sql_function! {
-    fn jsonb_set(target: Jsonb, path: Array<Text>, new_value: Jsonb) -> Jsonb;
-}
-
 pub async fn redeliver(
     pool: &Pool,
     queue: &WebhookQueue,
     before: DateTime<Utc>,
 ) -> Result<usize, ApiError> {
-    let created_at = serde_json::Value::String(format_timestamp(Utc::now()));
     let mut delivery_ids = run_blocking(pool, move |conn| {
-        diesel::update(webhook_deliveries::table)
+        webhook_deliveries::table
             .filter(webhook_deliveries::created_at.lt(before))
             .filter(
                 webhook_deliveries::response_status
@@ -394,12 +396,7 @@ pub async fn redeliver(
                     .or(webhook_deliveries::response_status.lt(200))
                     .or(webhook_deliveries::response_status.ge(300)),
             )
-            .set(webhook_deliveries::payload.eq(jsonb_set(
-                webhook_deliveries::payload,
-                vec!["created_at"],
-                created_at,
-            )))
-            .returning(webhook_deliveries::id)
+            .select(webhook_deliveries::id)
             .get_results::<i64>(conn)
     })
     .await
@@ -752,6 +749,20 @@ mod tests {
     }
 
     #[test]
+    fn restamping_keeps_the_event_and_refreshes_the_signature() {
+        let mut restamped = payload();
+        restamped.created_at = "2026-11-16T09:30:00Z".to_string();
+        restamped.restamp();
+
+        assert_eq!(restamped.id, 18231);
+        assert_eq!(restamped.event_type, WebhookEventType::JobFinished);
+        assert_eq!(restamped.data, payload().data);
+        assert_ne!(restamped.created_at, "2026-11-16T09:30:00Z");
+        let body = serde_json::to_vec(&restamped).unwrap();
+        assert_ne!(sign(&test_key(), &body), TEST_SIGNATURE);
+    }
+
+    #[test]
     fn backoff_doubles_up_to_the_cap() {
         let delays: Vec<u64> = (1..=10).map(|attempt| backoff(attempt).as_secs()).collect();
 
@@ -759,12 +770,13 @@ mod tests {
     }
 
     #[test]
-    fn retries_stop_before_the_receiver_skew_window() {
+    fn retries_cover_an_hour_long_receiver_outage() {
         let waited: u64 = (1..MAX_ATTEMPTS)
             .map(|attempt| backoff(attempt).as_secs())
             .sum();
 
-        assert!(waited < 300);
+        assert!(waited >= 60 * 60);
+        assert!(waited <= 60 * 60 + 60);
     }
 
     #[test]
