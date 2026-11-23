@@ -4,6 +4,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use diesel::pg::PgConnection;
 use diesel::prelude::*;
 use diesel::result::Error as DieselError;
+use diesel::sql_types::{Array, Jsonb, Text};
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -12,6 +13,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Semaphore};
 
 use crate::config::Config;
+use crate::errors::ApiError;
 use crate::metrics::Metrics;
 use crate::models::{Build, CheckJob, CommitJob, Job, JobKind, PublishJob};
 use crate::schema::{builds, jobs, webhook_deliveries};
@@ -371,6 +373,43 @@ pub fn start_webhook_sender(
 
     info!("Webhook deliveries enabled");
     Some(WebhookQueue(tx))
+}
+
+define_sql_function! {
+    fn jsonb_set(target: Jsonb, path: Array<Text>, new_value: Jsonb) -> Jsonb;
+}
+
+pub async fn redeliver(
+    pool: &Pool,
+    queue: &WebhookQueue,
+    before: DateTime<Utc>,
+) -> Result<usize, ApiError> {
+    let created_at = serde_json::Value::String(format_timestamp(Utc::now()));
+    let mut delivery_ids = run_blocking(pool, move |conn| {
+        diesel::update(webhook_deliveries::table)
+            .filter(webhook_deliveries::created_at.lt(before))
+            .filter(
+                webhook_deliveries::response_status
+                    .is_null()
+                    .or(webhook_deliveries::response_status.lt(200))
+                    .or(webhook_deliveries::response_status.ge(300)),
+            )
+            .set(webhook_deliveries::payload.eq(jsonb_set(
+                webhook_deliveries::payload,
+                vec!["created_at"],
+                created_at,
+            )))
+            .returning(webhook_deliveries::id)
+            .get_results::<i64>(conn)
+    })
+    .await
+    .map_err(ApiError::InternalServerError)?;
+
+    delivery_ids.sort_unstable();
+    for delivery_id in &delivery_ids {
+        queue.push(*delivery_id);
+    }
+    Ok(delivery_ids.len())
 }
 
 fn load_build(job: &Job, conn: &mut PgConnection) -> Result<Option<Build>, DieselError> {

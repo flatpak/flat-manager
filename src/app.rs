@@ -18,6 +18,7 @@ use crate::jobs::JobQueue;
 use crate::logger::Logger;
 use crate::metrics::Metrics;
 use crate::tokens::TokenParser;
+use crate::webhooks::WebhookQueue;
 use crate::Pool;
 
 fn load_gpg_key(
@@ -112,6 +113,7 @@ pub fn create_app(
     job_queue: Addr<JobQueue>,
     delta_generator: Addr<DeltaGenerator>,
     metrics: Arc<Metrics>,
+    webhooks: Option<WebhookQueue>,
 ) -> Server {
     let c = config.clone();
     let secret = config.secret.clone();
@@ -133,6 +135,7 @@ pub fn create_app(
             .app_data(Data::new((*c).clone()))
             .app_data(Data::new(db.clone()))
             .app_data(Data::new(metrics.clone()))
+            .app_data(Data::new(webhooks.clone()))
             .wrap(Logger::default())
             .wrap(middleware::Compress::default())
             .service(
@@ -224,6 +227,10 @@ pub fn create_app(
                     )
                     .service(
                         web::resource("/prune").route(web::post().to(api::prune::handle_prune)),
+                    )
+                    .service(
+                        web::resource("/admin/webhooks/redeliver")
+                            .route(web::post().to(api::webhooks::redeliver)),
                     ),
             )
             .service(

@@ -162,7 +162,13 @@ pub fn start(config: &Arc<Config>) -> Server {
 
     let delta_generator = start_delta_generator(config);
 
-    let job_queue = start_job_queue(config, &pool, &delta_generator, metrics.clone(), webhooks);
+    let job_queue = start_job_queue(
+        config,
+        &pool,
+        &delta_generator,
+        metrics.clone(),
+        webhooks.clone(),
+    );
 
     let app = app::create_app(
         pool,
@@ -170,6 +176,7 @@ pub fn start(config: &Arc<Config>) -> Server {
         job_queue.clone(),
         delta_generator.clone(),
         metrics,
+        webhooks,
     );
 
     handle_signals(app.handle(), job_queue, delta_generator);
