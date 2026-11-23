@@ -20,6 +20,7 @@ use crate::models::{
 };
 use crate::schema;
 use crate::schema::*;
+use crate::webhooks::WebhookQueue;
 use crate::{Config, Pool};
 
 use super::job_executor::{start_executor, JobExecutor, ProcessOneJob, StopJobs};
@@ -45,6 +46,7 @@ pub struct JobQueue {
     pub delta_generator: Addr<DeltaGenerator>,
     pub metrics: Arc<Metrics>,
     pub pool: Pool,
+    pub webhooks: Option<WebhookQueue>,
 }
 
 const MAX_RESTART_COUNT: u32 = 3;
@@ -86,6 +88,7 @@ impl JobQueue {
             &self.delta_generator,
             &self.metrics,
             &self.pool,
+            &self.webhooks,
         );
 
         {

@@ -25,6 +25,8 @@ pub struct Metrics {
     pub jobs_in_progress: Family<JobLabels, Gauge>,
     pub jobs_queued: Family<JobLabels, Gauge>,
     pub job_duration_seconds: Family<JobResultLabels, Histogram>,
+    pub webhook_delivery_failures: Counter,
+    pub webhook_deliveries_exhausted: Counter,
 }
 
 impl Metrics {
@@ -41,6 +43,8 @@ impl Metrics {
                     1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0,
                 ])
             });
+        let webhook_delivery_failures = Counter::default();
+        let webhook_deliveries_exhausted = Counter::default();
 
         flat_manager_registry.register(
             "jobs_total",
@@ -62,6 +66,16 @@ impl Metrics {
             "Duration of finished jobs in seconds.",
             job_duration_seconds.clone(),
         );
+        flat_manager_registry.register(
+            "webhook_delivery_failures",
+            "Total number of failed webhook delivery attempts.",
+            webhook_delivery_failures.clone(),
+        );
+        flat_manager_registry.register(
+            "webhook_deliveries_exhausted",
+            "Total number of webhook deliveries that ran out of retries or were rejected.",
+            webhook_deliveries_exhausted.clone(),
+        );
 
         Metrics {
             registry,
@@ -69,6 +83,8 @@ impl Metrics {
             jobs_in_progress,
             jobs_queued,
             job_duration_seconds,
+            webhook_delivery_failures,
+            webhook_deliveries_exhausted,
         }
     }
 
@@ -109,5 +125,19 @@ mod tests {
         assert!(encoded.contains("flat_manager_jobs_in_progress"));
         assert!(encoded.contains("flat_manager_jobs_queued"));
         assert!(encoded.contains("flat_manager_job_duration_seconds"));
+        assert!(encoded.contains("flat_manager_webhook_delivery_failures_total 0\n"));
+        assert!(encoded.contains("flat_manager_webhook_deliveries_exhausted_total 0\n"));
+    }
+
+    #[test]
+    fn webhook_counters_are_exposed() {
+        let metrics = Metrics::new();
+        metrics.webhook_delivery_failures.inc();
+        metrics.webhook_delivery_failures.inc();
+        metrics.webhook_deliveries_exhausted.inc();
+        let encoded = metrics.encode();
+
+        assert!(encoded.contains("flat_manager_webhook_delivery_failures_total 2\n"));
+        assert!(encoded.contains("flat_manager_webhook_deliveries_exhausted_total 1\n"));
     }
 }

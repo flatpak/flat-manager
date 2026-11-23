@@ -30,6 +30,7 @@ use std::path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
+use webhooks::WebhookQueue;
 
 pub use errors::DeltaGenerationError;
 
@@ -66,6 +67,7 @@ fn start_job_queue(
     pool: &Pool,
     delta_generator: &Addr<DeltaGenerator>,
     metrics: Arc<Metrics>,
+    webhooks: Option<WebhookQueue>,
 ) -> Addr<JobQueue> {
     jobs::cleanup_started_jobs(pool).expect("Failed to cleanup started jobs");
     initialize_queued_job_metrics(pool, &metrics).expect("Failed to initialize queued job metrics");
@@ -74,6 +76,7 @@ fn start_job_queue(
         delta_generator.clone(),
         pool.clone(),
         metrics,
+        webhooks,
     )
 }
 
@@ -155,9 +158,11 @@ pub fn start(config: &Arc<Config>) -> Server {
     let pool = connect_to_db(config);
     let metrics = Arc::new(Metrics::new());
 
+    let webhooks = webhooks::start_webhook_sender(config, &pool, &metrics);
+
     let delta_generator = start_delta_generator(config);
 
-    let job_queue = start_job_queue(config, &pool, &delta_generator, metrics.clone());
+    let job_queue = start_job_queue(config, &pool, &delta_generator, metrics.clone(), webhooks);
 
     let app = app::create_app(
         pool,

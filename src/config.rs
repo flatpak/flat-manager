@@ -159,6 +159,14 @@ fn default_workers() -> usize {
         .unwrap_or(1)
 }
 
+fn default_webhook_concurrency() -> usize {
+    4
+}
+
+fn default_webhook_timeout_secs() -> u64 {
+    10
+}
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Config {
@@ -191,6 +199,14 @@ pub struct Config {
     #[serde(default = "default_workers")]
     pub workers: usize,
     pub storefront_info_endpoint: Option<String>,
+    pub webhook_url: Option<String>,
+    pub webhook_hmac_key_file: Option<String>,
+    #[serde(skip)]
+    pub webhook_hmac_key: Option<Vec<u8>>,
+    #[serde(default = "default_webhook_concurrency")]
+    pub webhook_concurrency: usize,
+    #[serde(default = "default_webhook_timeout_secs")]
+    pub webhook_timeout_secs: u64,
 }
 
 impl ConfigHook {
@@ -425,5 +441,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.build_gpg_key, None);
+    }
+
+    #[test]
+    fn webhooks_are_off_by_default() {
+        let config: Config = serde_json::from_str(
+            r#"{
+                "database-url": "postgres://example",
+                "secret": "c2VjcmV0",
+                "repos": {},
+                "build-repo-base": "/tmp/build-repo"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(config.webhook_url, None);
+        assert_eq!(config.webhook_hmac_key_file, None);
+        assert_eq!(config.webhook_hmac_key, None);
+        assert_eq!(config.webhook_concurrency, 4);
+        assert_eq!(config.webhook_timeout_secs, 10);
     }
 }

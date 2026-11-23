@@ -18,6 +18,7 @@ use crate::metrics::{kind_label, repo_label, JobLabels, JobResultLabels, Metrics
 use crate::models;
 use crate::models::{job_dependencies_with_status, JobStatus};
 use crate::schema::*;
+use crate::webhooks::{emit_job_finished, WebhookQueue};
 use crate::Pool;
 
 use super::job_instance::JobInstance;
@@ -29,6 +30,7 @@ pub struct JobExecutor {
     pub delta_generator: Addr<DeltaGenerator>,
     pub metrics: Arc<Metrics>,
     pub pool: Pool,
+    pub webhooks: Option<WebhookQueue>,
 }
 
 impl Actor for JobExecutor {
@@ -161,8 +163,9 @@ fn process_one_job(executor: &mut JobExecutor, conn: &mut PgConnection) -> bool 
                     jobs::results.eq(new_results),
                 ))
                 .execute(conn);
-            if let Err(e) = update_res {
-                error!("handle_job: Error updating job {}", e);
+            match update_res {
+                Ok(_) => emit_job_finished(&executor.webhooks, instance.get_job_id(), conn),
+                Err(e) => error!("handle_job: Error updating job {}", e),
             }
 
             executor
@@ -230,11 +233,13 @@ pub fn start_executor(
     delta_generator: &Addr<DeltaGenerator>,
     metrics: &Arc<Metrics>,
     pool: &Pool,
+    webhooks: &Option<WebhookQueue>,
 ) -> RefCell<ExecutorInfo> {
     let config_copy = config.clone();
     let delta_generator_copy = delta_generator.clone();
     let metrics_copy = metrics.clone();
     let pool_copy = pool.clone();
+    let webhooks_copy = webhooks.clone();
     let repo_clone = repo.clone();
     RefCell::new(ExecutorInfo {
         addr: SyncArbiter::start(1, move || JobExecutor {
@@ -243,6 +248,7 @@ pub fn start_executor(
             delta_generator: delta_generator_copy.clone(),
             metrics: metrics_copy.clone(),
             pool: pool_copy.clone(),
+            webhooks: webhooks_copy.clone(),
         }),
         processing_job: false,
         job_queued: false,
@@ -256,11 +262,12 @@ pub fn start_job_executor(
     delta_generator: Addr<DeltaGenerator>,
     pool: Pool,
     metrics: Arc<Metrics>,
+    webhooks: Option<WebhookQueue>,
 ) -> Addr<JobQueue> {
     let mut executors = HashMap::new();
     executors.insert(
         None,
-        start_executor(&None, &config, &delta_generator, &metrics, &pool),
+        start_executor(&None, &config, &delta_generator, &metrics, &pool, &webhooks),
     );
 
     for repo in config.repos.keys() {
@@ -272,6 +279,7 @@ pub fn start_job_executor(
                 &delta_generator,
                 &metrics,
                 &pool,
+                &webhooks,
             ),
         );
     }
@@ -282,6 +290,7 @@ pub fn start_job_executor(
         delta_generator: delta_generator.clone(),
         metrics,
         pool: pool.clone(),
+        webhooks,
     }
     .start()
 }

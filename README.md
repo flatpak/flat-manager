@@ -79,6 +79,26 @@ To facilitate this, check scripts are run with `FLAT_MANAGER_BUILD_ID` and
 `FLAT_MANAGER_JOB_ID` environment variables to pass to the API. The same
 endpoint can be used by other systems for manual reviews.
 
+### Webhooks
+
+flat-manager can send a `job.finished` webhook to another service when
+a job ends or breaks. Webhooks are off unless both `webhook-url` and
+`webhook-hmac-key-file` are set:
+
+    "webhook-url": "https://example.org/api/webhooks/flat-manager",
+    "webhook-hmac-key-file": "/var/run/secrets/flat-manager-webhook/hmac-key"
+
+`webhook-hmac-key-file` is the path to a file that contains a
+base64-encoded HMAC key. Each request body is signed with HMAC-SHA256,
+and the hex digest is sent in the `X-Flatmanager-Signature` header as
+`sha256=<digest>`. A random key can be generated with:
+
+    head -c 32 /dev/urandom | base64 > hmac-key
+
+`webhook-concurrency` is the number of requests that can be in flight at
+the same time (default 4). `webhook-timeout-secs` is the connect and
+request timeout in seconds (default 10).
+
 ## Database
 
 flat-manager uses a PostgreSQL database to store information, and

@@ -43,6 +43,42 @@ fn load_gpg_key(
     }
 }
 
+fn load_webhook_hmac_key(config: &Config) -> io::Result<Option<Vec<u8>>> {
+    let (url, key_file) = match (&config.webhook_url, &config.webhook_hmac_key_file) {
+        (None, None) => return Ok(None),
+        (Some(url), Some(key_file)) => (url, key_file),
+        _ => {
+            return Err(io::Error::other(
+                "webhook-url and webhook-hmac-key-file must be set together",
+            ))
+        }
+    };
+
+    reqwest::Url::parse(url).map_err(|e| io::Error::other(format!("Invalid webhook-url: {e}")))?;
+    if config.webhook_concurrency == 0 {
+        return Err(io::Error::other("webhook-concurrency must be at least 1"));
+    }
+    if config.webhook_timeout_secs == 0 {
+        return Err(io::Error::other("webhook-timeout-secs must be at least 1"));
+    }
+
+    let encoded = std::fs::read_to_string(key_file).map_err(|e| {
+        io::Error::other(format!(
+            "Failed to read webhook-hmac-key-file {key_file}: {e}"
+        ))
+    })?;
+    let key = general_purpose::STANDARD
+        .decode(encoded.trim())
+        .map_err(|e| io::Error::other(format!("Invalid webhook-hmac-key-file {key_file}: {e}")))?;
+    if key.is_empty() {
+        return Err(io::Error::other(format!(
+            "Empty webhook-hmac-key-file {key_file}"
+        )));
+    }
+
+    Ok(Some(key))
+}
+
 pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
     let config_contents = std::fs::read_to_string(path)?;
     let mut config_data: Config =
@@ -54,6 +90,8 @@ pub fn load_config<P: AsRef<Path>>(path: P) -> io::Result<Config> {
         reponame.clone_into(&mut repoconfig.name);
         repoconfig.gpg_key_content = load_gpg_key(&config_data.gpg_homedir, &repoconfig.gpg_key)?;
     }
+
+    config_data.webhook_hmac_key = load_webhook_hmac_key(&config_data)?;
 
     if config_data.base_url.is_empty() {
         config_data.base_url = format!("http://{}:{}", config_data.host, config_data.port)
@@ -234,4 +272,107 @@ pub fn create_app(
     log::info!("Started http server: {}", bind_to);
 
     server
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn config(extra: &str) -> Config {
+        serde_json::from_str(&format!(
+            r#"{{
+                "database-url": "postgres://example",
+                "secret": "c2VjcmV0",
+                "repos": {{}},
+                "build-repo-base": "/tmp/build-repo"
+                {extra}
+            }}"#
+        ))
+        .unwrap()
+    }
+
+    fn webhook_config(key_file: &str, extra: &str) -> Config {
+        config(&format!(
+            r#","webhook-url": "https://example.org/hook", "webhook-hmac-key-file": {key_file:?} {extra}"#
+        ))
+    }
+
+    fn key_file(contents: &str) -> tempfile::NamedTempFile {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(contents.as_bytes()).unwrap();
+        file
+    }
+
+    fn load_error(config: &Config) -> String {
+        load_webhook_hmac_key(config).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn webhook_key_is_not_loaded_when_webhooks_are_off() {
+        assert_eq!(load_webhook_hmac_key(&config("")).unwrap(), None);
+    }
+
+    #[test]
+    fn webhook_url_and_key_file_must_be_set_together() {
+        let url_only = config(r#","webhook-url": "https://example.org/hook""#);
+        let key_only = config(r#","webhook-hmac-key-file": "/nonexistent""#);
+
+        for config in [url_only, key_only] {
+            assert_eq!(
+                load_error(&config),
+                "webhook-url and webhook-hmac-key-file must be set together"
+            );
+        }
+    }
+
+    #[test]
+    fn webhook_key_is_decoded_from_base64_file() {
+        let file = key_file("ZmxhdC1tYW5hZ2VyLXdlYmhvb2stdGVzdC1zZWNyZXQ=\n");
+        let config = webhook_config(file.path().to_str().unwrap(), "");
+
+        assert_eq!(
+            load_webhook_hmac_key(&config).unwrap().unwrap(),
+            b"flat-manager-webhook-test-secret"
+        );
+    }
+
+    #[test]
+    fn webhook_key_file_must_hold_a_base64_key() {
+        for contents in ["not base64!", "", "\n"] {
+            let file = key_file(contents);
+            let config = webhook_config(file.path().to_str().unwrap(), "");
+
+            assert!(load_webhook_hmac_key(&config).is_err(), "{contents:?}");
+        }
+
+        let config = webhook_config("/nonexistent/hmac-key", "");
+        assert!(load_error(&config).contains("Failed to read webhook-hmac-key-file"));
+    }
+
+    #[test]
+    fn webhook_settings_are_validated() {
+        let file = key_file("c2VjcmV0");
+        let path = file.path().to_str().unwrap();
+
+        let config = config(&format!(
+            r#","webhook-url": "not a url", "webhook-hmac-key-file": {path:?}"#
+        ));
+        assert!(load_error(&config).contains("Invalid webhook-url"));
+
+        let config = webhook_config(path, r#","webhook-concurrency": 0"#);
+        assert_eq!(
+            load_error(&config),
+            "webhook-concurrency must be at least 1"
+        );
+
+        let config = webhook_config(path, r#","webhook-timeout-secs": 0"#);
+        assert_eq!(
+            load_error(&config),
+            "webhook-timeout-secs must be at least 1"
+        );
+
+        let config = webhook_config(path, r#","webhook-concurrency": 2"#);
+        assert_eq!(load_webhook_hmac_key(&config).unwrap().unwrap(), b"secret");
+    }
 }
