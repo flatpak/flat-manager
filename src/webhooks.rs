@@ -378,8 +378,36 @@ pub fn start_webhook_sender(
         }
     });
 
+    let queue = WebhookQueue(tx);
+    let resume_pool = pool.clone();
+    let resume_queue = queue.clone();
+    tokio::spawn(async move {
+        let ids = run_blocking(&resume_pool, move |conn| {
+            webhook_deliveries::table
+                .filter(webhook_deliveries::created_at.gt(Utc::now() - chrono::Duration::hours(1)))
+                .filter(
+                    webhook_deliveries::response_status
+                        .is_null()
+                        .or(webhook_deliveries::response_status.ge(500)),
+                )
+                .order(webhook_deliveries::id)
+                .select(webhook_deliveries::id)
+                .get_results::<i64>(conn)
+        })
+        .await;
+        match ids {
+            Ok(ids) => {
+                info!("Resuming {} unanswered webhook deliveries", ids.len());
+                for id in ids {
+                    resume_queue.push(id);
+                }
+            }
+            Err(e) => error!("Failed to resume unanswered webhook deliveries: {e}"),
+        }
+    });
+
     info!("Webhook deliveries enabled");
-    Some(WebhookQueue(tx))
+    Some(queue)
 }
 
 pub async fn redeliver(
