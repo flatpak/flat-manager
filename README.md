@@ -82,14 +82,19 @@ endpoint can be used by other systems for manual reviews.
 ### Webhooks
 
 flat-manager can send a `job.finished` webhook to another service when
-a job ends or breaks. Webhooks are off unless both `webhook-url` and
-`webhook-hmac-key-file` are set:
+a job ends or breaks. Webhooks are off unless `webhook-url` and a key
+are set:
 
     "webhook-url": "https://example.org/api/webhooks/flat-manager",
+    "webhook-hmac-key": "c2VjcmV0"
+
+`webhook-hmac-key` is a base64-encoded HMAC key. It can instead be read
+from a file with `webhook-hmac-key-file`, which takes precedence when
+both are set:
+
     "webhook-hmac-key-file": "/var/run/secrets/flat-manager-webhook/hmac-key"
 
-`webhook-hmac-key-file` is the path to a file that contains a
-base64-encoded HMAC key. Each request body is signed with HMAC-SHA256,
+Each request body is signed with HMAC-SHA256,
 and the hex digest is sent in the `X-Flatmanager-Signature` header as
 `sha256=<digest>`. A random key can be generated with:
 

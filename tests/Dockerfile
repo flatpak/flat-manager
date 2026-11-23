@@ -15,7 +15,8 @@ RUN ostree --repo=repo init --mode=archive-z2
 RUN mkdir build-repo
 
 # Generate the key that signs webhooks
-RUN head -c 32 /dev/urandom | base64 > webhook-hmac-key
+RUN head -c 32 /dev/urandom | base64 > webhook-hmac-key && \
+    python3 -c 'import json; p = "test-config.json"; c = json.load(open(p)); c["webhook-hmac-key"] = open("webhook-hmac-key").read().strip(); del c["webhook-hmac-key-file"]; json.dump(c, open(p, "w"), indent=4)'
 
 # Copy the files
 COPY ./ ./

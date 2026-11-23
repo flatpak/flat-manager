@@ -201,6 +201,8 @@ pub struct Config {
     pub storefront_info_endpoint: Option<String>,
     pub webhook_url: Option<String>,
     pub webhook_hmac_key_file: Option<String>,
+    #[serde(rename = "webhook-hmac-key")]
+    pub webhook_hmac_key_inline: Option<String>,
     #[serde(skip)]
     pub webhook_hmac_key: Option<Vec<u8>>,
     #[serde(default = "default_webhook_concurrency")]
@@ -456,6 +458,7 @@ mod tests {
         .unwrap();
         assert_eq!(config.webhook_url, None);
         assert_eq!(config.webhook_hmac_key_file, None);
+        assert_eq!(config.webhook_hmac_key_inline, None);
         assert_eq!(config.webhook_hmac_key, None);
         assert_eq!(config.webhook_concurrency, 4);
         assert_eq!(config.webhook_timeout_secs, 10);

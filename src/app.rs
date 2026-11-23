@@ -45,15 +45,19 @@ fn load_gpg_key(
 }
 
 fn load_webhook_hmac_key(config: &Config) -> io::Result<Option<Vec<u8>>> {
-    let (url, key_file) = match (&config.webhook_url, &config.webhook_hmac_key_file) {
-        (None, None) => return Ok(None),
-        (Some(url), Some(key_file)) => (url, key_file),
-        _ => {
+    let Some(url) = &config.webhook_url else {
+        if config.webhook_hmac_key_file.is_some() || config.webhook_hmac_key_inline.is_some() {
             return Err(io::Error::other(
                 "webhook-url and webhook-hmac-key-file must be set together",
-            ))
+            ));
         }
+        return Ok(None);
     };
+    if config.webhook_hmac_key_file.is_none() && config.webhook_hmac_key_inline.is_none() {
+        return Err(io::Error::other(
+            "webhook-url needs webhook-hmac-key-file or webhook-hmac-key",
+        ));
+    }
 
     reqwest::Url::parse(url).map_err(|e| io::Error::other(format!("Invalid webhook-url: {e}")))?;
     if config.webhook_concurrency == 0 {
@@ -63,18 +67,26 @@ fn load_webhook_hmac_key(config: &Config) -> io::Result<Option<Vec<u8>>> {
         return Err(io::Error::other("webhook-timeout-secs must be at least 1"));
     }
 
-    let encoded = std::fs::read_to_string(key_file).map_err(|e| {
-        io::Error::other(format!(
-            "Failed to read webhook-hmac-key-file {key_file}: {e}"
-        ))
-    })?;
+    let (name, encoded) = match (
+        &config.webhook_hmac_key_file,
+        &config.webhook_hmac_key_inline,
+    ) {
+        (Some(key_file), _) => (
+            format!("webhook-hmac-key-file {key_file}"),
+            std::fs::read_to_string(key_file).map_err(|e| {
+                io::Error::other(format!(
+                    "Failed to read webhook-hmac-key-file {key_file}: {e}"
+                ))
+            })?,
+        ),
+        (None, Some(inline)) => ("webhook-hmac-key".to_string(), inline.clone()),
+        (None, None) => unreachable!(),
+    };
     let key = general_purpose::STANDARD
         .decode(encoded.trim())
-        .map_err(|e| io::Error::other(format!("Invalid webhook-hmac-key-file {key_file}: {e}")))?;
+        .map_err(|e| io::Error::other(format!("Invalid {name}: {e}")))?;
     if key.is_empty() {
-        return Err(io::Error::other(format!(
-            "Empty webhook-hmac-key-file {key_file}"
-        )));
+        return Err(io::Error::other(format!("Empty {name}")));
     }
 
     Ok(Some(key))
@@ -321,15 +333,55 @@ mod tests {
     }
 
     #[test]
-    fn webhook_url_and_key_file_must_be_set_together() {
+    fn webhook_url_and_key_must_be_set_together() {
         let url_only = config(r#","webhook-url": "https://example.org/hook""#);
-        let key_only = config(r#","webhook-hmac-key-file": "/nonexistent""#);
+        assert_eq!(
+            load_error(&url_only),
+            "webhook-url needs webhook-hmac-key-file or webhook-hmac-key"
+        );
 
-        for config in [url_only, key_only] {
+        for extra in [
+            r#","webhook-hmac-key-file": "/nonexistent""#,
+            r#","webhook-hmac-key": "c2VjcmV0""#,
+        ] {
             assert_eq!(
-                load_error(&config),
+                load_error(&config(extra)),
                 "webhook-url and webhook-hmac-key-file must be set together"
             );
+        }
+    }
+
+    #[test]
+    fn webhook_key_is_decoded_from_inline_config() {
+        let config = config(
+            r#","webhook-url": "https://example.org/hook", "webhook-hmac-key": "ZmxhdC1tYW5hZ2VyLXdlYmhvb2stdGVzdC1zZWNyZXQ=""#,
+        );
+
+        assert_eq!(
+            load_webhook_hmac_key(&config).unwrap().unwrap(),
+            b"flat-manager-webhook-test-secret"
+        );
+    }
+
+    #[test]
+    fn webhook_key_file_wins_over_inline_config() {
+        let file = key_file("c2VjcmV0");
+        let config = webhook_config(
+            file.path().to_str().unwrap(),
+            r#","webhook-hmac-key": "b3RoZXItc2VjcmV0""#,
+        );
+
+        assert_eq!(load_webhook_hmac_key(&config).unwrap().unwrap(), b"secret");
+    }
+
+    #[test]
+    fn webhook_inline_key_must_be_base64() {
+        for inline in ["not base64!", ""] {
+            let config = config(&format!(
+                r#","webhook-url": "https://example.org/hook", "webhook-hmac-key": "{inline}""#
+            ));
+
+            assert!(load_webhook_hmac_key(&config).is_err(), "{inline:?}");
         }
     }
 
