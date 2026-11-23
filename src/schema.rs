@@ -79,6 +79,19 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    webhook_deliveries (id) {
+        id -> Int8,
+        event_type -> Text,
+        payload -> Jsonb,
+        created_at -> Timestamptz,
+        last_attempt_at -> Nullable<Timestamptz>,
+        attempts -> Int4,
+        response_status -> Nullable<Int4>,
+        last_error -> Nullable<Text>,
+    }
+}
+
 diesel::joinable!(build_refs -> builds (build_id));
 diesel::joinable!(checks -> builds (build_id));
 diesel::joinable!(checks -> jobs (job_id));
@@ -92,4 +105,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     jobs,
     published_refs,
     tokens,
+    webhook_deliveries,
 );

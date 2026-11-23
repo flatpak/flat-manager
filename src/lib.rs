@@ -12,6 +12,7 @@ mod models;
 pub mod ostree;
 mod schema;
 pub mod tokens;
+mod webhooks;
 
 use diesel_migrations::{embed_migrations, EmbeddedMigrations, MigrationHarness};
 
