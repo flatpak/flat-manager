@@ -26,5 +26,7 @@
     "build-gpg-key": null,
     "gpg-homedir": "/root/.gnupg",
     "secret": "c2VjcmV0",
-    "repo-secret": "c2VjcmV0"
+    "repo-secret": "c2VjcmV0",
+    "webhook-url": "http://127.0.0.1:9099/webhook",
+    "webhook-hmac-key-file": "webhook-hmac-key"
 }

@@ -14,6 +14,9 @@ RUN ./gen-key.sh
 RUN ostree --repo=repo init --mode=archive-z2
 RUN mkdir build-repo
 
+# Generate the key that signs webhooks
+RUN head -c 32 /dev/urandom | base64 > webhook-hmac-key
+
 # Copy the files
 COPY ./ ./
 RUN rm ./root/.gnupg/public-keys.d/pubring.db.lock
