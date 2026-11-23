@@ -15,5 +15,9 @@ fn main() {
         PathBuf::from(env::var("REPO_CONFIG").unwrap_or_else(|_| "config.json".to_string()));
 
     let config = flatmanager::load_config(&config_path);
-    let _ = sys.block_on(async { flatmanager::start(&config).await });
+    sys.block_on(async {
+        let (server, stopped) = flatmanager::start(&config);
+        let _ = server.await;
+        let _ = stopped.await;
+    });
 }

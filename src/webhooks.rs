@@ -7,9 +7,11 @@ use diesel::result::Error as DieselError;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{mpsc, watch, Mutex, Semaphore};
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::config::Config;
 use crate::errors::ApiError;
@@ -133,14 +135,34 @@ impl JobFinishedPayload {
 const MAX_ATTEMPTS: u32 = 66;
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const RETRY_BUDGET: Duration = Duration::from_secs(60 * 60);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
-pub struct WebhookQueue(mpsc::UnboundedSender<i64>);
+pub struct WebhookQueue {
+    tx: mpsc::UnboundedSender<i64>,
+    stop: Arc<watch::Sender<bool>>,
+    stopping: Arc<AtomicBool>,
+    dispatcher: Arc<Mutex<Option<JoinHandle<()>>>>,
+}
 
 impl WebhookQueue {
     pub fn push(&self, delivery_id: i64) {
-        if self.0.send(delivery_id).is_err() {
+        if self.tx.send(delivery_id).is_err() {
             error!("Webhook delivery {delivery_id}: Sender is not running");
+        }
+    }
+
+    pub async fn shutdown(&self) {
+        self.stopping.store(true, Ordering::Relaxed);
+        let _ = self.stop.send(true);
+        let handle = self.dispatcher.lock().await.take();
+        if let Some(handle) = handle {
+            if tokio::time::timeout(SHUTDOWN_TIMEOUT, handle)
+                .await
+                .is_err()
+            {
+                warn!("Webhook drain timed out; remaining deliveries resume at startup");
+            }
         }
     }
 }
@@ -176,6 +198,7 @@ struct WebhookSender {
     semaphore: Semaphore,
     pool: Pool,
     metrics: Arc<Metrics>,
+    stopping: Arc<AtomicBool>,
 }
 
 fn sign(key: &hmac::Key, body: &[u8]) -> String {
@@ -219,6 +242,7 @@ impl WebhookSender {
         timeout: Duration,
         pool: Pool,
         metrics: Arc<Metrics>,
+        stopping: Arc<AtomicBool>,
     ) -> Self {
         let client = reqwest::Client::builder()
             .user_agent(concat!("flat-manager/", env!("CARGO_PKG_VERSION")))
@@ -235,6 +259,7 @@ impl WebhookSender {
             semaphore: Semaphore::new(concurrency),
             pool,
             metrics,
+            stopping,
         }
     }
 
@@ -321,6 +346,10 @@ impl WebhookSender {
         let started = tokio::time::Instant::now();
 
         for attempt_number in 1..=MAX_ATTEMPTS {
+            if self.stopping.load(Ordering::Relaxed) {
+                info!("Webhook delivery {delivery_id}: Shutdown, resumes at startup");
+                return;
+            }
             let Some((event_type, body)) = self.payload_bytes(delivery_id).await else {
                 return;
             };
@@ -338,6 +367,10 @@ impl WebhookSender {
             if !attempt.is_retryable() {
                 self.metrics.webhook_deliveries_exhausted.inc();
                 error!("Webhook delivery {delivery_id}: {attempt} on attempt {attempt_number}, not retrying");
+                return;
+            }
+            if self.stopping.load(Ordering::Relaxed) {
+                info!("Webhook delivery {delivery_id}: Recorded {attempt}, stopping for shutdown");
                 return;
             }
             if attempt_number == MAX_ATTEMPTS || started.elapsed() >= RETRY_BUDGET {
@@ -361,6 +394,7 @@ pub fn start_webhook_sender(
     pool: &Pool,
     metrics: &Arc<Metrics>,
 ) -> Option<WebhookQueue> {
+    let stopping = Arc::new(AtomicBool::new(false));
     let sender = Arc::new(WebhookSender::new(
         config.webhook_url.clone()?,
         config.webhook_hmac_key.as_deref()?,
@@ -368,17 +402,46 @@ pub fn start_webhook_sender(
         Duration::from_secs(config.webhook_timeout_secs),
         pool.clone(),
         metrics.clone(),
+        stopping.clone(),
     ));
     let (tx, mut rx) = mpsc::unbounded_channel();
+    let (stop, mut stop_rx) = watch::channel(false);
 
-    tokio::spawn(async move {
-        while let Some(delivery_id) = rx.recv().await {
-            let sender = sender.clone();
-            tokio::spawn(async move { sender.deliver(delivery_id).await });
+    let dispatcher = tokio::spawn(async move {
+        let mut tasks = JoinSet::new();
+        loop {
+            tokio::select! {
+                biased;
+                _ = stop_rx.changed() => break,
+                delivery_id = rx.recv() => match delivery_id {
+                    Some(delivery_id) => {
+                        let sender = sender.clone();
+                        tasks.spawn(async move { sender.deliver(delivery_id).await });
+                    }
+                    None => break,
+                },
+                Some(_) = tasks.join_next(), if !tasks.is_empty() => {}
+            }
         }
+
+        rx.close();
+        let mut queued = 0;
+        while rx.try_recv().is_ok() {
+            queued += 1;
+        }
+        if queued > 0 {
+            info!("{queued} queued webhook deliveries resume at startup");
+        }
+        while tasks.join_next().await.is_some() {}
+        info!("Webhook deliveries drained");
     });
 
-    let queue = WebhookQueue(tx);
+    let queue = WebhookQueue {
+        tx,
+        stop: Arc::new(stop),
+        stopping,
+        dispatcher: Arc::new(Mutex::new(Some(dispatcher))),
+    };
     let resume_pool = pool.clone();
     let resume_queue = queue.clone();
     tokio::spawn(async move {
@@ -911,6 +974,7 @@ mod tests {
             Duration::from_secs(5),
             Pool::builder().build_unchecked(manager),
             Arc::new(Metrics::new()),
+            Arc::new(AtomicBool::new(false)),
         )
     }
 

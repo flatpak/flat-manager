@@ -28,7 +28,6 @@ use metrics::{kind_label, repo_label, JobLabels, Metrics};
 use models::JobStatus;
 use std::path;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
 use webhooks::WebhookQueue;
 
@@ -118,6 +117,8 @@ fn handle_signals(
     server: ServerHandle,
     job_queue: Addr<JobQueue>,
     delta_generator: Addr<DeltaGenerator>,
+    webhooks: Option<WebhookQueue>,
+    stopped: tokio::sync::oneshot::Sender<()>,
 ) {
     tokio::spawn(async move {
         let mut sigint = signal(SignalKind::interrupt()).unwrap();
@@ -148,13 +149,17 @@ fn handle_signals(
         info!("Stopping job processing");
         let _ = job_queue.send(StopJobQueue()).await;
 
+        if let Some(webhooks) = webhooks {
+            info!("Draining webhook deliveries");
+            webhooks.shutdown().await;
+        }
+
         info!("Exiting...");
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        System::current().stop();
+        let _ = stopped.send(());
     });
 }
 
-pub fn start(config: &Arc<Config>) -> Server {
+pub fn start(config: &Arc<Config>) -> (Server, tokio::sync::oneshot::Receiver<()>) {
     let pool = connect_to_db(config);
     let metrics = Arc::new(Metrics::new());
 
@@ -176,10 +181,17 @@ pub fn start(config: &Arc<Config>) -> Server {
         job_queue.clone(),
         delta_generator.clone(),
         metrics,
-        webhooks,
+        webhooks.clone(),
     );
 
-    handle_signals(app.handle(), job_queue, delta_generator);
+    let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
+    handle_signals(
+        app.handle(),
+        job_queue,
+        delta_generator,
+        webhooks,
+        stopped_tx,
+    );
 
-    app
+    (app, stopped_rx)
 }
