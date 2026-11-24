@@ -47,7 +47,7 @@ impl Metrics {
         let webhook_deliveries_exhausted = Counter::default();
 
         flat_manager_registry.register(
-            "jobs_total",
+            "jobs",
             "Total number of finished jobs.",
             jobs_total.clone(),
         );
@@ -114,14 +114,30 @@ pub fn kind_label(kind: i16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::Metrics;
+    use super::{JobLabels, JobResultLabels, Metrics};
 
     #[test]
     fn encode_contains_all_metric_families() {
         let metrics = Metrics::new();
+        let labels = JobLabels {
+            kind: "commit".to_string(),
+            repo: "stable".to_string(),
+        };
+        let result_labels = JobResultLabels {
+            kind: "commit".to_string(),
+            status: "ended".to_string(),
+            repo: "stable".to_string(),
+        };
+        metrics.jobs_total.get_or_create(&result_labels).inc();
+        metrics.jobs_in_progress.get_or_create(&labels).inc();
+        metrics.jobs_queued.get_or_create(&labels).inc();
+        metrics
+            .job_duration_seconds
+            .get_or_create(&result_labels)
+            .observe(1.0);
         let encoded = metrics.encode();
 
-        assert!(encoded.contains("flat_manager_jobs_total"));
+        assert!(encoded.contains("flat_manager_jobs_total{"));
         assert!(encoded.contains("flat_manager_jobs_in_progress"));
         assert!(encoded.contains("flat_manager_jobs_queued"));
         assert!(encoded.contains("flat_manager_job_duration_seconds"));
