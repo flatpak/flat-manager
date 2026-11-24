@@ -120,7 +120,7 @@ impl UpdateRepoJobInstance {
         fs::create_dir_all(&tmp_deltas_dir)?;
 
         let now = time::SystemTime::now();
-        let now_filetime = filetime::FileTime::from_system_time(now);
+        let now_times = fs::FileTimes::new().set_accessed(now).set_modified(now);
 
         /* Instead of directly removing the deltas we move them to a different
          * directory which is *also* used as a source for the delta dir when accessed
@@ -147,7 +147,7 @@ impl UpdateRepoJobInstance {
             }
             match fs::rename(&src, &dst) {
                 Ok(_) => {
-                    filetime::set_file_times(&dst, now_filetime, now_filetime)?;
+                    fs::set_times(&dst, now_times)?;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     job_log_and_info!(

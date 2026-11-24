@@ -586,11 +586,11 @@ pub fn token_subset(
                 token_type: claims.token_type.clone(),
                 exp: new_exp,
             };
-            return match jwt::encode(
-                &jwt::Header::default(),
-                &new_claims,
-                &jwt::EncodingKey::from_secret(config.secret.as_ref()),
-            ) {
+            let key = match jwt::EncodingKey::from_secret(config.secret.as_ref()) {
+                Ok(key) => key,
+                Err(e) => return ApiError::InternalServerError(e.to_string()).error_response(),
+            };
+            return match jwt::encode(&jwt::Header::default(), &new_claims, &key) {
                 Ok(token) => HttpResponse::Ok().json(TokenSubsetResponse { token }),
                 Err(e) => ApiError::InternalServerError(e.to_string()).error_response(),
             };

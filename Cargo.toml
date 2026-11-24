@@ -28,22 +28,21 @@ path = "src/bin/flat-manager.rs"
 env_logger = "0.11"
 
 actix = "0.13"
-actix-files = "0.6"
+actix-files = "0.7"
 actix-http = "3"
 actix-multipart = "0.7"
 actix-service = "2"
 actix-web = "4"
-askama = "0.12"
-base64 = "0.22"
+askama = "0.16"
+base64 = "0.23"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
-diesel = { version = "2.0", features = ["postgres", "chrono", "serde_json", "r2d2"] }
-diesel_migrations = { version = "2.0" }
+diesel = { version = "2.4", features = ["postgres", "chrono", "serde_json", "r2d2"] }
+diesel_migrations = { version = "2.4" }
 dotenv = "0.15"
-filetime = "0.2"
 flat-manager-common = { path = "common" }
 hex = "0.4"
-jwt = { package = "jsonwebtoken", version = "10.3.0", features = ["aws_lc_rs"] }
+jwt = { package = "jsonwebtoken", version = "12.0.0", features = ["aws_lc_rs"] }
 log = "0.4"
 libc = "0.2"
 libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
@@ -51,12 +50,12 @@ r2d2 = "0.8"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
-tempfile = "3.0"
+tempfile = "3.27"
 thiserror = "2"
-tokio = { version = "1.18", features = ["time", "macros", "rt", "rt-multi-thread", "process", "signal", "fs", "io-util", "sync"] }
+tokio = { version = "1.54", features = ["time", "macros", "rt", "rt-multi-thread", "process", "signal", "fs", "io-util", "sync"] }
 walkdir = "2"
 futures = "0.3"
-pin-project-lite = "0.2.17"
+pin-project-lite = "0.2.18"
 prometheus-client = "0.23"
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
-aws-lc-rs = "1.18"
+aws-lc-rs = "1.19"

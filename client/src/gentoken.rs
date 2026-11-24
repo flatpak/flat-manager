@@ -166,15 +166,16 @@ pub fn run_gentoken(args: GentokenArgs) -> i32 {
     }
 
     let key = if base64 {
-        match EncodingKey::from_base64_secret(secret_contents.trim()) {
-            Ok(key) => key,
-            Err(err) => {
-                eprintln!("Error decoding base64 secret: {err}");
-                return 1;
-            }
-        }
+        EncodingKey::from_base64_secret(secret_contents.trim())
     } else {
         EncodingKey::from_secret(secret_contents.trim().as_bytes())
+    };
+    let key = match key {
+        Ok(key) => key,
+        Err(err) => {
+            eprintln!("Error creating encoding key: {err}");
+            return 1;
+        }
     };
 
     let claims = Claims {

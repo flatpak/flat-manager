@@ -145,13 +145,15 @@ fn parse_authorization(prefix: Option<String>, header: &HeaderValue) -> Result<S
 }
 
 fn validate_claims(secret: Vec<u8>, token: String) -> Result<Claims, ApiError> {
-    let mut validation = Validation::default();
-
-    validation.validate_exp = false;
+    let validation = Validation {
+        validate_exp: false,
+        ..Validation::default()
+    };
 
     let token_data = match decode::<Claims>(
         &token,
-        &DecodingKey::from_secret(secret.as_ref()),
+        &DecodingKey::from_secret(secret.as_ref())
+            .map_err(|e| ApiError::InternalServerError(e.to_string()))?,
         &validation,
     ) {
         Ok(c) => c,
@@ -330,7 +332,7 @@ mod tests {
                 "scope": ["build"],
                 "branches": ["stable"],
             }),
-            &EncodingKey::from_secret(secret.as_ref()),
+            &EncodingKey::from_secret(secret.as_ref()).unwrap(),
         )
         .unwrap();
 

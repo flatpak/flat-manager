@@ -6,18 +6,18 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 flat-manager-common = { path = "../common" }
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4.5.60", features = ["derive"] }
+clap = { version = "4.6.9", features = ["derive"] }
 env_logger = "0.11"
-flate2 = "1.0"
+flate2 = "1.1"
 hex = "0.4"
 libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
 log = "0.4"
-reqwest = { version = "0.13.2", features = ["json", "multipart", "gzip", "stream"] }
+reqwest = { version = "0.13.5", features = ["json", "multipart", "gzip", "stream"] }
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
 thiserror = "2"
-tokio = { version = "1.18", features = ["time", "macros", "rt", "rt-multi-thread"] }
-jwt = { version = "10.3.0", package = "jsonwebtoken", features = ["aws_lc_rs"] }
+tokio = { version = "1.54", features = ["time", "macros", "rt", "rt-multi-thread"] }
+jwt = { version = "12.0.0", package = "jsonwebtoken", features = ["aws_lc_rs"] }

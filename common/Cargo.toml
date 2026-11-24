@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 hex = "0.4"
 libostree = { package = "ostree", version = "0.20.5", features = ["v2021_5"] }
 serde = "1.0"
