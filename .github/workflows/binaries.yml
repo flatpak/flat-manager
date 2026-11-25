@@ -29,9 +29,6 @@ jobs:
           - arch: amd64
             runner: ubuntu-24.04
             oras-checksum: 66fb0ad7206f3f6fa77ed5b552049d364ccf4b50b1684554f731f76302b52ca0
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            oras-checksum: b84269e78dfc2d5329a4aab373da3200de95e6c138338cf6c66c10c0a3f248c1
     env:
       ARCH: ${{ matrix.arch }}
       GH_TOKEN: ${{ github.token }}
@@ -169,7 +166,7 @@ jobs:
           BUILD_RESULT: ${{ needs.build.result }}
         run: |
           if [ "$BUILD_RESULT" != success ]; then
-            echo 'Publication did not complete for both architectures. Check the architecture jobs for failures and any successfully published bundles.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Publication did not complete. Check the build job for failures.' >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-          cat summaries/amd64.md summaries/arm64.md >> "$GITHUB_STEP_SUMMARY"
+          cat summaries/amd64.md >> "$GITHUB_STEP_SUMMARY"
